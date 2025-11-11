@@ -86,6 +86,10 @@ public class FFConfig {
 
         int sqrDist = playerBlockDistanceForFlowing * playerBlockDistanceForFlowing;
 
+        if (level instanceof net.minecraft.world.level.Level lvl) {
+            return lvl.getNearestPlayer(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, playerBlockDistanceForFlowing, false) == null;
+        }
+
         // if any player is within distance
         for(Player player2 : level.players()) {
             double i = player2.distanceToSqr(pos.getX(), pos.getY(), pos.getZ());
