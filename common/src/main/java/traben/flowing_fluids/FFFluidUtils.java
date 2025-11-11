@@ -1,9 +1,7 @@
 package traben.flowing_fluids;
 
 import it.unimi.dsi.fastutil.Pair;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
-import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -33,10 +31,6 @@ public class FFFluidUtils {
     private static final Direction[] ALL_DIRECTIONS = Direction.values();
     private static final ThreadLocal<Direction[]> CARDINAL_BUFFER = ThreadLocal.withInitial(() -> new Direction[CARDINAL_DIRECTIONS.length]);
     private static final ThreadLocal<Direction[]> ALL_DIRECTION_BUFFER = ThreadLocal.withInitial(() -> new Direction[ALL_DIRECTIONS.length]);
-    private static final ThreadLocal<LongArrayFIFOQueue> POSITION_QUEUE = ThreadLocal.withInitial(LongArrayFIFOQueue::new);
-    private static final ThreadLocal<LongOpenHashSet> VISITED_POSITIONS = ThreadLocal.withInitial(LongOpenHashSet::new);
-    private static final ThreadLocal<LongArrayList> POSITION_BUFFER = ThreadLocal.withInitial(LongArrayList::new);
-    private static final ThreadLocal<IntArrayList> LEVEL_BUFFER = ThreadLocal.withInitial(IntArrayList::new);
 
 
     public static @NotNull ResourceLocation res(String fullPath){
@@ -359,10 +353,8 @@ public class FFFluidUtils {
                 return Pair.of(maxAmountToFind,()->{FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, blockPos, fluid, originalAmount - maxAmountToFind);});
             }
 
-            LongArrayFIFOQueue positionsToCheck = getPositionQueue();
-            LongOpenHashSet discoveredPositions = getVisitedPositions();
-            LongArrayList positionBuffer = getPositionBuffer();
-            IntArrayList levelBuffer = getLevelBuffer();
+            LongArrayFIFOQueue positionsToCheck = new LongArrayFIFOQueue();
+            LongOpenHashSet discoveredPositions = new LongOpenHashSet();
             RandomSource random = levelAccessor.getRandom();
 
             long originKey = blockPos.asLong();
@@ -391,22 +383,20 @@ public class FFFluidUtils {
 
                 long currentKey = positionsToCheck.dequeueLong();
                 mutablePos.set(BlockPos.getX(currentKey), BlockPos.getY(currentKey), BlockPos.getZ(currentKey));
+                BlockPos currentPos = mutablePos.immutable();
 
-                var state = levelAccessor.getFluidState(mutablePos);
+                var state = levelAccessor.getFluidState(currentPos);
                 if (fluid.isSame(state.getType())) {
                     int amount = state.getAmount();
                     if (amount > 0) {
-                        int newTotal = foundAmount + amount;
-                        if (newTotal > maxAmountToFind) {
-                            int remaining = newTotal - maxAmountToFind;
-                            positionBuffer.add(currentKey);
-                            levelBuffer.add(remaining);
+                        foundAmount += amount;
+                        if (foundAmount > maxAmountToFind) {
+                            final int finalLevel = foundAmount - maxAmountToFind;
+                            onSuccessAirSetters.add(() -> FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, currentPos, fluid, finalLevel));
                             foundAmount = maxAmountToFind;
                             break;
                         } else {
-                            positionBuffer.add(currentKey);
-                            levelBuffer.add(0);
-                            foundAmount = newTotal;
+                            onSuccessAirSetters.add(() -> FFFluidUtils.removeAllFluidAtPos(levelAccessor, currentPos, fluid));
                             if (foundAmount == maxAmountToFind) {
                                 break;
                             }
@@ -454,30 +444,6 @@ public class FFFluidUtils {
             });
         }
         return Pair.of(0, null);
-    }
-
-    private static LongArrayFIFOQueue getPositionQueue() {
-        LongArrayFIFOQueue queue = POSITION_QUEUE.get();
-        queue.clear();
-        return queue;
-    }
-
-    private static LongOpenHashSet getVisitedPositions() {
-        LongOpenHashSet visited = VISITED_POSITIONS.get();
-        visited.clear();
-        return visited;
-    }
-
-    private static LongArrayList getPositionBuffer() {
-        LongArrayList buffer = POSITION_BUFFER.get();
-        buffer.clear();
-        return buffer;
-    }
-
-    private static IntArrayList getLevelBuffer() {
-        IntArrayList buffer = LEVEL_BUFFER.get();
-        buffer.clear();
-        return buffer;
     }
 
     public static Direction[] getCardinalsShuffle(RandomSource random) {
