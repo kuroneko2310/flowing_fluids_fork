@@ -23,9 +23,6 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 public class FFFluidUtils {
@@ -229,61 +226,105 @@ public class FFFluidUtils {
                 return Pair.of(0,()->FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, blockPos, fluid, originalAmount + amountToPlace));
             }
 
-            List<BlockPos> toCheck = new ArrayList<>();
-            toCheck.add(blockPos);
+            LongArrayFIFOQueue queue = getPositionQueue();
+            LongOpenHashSet visited = getVisitedPositions();
+            LongArrayList positionBuffer = getPositionBuffer();
+            IntArrayList levelBuffer = getLevelBuffer();
 
-            final Consumer<BlockPos> addSurroundingPositions = blockPos1 -> {
-                for (Direction direction : getCardinalsShuffle(levelAccessor.getRandom())) {
-                    BlockPos offset = blockPos1.relative(direction);
-                    if (!toCheck.contains(offset)) toCheck.add(offset);
-                }
-                if (doUp) {
-                    // do these last just as preference
-                    BlockPos up = blockPos1.above();
-                    if (!toCheck.contains(up)) toCheck.add(up);
-                }
-                if (doDown) {
-                    BlockPos down = blockPos1.below();
-                    if (!toCheck.contains(down)) toCheck.add(down);
-                }
+            RandomSource random = levelAccessor.getRandom();
 
-            };
-            addSurroundingPositions.accept(blockPos);
+            long originKey = blockPos.asLong();
+            queue.enqueue(originKey);
+            visited.add(originKey);
 
-            List<Runnable> onSuccessPlacers = new ArrayList<>();
+            BlockPos.MutableBlockPos currentPos = new BlockPos.MutableBlockPos();
+            BlockPos.MutableBlockPos neighbourPos = new BlockPos.MutableBlockPos();
+
             int amountLeftToPlace = amountToPlace;
 
-            for (int i = 0; i < toCheck.size(); i++) {
-                var pos = toCheck.get(i);
+            while (!queue.isEmpty()) {
+                if (visited.size() > depth) {
+                    break;
+                }
 
-                if (toCheck.size() > depth) break;
+                long currentKey = queue.dequeueLong();
+                currentPos.set(BlockPos.getX(currentKey), BlockPos.getY(currentKey), BlockPos.getZ(currentKey));
 
-                var state = levelAccessor.getFluidState(pos);
-                if (fluid.isSame(state.getType())
-                        || (state.isEmpty() && levelAccessor.getBlockState(pos).isAir())) { // only concerned with air blocks, we aren't going to f around with waterloggables here
-                    int space = 8-state.getAmount();
+                FluidState state = levelAccessor.getFluidState(currentPos);
+                boolean isSameFluid = fluid.isSame(state.getType());
+                if (isSameFluid || (state.isEmpty() && levelAccessor.getBlockState(currentPos).isAir())) {
+                    int currentAmountAtPos = isSameFluid ? state.getAmount() : 0;
+                    int space = 8 - currentAmountAtPos;
                     if (space > 0) {
-
                         if (space >= amountLeftToPlace) {
-                            int newAmount = state.getAmount() + amountLeftToPlace;
-                            onSuccessPlacers.add(() -> FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, pos, fluid, newAmount));
+                            int newAmount = currentAmountAtPos + amountLeftToPlace;
+                            positionBuffer.add(currentKey);
+                            levelBuffer.add(newAmount);
                             amountLeftToPlace = 0;
                             break;
                         } else {
-                            onSuccessPlacers.add(() -> FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, pos, fluid, 8));
+                            positionBuffer.add(currentKey);
+                            levelBuffer.add(currentAmountAtPos + space);
                             amountLeftToPlace -= space;
                         }
                     }
-                    // keep searching
-                    addSurroundingPositions.accept(pos);
+
+                    for (Direction direction : getCardinalsShuffle(random)) {
+                        neighbourPos.set(currentPos);
+                        neighbourPos.move(direction);
+                        long neighbourKey = neighbourPos.asLong();
+                        if (visited.add(neighbourKey)) {
+                            queue.enqueue(neighbourKey);
+                        }
+                    }
+
+                    if (doUp) {
+                        neighbourPos.set(currentPos);
+                        neighbourPos.move(Direction.UP);
+                        long upKey = neighbourPos.asLong();
+                        if (visited.add(upKey)) {
+                            queue.enqueue(upKey);
+                        }
+                    }
+
+                    if (doDown) {
+                        neighbourPos.set(currentPos);
+                        neighbourPos.move(Direction.DOWN);
+                        long downKey = neighbourPos.asLong();
+                        if (visited.add(downKey)) {
+                            queue.enqueue(downKey);
+                        }
+                    }
+                }
+
+                if (amountLeftToPlace == 0) {
+                    break;
                 }
             }
+
+            queue.clear();
+            visited.clear();
+
             if (amountLeftToPlace == amountToPlace) {
-                //failed to find enough fluid so cancel
+                positionBuffer.clear();
+                levelBuffer.clear();
                 return Pair.of(amountToPlace, null);
             }
 
-            return Pair.of(amountLeftToPlace, () -> onSuccessPlacers.forEach(Runnable::run));
+            final long[] positions = positionBuffer.toLongArray();
+            final int[] levels = levelBuffer.toIntArray();
+
+            positionBuffer.clear();
+            levelBuffer.clear();
+
+            return Pair.of(amountLeftToPlace, () -> {
+                BlockPos.MutableBlockPos applyPos = new BlockPos.MutableBlockPos();
+                for (int i = 0; i < positions.length; i++) {
+                    long key = positions[i];
+                    applyPos.set(BlockPos.getX(key), BlockPos.getY(key), BlockPos.getZ(key));
+                    FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, applyPos, fluid, levels[i]);
+                }
+            });
         }
         return Pair.of(amountToPlace, null);
     }
@@ -330,7 +371,6 @@ public class FFFluidUtils {
                 }
             }
 
-            List<Runnable> onSuccessAirSetters = new ArrayList<>();
             int foundAmount = 0;
 
             BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
@@ -372,12 +412,36 @@ public class FFFluidUtils {
                     }
                 }
             }
+
+            positionsToCheck.clear();
+            discoveredPositions.clear();
+
             if (foundAmount < minAmountRequired) {
                 //failed to find enough fluid so cancel
+                positionBuffer.clear();
+                levelBuffer.clear();
                 return Pair.of(0, null);
             }
 
-            return Pair.of(foundAmount, ()->{onSuccessAirSetters.forEach(Runnable::run);});
+            final long[] positions = positionBuffer.toLongArray();
+            final int[] levels = levelBuffer.toIntArray();
+
+            positionBuffer.clear();
+            levelBuffer.clear();
+
+            return Pair.of(foundAmount, ()->{
+                BlockPos.MutableBlockPos applyPos = new BlockPos.MutableBlockPos();
+                for (int i = 0; i < positions.length; i++) {
+                    long key = positions[i];
+                    applyPos.set(BlockPos.getX(key), BlockPos.getY(key), BlockPos.getZ(key));
+                    int newLevel = levels[i];
+                    if (newLevel == 0) {
+                        FFFluidUtils.removeAllFluidAtPos(levelAccessor, applyPos, fluid);
+                    } else {
+                        FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, applyPos, fluid, newLevel);
+                    }
+                }
+            });
         }
         return Pair.of(0, null);
     }
