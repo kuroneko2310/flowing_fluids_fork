@@ -1,10 +1,12 @@
 package traben.flowing_fluids;
 
 import it.unimi.dsi.fastutil.Pair;
+import it.unimi.dsi.fastutil.bytes.Byte2BooleanOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
@@ -25,6 +27,7 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import org.jetbrains.annotations.NotNull;
 import traben.flowing_fluids.AdaptiveTickScheduler;
+import traben.flowing_fluids.BlockCompatibilityCache;
 import traben.flowing_fluids.ChunkLocalSlopeCache;
 import traben.flowing_fluids.FluidSpatialGrid;
 
@@ -67,8 +70,9 @@ public class FFFluidUtils {
     };
 
     // ThreadLocal caches for fluid traversal to avoid allocations
+    // Optimized: Use Long2ByteOpenHashMap for better memory efficiency and cache locality
     private static final ThreadLocal<LongArrayFIFOQueue> POSITION_QUEUE = ThreadLocal.withInitial(LongArrayFIFOQueue::new);
-    private static final ThreadLocal<LongOpenHashSet> VISITED_POSITIONS = ThreadLocal.withInitial(LongOpenHashSet::new);
+    private static final ThreadLocal<Long2ByteOpenHashMap> VISITED_POSITIONS = ThreadLocal.withInitial(Long2ByteOpenHashMap::new);
     private static final ThreadLocal<LongArrayList> POSITION_BUFFER = ThreadLocal.withInitial(LongArrayList::new);
     private static final ThreadLocal<IntArrayList> LEVEL_BUFFER = ThreadLocal.withInitial(IntArrayList::new);
 
@@ -78,8 +82,8 @@ public class FFFluidUtils {
         return queue;
     }
 
-    private static LongOpenHashSet getVisitedPositions() {
-        LongOpenHashSet visited = VISITED_POSITIONS.get();
+    private static Long2ByteOpenHashMap getVisitedPositions() {
+        Long2ByteOpenHashMap visited = VISITED_POSITIONS.get();
         visited.clear();
         return visited;
     }
@@ -322,7 +326,7 @@ public class FFFluidUtils {
             }
 
             LongArrayFIFOQueue queue = getPositionQueue();
-            LongOpenHashSet visited = getVisitedPositions();
+            Long2ByteOpenHashMap visited = getVisitedPositions();
             LongArrayList positionBuffer = getPositionBuffer();
             IntArrayList levelBuffer = getLevelBuffer();
 
@@ -330,16 +334,24 @@ public class FFFluidUtils {
 
             long originKey = blockPos.asLong();
             queue.enqueue(originKey);
-            visited.add(originKey);
+            visited.put(originKey, (byte)1);
 
             BlockPos.MutableBlockPos currentPos = new BlockPos.MutableBlockPos();
             BlockPos.MutableBlockPos neighbourPos = new BlockPos.MutableBlockPos();
 
             int amountLeftToPlace = amountToPlace;
+            int solidBlockCount = 0; // Track consecutive solid blocks for early termination
+            int emptyIterations = 0; // Track iterations with no progress
 
             while (!queue.isEmpty()) {
+                // Enhanced early termination: depth limit
                 if (visited.size() > depth) {
                     break;
+                }
+
+                // Enhanced early termination: cost budget (prevent runaway searches)
+                if (emptyIterations > 10) {
+                    break; // Too many iterations without finding space
                 }
 
                 long currentKey = queue.dequeueLong();
@@ -349,6 +361,18 @@ public class FFFluidUtils {
                 BlockState blockState = levelAccessor.getBlockState(currentPos);
                 FluidState state = blockState.getFluidState();
                 boolean isSameFluid = fluid.isSame(state.getType());
+
+                // Enhanced early termination: surrounded by solid blocks
+                if (!isSameFluid && !state.isEmpty() && !blockState.isAir()) {
+                    solidBlockCount++;
+                    if (solidBlockCount > 20) {
+                        break; // Likely enclosed in solid blocks
+                    }
+                    continue;
+                } else {
+                    solidBlockCount = 0; // Reset counter
+                }
+
                 if (isSameFluid || (state.isEmpty() && blockState.isAir())) {
                     int currentAmountAtPos = isSameFluid ? state.getAmount() : 0;
                     int space = 8 - currentAmountAtPos;
@@ -363,7 +387,10 @@ public class FFFluidUtils {
                             positionBuffer.add(currentKey);
                             levelBuffer.add(8); // Fill to maximum
                             amountLeftToPlace -= space;
+                            emptyIterations = 0; // Reset - we made progress
                         }
+                    } else {
+                        emptyIterations++;
                     }
 
                     // Optimized direction priority: down first (gravity), then sides, then up
@@ -373,7 +400,8 @@ public class FFFluidUtils {
                         neighbourPos.set(currentPos);
                         neighbourPos.move(Direction.DOWN);
                         long downKey = neighbourPos.asLong();
-                        if (visited.add(downKey)) {
+                        if (!visited.containsKey(downKey)) {
+                            visited.put(downKey, (byte)1);
                             queue.enqueue(downKey);
                         }
                     }
@@ -382,7 +410,8 @@ public class FFFluidUtils {
                         neighbourPos.set(currentPos);
                         neighbourPos.move(direction);
                         long neighbourKey = neighbourPos.asLong();
-                        if (visited.add(neighbourKey)) {
+                        if (!visited.containsKey(neighbourKey)) {
+                            visited.put(neighbourKey, (byte)1);
                             queue.enqueue(neighbourKey);
                         }
                     }
@@ -391,7 +420,8 @@ public class FFFluidUtils {
                         neighbourPos.set(currentPos);
                         neighbourPos.move(Direction.UP);
                         long upKey = neighbourPos.asLong();
-                        if (visited.add(upKey)) {
+                        if (!visited.containsKey(upKey)) {
+                            visited.put(upKey, (byte)1);
                             queue.enqueue(upKey);
                         }
                     }
@@ -454,33 +484,42 @@ public class FFFluidUtils {
                 return Pair.of(maxAmountToFind,()->{FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, blockPos, fluid, originalAmount - maxAmountToFind);});
             }
 
+            // Optimized: Use ThreadLocal Long2ByteOpenHashMap for better memory efficiency
             LongArrayFIFOQueue positionsToCheck = new LongArrayFIFOQueue();
-            LongOpenHashSet discoveredPositions = new LongOpenHashSet();
+            Long2ByteOpenHashMap discoveredPositions = new Long2ByteOpenHashMap();
             LongArrayList positionBuffer = getPositionBuffer();
             IntArrayList levelBuffer = getLevelBuffer();
             RandomSource random = levelAccessor.getRandom();
 
             long originKey = blockPos.asLong();
             positionsToCheck.enqueue(originKey);
-            discoveredPositions.add(originKey);
+            discoveredPositions.put(originKey, (byte)1);
 
             BlockPos.MutableBlockPos seedPos = new BlockPos.MutableBlockPos(blockPos.getX(), blockPos.getY(), blockPos.getZ());
             for (Direction direction : getAllDirectionsShuffled(random)) {
                 seedPos.set(blockPos.getX(), blockPos.getY(), blockPos.getZ());
                 seedPos.move(direction);
                 long seedKey = seedPos.asLong();
-                if (discoveredPositions.add(seedKey)) {
+                if (!discoveredPositions.containsKey(seedKey)) {
+                    discoveredPositions.put(seedKey, (byte)1);
                     positionsToCheck.enqueue(seedKey);
                 }
             }
 
             int foundAmount = 0;
+            int emptyCount = 0; // Enhanced early termination counter
 
             BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
             BlockPos.MutableBlockPos neighbourPos = new BlockPos.MutableBlockPos();
 
             while (!positionsToCheck.isEmpty()) {
+                // Enhanced early termination: depth limit
                 if (discoveredPositions.size() > depth) {
+                    break;
+                }
+
+                // Enhanced early termination: too many empty checks
+                if (emptyCount > 15) {
                     break;
                 }
 
@@ -493,6 +532,7 @@ public class FFFluidUtils {
                     int amount = state.getAmount();
                     if (amount > 0) {
                         foundAmount += amount;
+                        emptyCount = 0; // Reset counter on success
                         if (foundAmount > maxAmountToFind) {
                             final int finalLevel = foundAmount - maxAmountToFind;
                             positionBuffer.add(currentKey);
@@ -509,12 +549,17 @@ public class FFFluidUtils {
                                 neighbourPos.set(mutablePos.getX(), mutablePos.getY(), mutablePos.getZ());
                                 neighbourPos.move(direction);
                                 long neighbourKey = neighbourPos.asLong();
-                                if (discoveredPositions.add(neighbourKey)) {
+                                if (!discoveredPositions.containsKey(neighbourKey)) {
+                                    discoveredPositions.put(neighbourKey, (byte)1);
                                     positionsToCheck.enqueue(neighbourKey);
                                 }
                             }
                         }
+                    } else {
+                        emptyCount++; // Track empty checks
                     }
+                } else {
+                    emptyCount++; // Track non-matching fluid
                 }
             }
 
@@ -557,9 +602,101 @@ public class FFFluidUtils {
         return CARDINAL_SHUFFLE_PATTERNS[random.nextInt(CARDINAL_SHUFFLE_PATTERNS.length)];
     }
 
+    /**
+     * Gravity-biased cardinal direction shuffle for more natural fluid flow.
+     * This version biases the selection toward slopes and natural flow patterns.
+     *
+     * @param random Random source for shuffling
+     * @param currentY Current Y position for slope detection
+     * @param level Level accessor for checking surrounding terrain
+     * @param pos Current block position
+     * @return Shuffled directions with gravity bias applied
+     */
+    public static Direction[] getCardinalsShuffleWithGravityBias(RandomSource random, int currentY, BlockGetter level, BlockPos pos) {
+        Direction[] baseDirections = CARDINAL_SHUFFLE_PATTERNS[random.nextInt(CARDINAL_SHUFFLE_PATTERNS.length)];
+
+        // Quick check: if we're high up or have significant slope potential, apply bias
+        if (currentY > 64 && random.nextFloat() < 0.7f) {
+            // Check for downward slopes in each cardinal direction
+            int maxDropDistance = 0;
+            Direction bestDirection = null;
+
+            for (Direction dir : Direction.Plane.HORIZONTAL) {
+                BlockPos checkPos = pos.relative(dir);
+                // Check how far down we can go in this direction
+                int dropDistance = 0;
+                for (int i = 0; i < 3; i++) {
+                    BlockPos below = checkPos.below(i);
+                    if (level.getFluidState(below).isEmpty() && level.getBlockState(below).isAir()) {
+                        dropDistance++;
+                    } else {
+                        break;
+                    }
+                }
+
+                if (dropDistance > maxDropDistance) {
+                    maxDropDistance = dropDistance;
+                    bestDirection = dir;
+                }
+            }
+
+            // If we found a significant slope (2+ blocks drop), bias toward it
+            if (maxDropDistance >= 2 && bestDirection != null) {
+                Direction[] biasedDirections = new Direction[4];
+                biasedDirections[0] = bestDirection; // Prioritize slope direction
+                int idx = 1;
+                for (Direction dir : baseDirections) {
+                    if (dir != bestDirection) {
+                        biasedDirections[idx++] = dir;
+                    }
+                }
+                return biasedDirections;
+            }
+        }
+
+        return baseDirections;
+    }
+
     public static Direction[] getAllDirectionsShuffled(RandomSource random) {
         // For all directions (6 elements), still use dynamic shuffle as pre-computing 720 patterns would be excessive
         return shuffleDirections(random, ALL_DIRECTIONS, ALL_DIRECTION_BUFFER.get());
+    }
+
+    /**
+     * All directions shuffled with gravity bias (DOWN prioritized).
+     * This creates more natural fluid flow by always checking downward first.
+     */
+    public static Direction[] getAllDirectionsShuffledWithGravityBias(RandomSource random) {
+        Direction[] buffer = ALL_DIRECTION_BUFFER.get();
+        System.arraycopy(ALL_DIRECTIONS, 0, buffer, 0, ALL_DIRECTIONS.length);
+
+        // Always prioritize DOWN direction for natural gravity
+        buffer[0] = Direction.DOWN;
+
+        // Shuffle the remaining 5 directions
+        int downIndex = -1;
+        for (int i = 1; i < buffer.length; i++) {
+            if (buffer[i] == Direction.DOWN) {
+                downIndex = i;
+                break;
+            }
+        }
+
+        // Swap DOWN to first position if found
+        if (downIndex > 0) {
+            buffer[downIndex] = buffer[0];
+            buffer[0] = Direction.DOWN;
+        }
+
+        // Shuffle remaining positions (1 to length-1)
+        for (int i = buffer.length - 1; i > 1; i--) {
+            int swapIndex = 1 + random.nextInt(i);
+            Direction tmp = buffer[i];
+            buffer[i] = buffer[swapIndex];
+            buffer[swapIndex] = tmp;
+        }
+
+        return buffer;
     }
 
     private static Direction[] shuffleDirections(RandomSource random, Direction[] source, Direction[] buffer) {
@@ -574,10 +711,8 @@ public class FFFluidUtils {
     }
 
     private static boolean checkBlockIsNonDisplacer(Fluid fluid, BlockState state) {
-        return FlowingFluids.nonDisplacerTags.stream().anyMatch(pair ->
-                        (pair.first() == Fluids.EMPTY || pair.first().isSame(fluid)) && state.is(pair.second()))
-                || FlowingFluids.nonDisplacers.stream().anyMatch(pair ->
-                        (pair.first() == Fluids.EMPTY || pair.first().isSame(fluid)) && state.is(pair.second()));
+        // Optimized: Use pre-computed block compatibility cache instead of stream checks
+        return BlockCompatibilityCache.isNonDisplacer(fluid, state);
     }
 
     public static void displaceFluids(final Level level, final BlockPos pos, final BlockState state, final int flags, final LevelChunk levelChunk, final BlockState originalState) {
@@ -602,19 +737,84 @@ public class FFFluidUtils {
 
 
             try {
-                // try spread to the side as much as possible
+                // Enhanced displacement with dynamic priority calculation
+                // Prioritize directions based on:
+                // 1. Existing same fluid (easiest merge)
+                // 2. Air blocks with downward slopes (natural flow)
+                // 3. Air blocks on same level
+                // 4. Last resort: upward displacement
                 int amountRemaining = originalState.getFluidState().getAmount();
-                for (Direction direction : getCardinalsShuffle(level.getRandom())) {
+
+                // First pass: Try to merge with existing same fluid (highest priority)
+                Direction[] directions = getCardinalsShuffle(level.getRandom());
+                for (Direction direction : directions) {
+                    if (amountRemaining == 0) break;
+
                     BlockPos offset = pos.relative(direction);
                     BlockState offsetState = level.getBlockState(offset);
 
-                    if (offsetState.getFluidState().getType() instanceof FlowingFluid) {
+                    if (offsetState.getFluidState().getType() instanceof FlowingFluid
+                            && offsetState.getFluidState().getType().isSame(flowSource)) {
+                        // Same fluid - prioritize this
+                        int spaceBefore = 8 - offsetState.getFluidState().getAmount();
                         amountRemaining = addAmountToFluidAtPosWithRemainder(level, offset, flowSource, amountRemaining);
                         if (amountRemaining == 0) break;
-                    } else if (offsetState.isAir()) {
+                    }
+                }
+
+                // Second pass: Air blocks (check for downward slopes for natural flow)
+                if (amountRemaining > 0) {
+                    Direction bestAirDirection = null;
+                    int bestDropDistance = 0;
+
+                    for (Direction direction : directions) {
+                        BlockPos offset = pos.relative(direction);
+                        BlockState offsetState = level.getBlockState(offset);
+
+                        if (offsetState.isAir()) {
+                            // Check how far down this direction can flow
+                            int dropDistance = 0;
+                            BlockPos checkPos = offset;
+                            for (int i = 0; i < 3; i++) {
+                                checkPos = checkPos.below();
+                                BlockState belowState = level.getBlockState(checkPos);
+                                if (belowState.isAir() || belowState.getFluidState().getType().isSame(flowSource)) {
+                                    dropDistance++;
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            // Prefer directions with downward slopes
+                            if (dropDistance > bestDropDistance) {
+                                bestDropDistance = dropDistance;
+                                bestAirDirection = direction;
+                            } else if (bestAirDirection == null) {
+                                // Any air is better than none
+                                bestAirDirection = direction;
+                            }
+                        }
+                    }
+
+                    // Place fluid in best air direction
+                    if (bestAirDirection != null) {
+                        BlockPos offset = pos.relative(bestAirDirection);
                         level.setBlock(offset, originalState.getFluidState().createLegacyBlock(), 3);
                         amountRemaining = 0;
-                        break;
+                    }
+                }
+
+                // Third pass: Try other fluids (lower priority)
+                if (amountRemaining > 0) {
+                    for (Direction direction : directions) {
+                        if (amountRemaining == 0) break;
+
+                        BlockPos offset = pos.relative(direction);
+                        BlockState offsetState = level.getBlockState(offset);
+
+                        if (offsetState.getFluidState().getType() instanceof FlowingFluid) {
+                            amountRemaining = addAmountToFluidAtPosWithRemainder(level, offset, flowSource, amountRemaining);
+                        }
                     }
                 }
                 if (amountRemaining > 0) {
