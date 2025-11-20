@@ -16,7 +16,9 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 public class PlugWaterFeature {
 
@@ -30,15 +32,21 @@ public class PlugWaterFeature {
     };
 
     public static Set<BlockPos> findBlocks(ChunkAccess chunkAccess, int x1, int y1, int z1, int x2, int y2, int z2) {
-        BlockPos.MutableBlockPos mutableBlockPos = new BlockPos.MutableBlockPos();
+        // Parallel optimization: use ConcurrentHashMap for thread-safe concurrent additions
+        // Process sections in parallel for improved performance during world generation
+        var set = ConcurrentHashMap.<BlockPos>newKeySet();
 
-        var set = new HashSet<BlockPos>();
-        for (int i = #if MC>MC_21 chunkAccess.getMinSectionY() #else chunkAccess.getMinSection() #endif ;
-             i < #if MC>MC_21 chunkAccess.getMaxSectionY() #else chunkAccess.getMaxSection() #endif ;
-             ++i) {
+        int minSection = #if MC>MC_21 chunkAccess.getMinSectionY() #else chunkAccess.getMinSection() #endif;
+        int maxSection = #if MC>MC_21 chunkAccess.getMaxSectionY() #else chunkAccess.getMaxSection() #endif;
+
+        // Parallel stream over sections for better multi-core utilization
+        IntStream.range(minSection, maxSection).parallel().forEach(i -> {
             LevelChunkSection levelChunkSection = chunkAccess.getSection(chunkAccess.getSectionIndexFromSectionY(i));
             if (levelChunkSection.maybeHas(PlugWaterFeature::isFluidSource)) {
                 BlockPos blockPos = SectionPos.of(chunkAccess.getPos(), i).origin();
+                // Use thread-local mutable position for thread safety
+                BlockPos.MutableBlockPos mutableBlockPos = new BlockPos.MutableBlockPos();
+
                 for (int y = y1; y < y2; ++y) {
                     for (int z = z1; z < z2; ++z) {
                         for (int x = x1; x < x2; ++x) {
@@ -50,7 +58,8 @@ public class PlugWaterFeature {
                     }
                 }
             }
-        }
+        });
+
         return set;
 
     }
