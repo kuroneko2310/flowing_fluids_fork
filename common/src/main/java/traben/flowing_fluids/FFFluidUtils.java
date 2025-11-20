@@ -1,7 +1,9 @@
 package traben.flowing_fluids;
 
 import it.unimi.dsi.fastutil.Pair;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -31,6 +33,36 @@ public class FFFluidUtils {
     private static final Direction[] ALL_DIRECTIONS = Direction.values();
     private static final ThreadLocal<Direction[]> CARDINAL_BUFFER = ThreadLocal.withInitial(() -> new Direction[CARDINAL_DIRECTIONS.length]);
     private static final ThreadLocal<Direction[]> ALL_DIRECTION_BUFFER = ThreadLocal.withInitial(() -> new Direction[ALL_DIRECTIONS.length]);
+
+    // ThreadLocal caches for fluid traversal to avoid allocations
+    private static final ThreadLocal<LongArrayFIFOQueue> POSITION_QUEUE = ThreadLocal.withInitial(LongArrayFIFOQueue::new);
+    private static final ThreadLocal<LongOpenHashSet> VISITED_POSITIONS = ThreadLocal.withInitial(LongOpenHashSet::new);
+    private static final ThreadLocal<LongArrayList> POSITION_BUFFER = ThreadLocal.withInitial(LongArrayList::new);
+    private static final ThreadLocal<IntArrayList> LEVEL_BUFFER = ThreadLocal.withInitial(IntArrayList::new);
+
+    private static LongArrayFIFOQueue getPositionQueue() {
+        LongArrayFIFOQueue queue = POSITION_QUEUE.get();
+        queue.clear();
+        return queue;
+    }
+
+    private static LongOpenHashSet getVisitedPositions() {
+        LongOpenHashSet visited = VISITED_POSITIONS.get();
+        visited.clear();
+        return visited;
+    }
+
+    private static LongArrayList getPositionBuffer() {
+        LongArrayList buffer = POSITION_BUFFER.get();
+        buffer.clear();
+        return buffer;
+    }
+
+    private static IntArrayList getLevelBuffer() {
+        IntArrayList buffer = LEVEL_BUFFER.get();
+        buffer.clear();
+        return buffer;
+    }
 
 
     public static @NotNull ResourceLocation res(String fullPath){
@@ -355,6 +387,8 @@ public class FFFluidUtils {
 
             LongArrayFIFOQueue positionsToCheck = new LongArrayFIFOQueue();
             LongOpenHashSet discoveredPositions = new LongOpenHashSet();
+            LongArrayList positionBuffer = getPositionBuffer();
+            IntArrayList levelBuffer = getLevelBuffer();
             RandomSource random = levelAccessor.getRandom();
 
             long originKey = blockPos.asLong();
@@ -383,20 +417,21 @@ public class FFFluidUtils {
 
                 long currentKey = positionsToCheck.dequeueLong();
                 mutablePos.set(BlockPos.getX(currentKey), BlockPos.getY(currentKey), BlockPos.getZ(currentKey));
-                BlockPos currentPos = mutablePos.immutable();
 
-                var state = levelAccessor.getFluidState(currentPos);
+                var state = levelAccessor.getFluidState(mutablePos);
                 if (fluid.isSame(state.getType())) {
                     int amount = state.getAmount();
                     if (amount > 0) {
                         foundAmount += amount;
                         if (foundAmount > maxAmountToFind) {
                             final int finalLevel = foundAmount - maxAmountToFind;
-                            onSuccessAirSetters.add(() -> FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, currentPos, fluid, finalLevel));
+                            positionBuffer.add(currentKey);
+                            levelBuffer.add(finalLevel);
                             foundAmount = maxAmountToFind;
                             break;
                         } else {
-                            onSuccessAirSetters.add(() -> FFFluidUtils.removeAllFluidAtPos(levelAccessor, currentPos, fluid));
+                            positionBuffer.add(currentKey);
+                            levelBuffer.add(0); // 0 means remove
                             if (foundAmount == maxAmountToFind) {
                                 break;
                             }
