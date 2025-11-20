@@ -532,6 +532,10 @@ public abstract class MixinFlowingFluid extends Fluid {
         int slopeFindDistance = getSlopeFindDistance(level);
         if (slopeFindDistance < 1) return null;
 
+        // Adaptive distance optimization: reduce search distance for smaller fluid amounts
+        // This reduces unnecessary checks when fluid amount is low
+        int adaptiveSlopeFindDistance = amount > 4 ? slopeFindDistance : Math.max(1, slopeFindDistance / 2);
+
         Short2BooleanOpenHashMap posCanFlowDown = ff$getFlowDownCache();
         posCanFlowDown.put(ffCacheKey(blockPos, blockPos), false);
 
@@ -547,6 +551,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                 mutablePos.move(dir);
                 short key = ffCacheKey(blockPos, mutablePos);
 
+                // Early exit: if we found a much lower neighbor or can flow down, return immediately
                 if (directionAmounts[i] < amount - 1 || flowing_fluids$getSetFlowDownCache(key, level, posCanFlowDown, mutablePos, sourceFluid, requiresSlope)) {
                     return dir;
                 }
@@ -554,11 +559,16 @@ public abstract class MixinFlowingFluid extends Fluid {
                 int distance = flowing_fluids$getSlopeDistance(
                         level, blockPos, 1, dir.getOpposite(),
                         sourceFluid, amount + 1, mutablePos.immutable(), statesAtPos,
-                        posCanFlowDown, requiresSlope, slopeFindDistance);
+                        posCanFlowDown, requiresSlope, adaptiveSlopeFindDistance);
 
-                if ((!requiresSlope || distance <= slopeFindDistance) && distance < bestDistance) {
+                if ((!requiresSlope || distance <= adaptiveSlopeFindDistance) && distance < bestDistance) {
                     bestDistance = distance;
                     bestDirection = dir;
+
+                    // Early exit optimization: if we found a very close slope, no need to check other directions
+                    if (bestDistance <= 2) {
+                        break;
+                    }
                 }
             }
 
