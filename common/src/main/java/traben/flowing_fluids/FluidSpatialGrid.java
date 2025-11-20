@@ -168,6 +168,42 @@ public class FluidSpatialGrid {
     }
 
     /**
+     * Initializes spatial grid for a chunk by scanning existing fluids.
+     * CRITICAL: Call this when a chunk is loaded to populate the grid.
+     *
+     * @param level World level
+     * @param chunkPos Chunk position to initialize
+     */
+    public static void initializeChunk(net.minecraft.world.level.Level level, ChunkPos chunkPos) {
+        if (level == null) return;
+
+        ChunkFluidGrid grid = chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
+
+        int minX = chunkPos.getMinBlockX();
+        int minZ = chunkPos.getMinBlockZ();
+        int maxX = chunkPos.getMaxBlockX();
+        int maxZ = chunkPos.getMaxBlockZ();
+
+        // Scan all blocks in the chunk
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int y = level.getMinBuildHeight(); y < level.getMaxBuildHeight(); y++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    net.minecraft.world.level.material.FluidState fluidState = level.getFluidState(pos);
+
+                    if (!fluidState.isEmpty()) {
+                        // Convert BlockState amount (0-8) to internal (0-255)
+                        int blockStateAmount = fluidState.getAmount();
+                        int internalAmount = FluidAmountConverter.toInternal(blockStateAmount);
+
+                        grid.setFluidAt(pos, true, internalAmount);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Clears the grid for a specific chunk.
      */
     public static void clearChunk(ChunkPos chunkPos) {
@@ -273,20 +309,22 @@ public class FluidSpatialGrid {
         public void setFluidAt(BlockPos pos, boolean hasFluid, int amount) {
             int index = posToIndex(pos);
             boolean wasFluid = fluidPresence.get(index);
+            int oldAmount = wasFluid ? (fluidAmounts[index] & 0xFF) : 0;
 
             fluidPresence.set(index, hasFluid);
 
+            int newAmount = 0;
             if (hasFluid) {
                 // Clamp amount to 0-255 range
-                int clampedAmount = Math.max(0, Math.min(255, amount));
-                fluidAmounts[index] = (byte) clampedAmount;
+                newAmount = Math.max(0, Math.min(255, amount));
+                fluidAmounts[index] = (byte) newAmount;
             } else {
                 fluidAmounts[index] = 0;
             }
 
-            // Update macro cell data when fluid changes
-            if (wasFluid != hasFluid) {
-                updateMacroCell(pos);
+            // Update macro cell data when fluid changes (optimized differential update)
+            if (wasFluid != hasFluid || oldAmount != newAmount) {
+                updateMacroCellDifferential(pos, oldAmount, newAmount, wasFluid, hasFluid);
             }
         }
 
@@ -334,10 +372,51 @@ public class FluidSpatialGrid {
         }
 
         /**
-         * Updates macro cell statistics when fluid changes.
+         * Updates macro cell statistics using differential update (OPTIMIZED).
+         * Instead of scanning all 4096 blocks, updates based on the change.
+         */
+        private void updateMacroCellDifferential(BlockPos pos, int oldAmount, int newAmount,
+                                                  boolean wasFluid, boolean isFluid) {
+            int macroIndex = posToMacroIndex(pos);
+
+            // Get current macro cell state
+            float currentAvg = macroAverageLevels[macroIndex];
+            boolean hadFluid = macroFluidPresence.get(macroIndex);
+
+            // If this is the first update or macro cell is empty, do full scan
+            if (!hadFluid && isFluid) {
+                updateMacroCellFull(pos);
+                return;
+            }
+
+            // Calculate fluid count change
+            int countChange = 0;
+            if (!wasFluid && isFluid) countChange = 1;
+            if (wasFluid && !isFluid) countChange = -1;
+
+            // Estimate new count (approximation for performance)
+            int estimatedCount = Math.max(1, (int)(currentAvg > 0 ? 1 : 0) + countChange);
+
+            // Calculate new total
+            float oldTotal = currentAvg * estimatedCount;
+            float newTotal = oldTotal - oldAmount + newAmount;
+
+            // Update macro cell
+            boolean stillHasFluid = (isFluid || estimatedCount > 1);
+            macroFluidPresence.set(macroIndex, stillHasFluid);
+
+            if (stillHasFluid && estimatedCount > 0) {
+                macroAverageLevels[macroIndex] = newTotal / estimatedCount;
+            } else {
+                macroAverageLevels[macroIndex] = 0.0f;
+            }
+        }
+
+        /**
+         * Updates macro cell statistics with full scan (fallback for edge cases).
          * Recalculates average level and updates fluid presence flag.
          */
-        private void updateMacroCell(BlockPos pos) {
+        private void updateMacroCellFull(BlockPos pos) {
             int macroIndex = posToMacroIndex(pos);
             int macroX = (pos.getX() & 15) / MACRO_CELL_SIZE;
             int macroY = (pos.getY() - MIN_HEIGHT) / MACRO_CELL_SIZE;

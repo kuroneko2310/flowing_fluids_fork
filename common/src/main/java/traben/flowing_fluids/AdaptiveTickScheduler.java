@@ -48,10 +48,17 @@ public class AdaptiveTickScheduler {
     // Map from ChunkPos to area type for BFS budget determination
     private static final ConcurrentHashMap<ChunkPos, AreaType> areaTypes = new ConcurrentHashMap<>();
 
+    // Sampled directions for faster equilibrium calculation (optimized)
+    private static final Direction[] SAMPLED_DIRECTIONS = new Direction[]{
+        Direction.DOWN, Direction.NORTH, Direction.EAST
+    };
+
     /**
      * Calculates equilibrium index for a fluid position.
      *
      * E = |height - avgNeighborHeight| + localGradientChange + flowChangeRate
+     *
+     * OPTIMIZED: Samples only 3 directions instead of 6 for performance.
      *
      * @return Equilibrium index (0.0 = perfect equilibrium, higher = more unstable)
      */
@@ -61,11 +68,11 @@ public class AdaptiveTickScheduler {
         long posKey = pos.asLong();
         FluidStabilityData data = stabilityMap.get(posKey);
 
-        // Calculate average neighbor height
+        // Calculate average neighbor height (sampled for performance)
         float avgNeighborHeight = 0;
         int neighborCount = 0;
 
-        for (Direction dir : Direction.values()) {
+        for (Direction dir : SAMPLED_DIRECTIONS) {
             BlockPos neighborPos = pos.relative(dir);
             FluidState neighborFluid = level.getFluidState(neighborPos);
             if (!neighborFluid.isEmpty()) {

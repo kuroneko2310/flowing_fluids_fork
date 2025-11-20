@@ -31,6 +31,14 @@ public class EnhancedFluidBFS {
     private static final int DEPTH_RIVER = 300;      // Natural rivers
     private static final int DEPTH_OCEAN = 64;       // Large water bodies (ultra-light)
 
+    // Direction cache to avoid repeated sorting (optimization)
+    private static final Map<Vec3i, Direction[]> directionCache = new java.util.concurrent.ConcurrentHashMap<>(100);
+
+    // Default direction order (null gradient)
+    private static final Direction[] DEFAULT_DIRECTIONS = new Direction[]{
+        Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
+    };
+
     /**
      * Performs BFS equalization with all enhancements.
      *
@@ -143,18 +151,27 @@ public class EnhancedFluidBFS {
     /**
      * Gets directions sorted by weight (gradient preference).
      * Returns directions in order: downslope, horizontal, upslope.
+     *
+     * OPTIMIZED: Uses cache to avoid repeated sorting.
      */
     private static Direction[] getWeightedDirections(Vec3i gradientVector) {
-        Direction[] directions = Direction.values();
+        if (gradientVector == null) {
+            return DEFAULT_DIRECTIONS;
+        }
 
-        // Sort by weight (lower = preferred)
-        Arrays.sort(directions, (a, b) -> {
-            float weightA = ChunkLocalSlopeCache.calculateDirectionWeight(gradientVector, a);
-            float weightB = ChunkLocalSlopeCache.calculateDirectionWeight(gradientVector, b);
-            return Float.compare(weightA, weightB);
+        // Check cache first
+        return directionCache.computeIfAbsent(gradientVector, gv -> {
+            Direction[] directions = Direction.values().clone();
+
+            // Sort by weight (lower = preferred)
+            Arrays.sort(directions, (a, b) -> {
+                float weightA = ChunkLocalSlopeCache.calculateDirectionWeight(gv, a);
+                float weightB = ChunkLocalSlopeCache.calculateDirectionWeight(gv, b);
+                return Float.compare(weightA, weightB);
+            });
+
+            return directions;
         });
-
-        return directions;
     }
 
     /**
@@ -233,43 +250,46 @@ public class EnhancedFluidBFS {
     /**
      * Performs equalization on a list of positions.
      * Uses the TickBuffer to batch changes.
+     *
+     * FIXED: NPE handling and proper iteration through valid positions only.
      */
     public static void equalizePositions(Level level, List<BlockPos> positions) {
         if (positions.isEmpty()) {
             return;
         }
 
-        // Calculate total fluid amount
+        // Calculate total fluid amount and collect valid positions
         int totalAmount = 0;
-        int validPositions = 0;
+        List<BlockPos> validPos = new ArrayList<>();
 
         for (BlockPos pos : positions) {
             int amount = FluidSpatialGrid.getFluidAmount(pos);
             if (amount > 0 || canAcceptFluid(level, pos)) {
                 totalAmount += amount;
-                validPositions++;
+                validPos.add(pos);
             }
         }
 
-        if (validPositions == 0) {
+        if (validPos.isEmpty()) {
             return;
         }
 
         // Calculate average amount
-        int averageAmount = totalAmount / validPositions;
-        int remainder = totalAmount % validPositions;
+        int averageAmount = totalAmount / validPos.size();
+        int remainder = totalAmount % validPos.size();
 
-        // Distribute fluid evenly
-        for (int i = 0; i < positions.size() && i < validPositions; i++) {
-            BlockPos pos = positions.get(i);
+        // Distribute fluid evenly to valid positions only
+        for (int i = 0; i < validPos.size(); i++) {
+            BlockPos pos = validPos.get(i);
 
             // Give remainder to first few positions
             int newAmount = averageAmount + (i < remainder ? 1 : 0);
 
-            // Buffer the change
-            FluidState fluid = level.getFluidState(pos);
-            FluidTickBuffer.bufferFluidChange(pos, newAmount, newAmount > 0,
-                fluid.isEmpty() ? null : fluid.getType());
+            // Buffer the change with null safety
+            FluidState fluidState = level.getFluidState(pos);
+            Fluid fluidType = (fluidState != null && !fluidState.isEmpty()) ? fluidState.getType() : null;
+
+            FluidTickBuffer.bufferFluidChange(pos, newAmount, newAmount > 0, fluidType);
         }
     }
 

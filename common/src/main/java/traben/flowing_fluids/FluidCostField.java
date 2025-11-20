@@ -38,8 +38,13 @@ public class FluidCostField {
     // Maximum search distance for pathfinding
     private static final int MAX_SEARCH_DISTANCE = 16;
 
+    // Maximum nodes to explore (prevents infinite loops)
+    private static final int MAX_SEARCH_NODES = 1000;
+
     /**
      * Finds the lowest cost path for fluid displacement.
+     *
+     * FIXED: Proper search range and PriorityQueue duplicate handling.
      *
      * @param level Block getter for world access
      * @param source Source position where fluid is being displaced from
@@ -50,17 +55,28 @@ public class FluidCostField {
         // Priority queue ordered by total path cost
         PriorityQueue<PathNode> openSet = new PriorityQueue<>(Comparator.comparingDouble(n -> n.totalCost));
         Map<BlockPos, PathNode> visited = new HashMap<>();
+        Set<BlockPos> inQueue = new HashSet<>(); // Track what's in the queue
 
         // Start at source
         PathNode startNode = new PathNode(source, null, 0.0f, 0);
         openSet.add(startNode);
         visited.put(source, startNode);
+        inQueue.add(source);
 
         PathNode bestNode = null;
         float bestScore = Float.POSITIVE_INFINITY;
+        int nodesExplored = 0;
 
-        while (!openSet.isEmpty() && visited.size() < MAX_SEARCH_DISTANCE * 6) {
+        while (!openSet.isEmpty() && nodesExplored < MAX_SEARCH_NODES) {
             PathNode current = openSet.poll();
+            inQueue.remove(current.pos);
+            nodesExplored++;
+
+            // Skip if we've found a better path to this position already
+            PathNode visitedNode = visited.get(current.pos);
+            if (visitedNode != null && visitedNode.totalCost < current.totalCost) {
+                continue;
+            }
 
             // Check if this position can accept the fluid
             if (canAcceptFluid(level, current.pos, source, fluidAmount)) {
@@ -103,9 +119,16 @@ public class FluidCostField {
                 // Check if this is a better path to neighbor
                 PathNode existingNode = visited.get(neighborPos);
                 if (existingNode == null || newCost < existingNode.totalCost) {
+                    // Remove old node from queue if present
+                    if (existingNode != null && inQueue.contains(neighborPos)) {
+                        openSet.remove(existingNode);
+                        inQueue.remove(neighborPos);
+                    }
+
                     PathNode neighborNode = new PathNode(neighborPos, current, newCost, current.depth + 1);
                     visited.put(neighborPos, neighborNode);
                     openSet.add(neighborNode);
+                    inQueue.add(neighborPos);
                 }
             }
         }

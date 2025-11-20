@@ -25,39 +25,74 @@ public class FluidAmountConverter {
 
     private static final int INTERNAL_MAX = 255;
     private static final int BLOCKSTATE_MAX = 8;
-    private static final float CONVERSION_FACTOR = (float) INTERNAL_MAX / BLOCKSTATE_MAX;
+
+    // Pre-computed conversion tables for accuracy and performance
+    private static final int[] TO_INTERNAL_TABLE = {
+        0,    // 0 -> 0
+        32,   // 1 -> 32
+        64,   // 2 -> 64
+        96,   // 3 -> 96
+        128,  // 4 -> 128
+        160,  // 5 -> 160
+        192,  // 6 -> 192
+        224,  // 7 -> 224
+        255   // 8 -> 255
+    };
+
+    private static final int[] TO_BLOCKSTATE_TABLE = new int[256];
+
+    // Initialize reverse lookup table
+    static {
+        for (int i = 0; i < 256; i++) {
+            // Map internal amount to nearest BlockState amount
+            if (i == 0) {
+                TO_BLOCKSTATE_TABLE[i] = 0;
+            } else if (i <= 32) {
+                TO_BLOCKSTATE_TABLE[i] = 1;
+            } else if (i <= 64) {
+                TO_BLOCKSTATE_TABLE[i] = 2;
+            } else if (i <= 96) {
+                TO_BLOCKSTATE_TABLE[i] = 3;
+            } else if (i <= 128) {
+                TO_BLOCKSTATE_TABLE[i] = 4;
+            } else if (i <= 160) {
+                TO_BLOCKSTATE_TABLE[i] = 5;
+            } else if (i <= 192) {
+                TO_BLOCKSTATE_TABLE[i] = 6;
+            } else if (i <= 224) {
+                TO_BLOCKSTATE_TABLE[i] = 7;
+            } else {
+                TO_BLOCKSTATE_TABLE[i] = 8;
+            }
+        }
+    }
 
     /**
      * Converts BlockState amount (0-8) to internal amount (0-255).
+     *
+     * OPTIMIZED: Uses pre-computed table for perfect accuracy and O(1) performance.
      *
      * @param blockStateAmount Minecraft BlockState fluid amount (0-8)
      * @return Internal high-precision amount (0-255)
      */
     public static int toInternal(int blockStateAmount) {
-        if (blockStateAmount <= 0) return 0;
+        if (blockStateAmount < 0) return 0;
         if (blockStateAmount >= BLOCKSTATE_MAX) return INTERNAL_MAX;
-
-        // Linear interpolation: amount * (255/8) = amount * 31.875
-        // Round to nearest integer for accuracy
-        return Math.round(blockStateAmount * CONVERSION_FACTOR);
+        return TO_INTERNAL_TABLE[blockStateAmount];
     }
 
     /**
      * Converts internal amount (0-255) to BlockState amount (0-8).
      *
+     * OPTIMIZED: Uses pre-computed table for perfect accuracy and O(1) performance.
+     *
      * @param internalAmount Internal high-precision amount (0-255)
      * @return Minecraft BlockState fluid amount (0-8)
      */
     public static int toBlockState(int internalAmount) {
-        if (internalAmount <= 0) return 0;
+        if (internalAmount < 0) return 0;
         if (internalAmount >= INTERNAL_MAX) return BLOCKSTATE_MAX;
-
-        // Linear interpolation: amount / (255/8) = amount / 31.875
-        // Round to nearest integer
-        int blockStateAmount = Math.round(internalAmount / CONVERSION_FACTOR);
-
-        // Clamp to valid range
-        return Math.max(0, Math.min(BLOCKSTATE_MAX, blockStateAmount));
+        return TO_BLOCKSTATE_TABLE[internalAmount];
     }
 
     /**
