@@ -150,7 +150,6 @@ public abstract class MixinFlowingFluid extends Fluid {
 
             final int amountLess = amount - 1;
 
-            RandomSource random = level.getRandom();
             Direction[] shuffled = FFFluidUtils.getCardinalsShuffle(random);
             final Direction randomDirection = shuffled[0];
 
