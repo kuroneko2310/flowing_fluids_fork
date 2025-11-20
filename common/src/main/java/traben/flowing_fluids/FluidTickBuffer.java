@@ -2,13 +2,13 @@ package traben.flowing_fluids;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.material.Fluid;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * Batches fluid state updates to apply at tick end.
@@ -22,11 +22,28 @@ import java.util.Map;
  *
  * Performance improvement: 50%+ reduction in redundant update notifications,
  * prevents multiple updates to same position in single tick.
+ *
+ * FIXED: Thread-safe implementation that properly collects from all parallel threads.
  */
 public class FluidTickBuffer {
 
-    // Thread-local buffers to avoid concurrent modification during parallel ticking
-    private static final ThreadLocal<TickBuffer> threadLocalBuffer = ThreadLocal.withInitial(TickBuffer::new);
+    // Thread-safe map to collect buffers from all threads during parallel ticking
+    private static final ConcurrentHashMap<Long, TickBuffer> threadBuffers = new ConcurrentHashMap<>();
+
+    // Thread ID tracker for cleanup
+    private static final ThreadLocal<Long> currentThreadId = ThreadLocal.withInitial(() -> {
+        long threadId = Thread.currentThread().getId();
+        threadBuffers.putIfAbsent(threadId, new TickBuffer());
+        return threadId;
+    });
+
+    /**
+     * Gets the current thread's buffer, creating if necessary.
+     */
+    private static TickBuffer getCurrentBuffer() {
+        long threadId = currentThreadId.get();
+        return threadBuffers.computeIfAbsent(threadId, k -> new TickBuffer());
+    }
 
     /**
      * Buffers a fluid amount change for batch processing.
@@ -37,7 +54,7 @@ public class FluidTickBuffer {
      * @param fluid The fluid type
      */
     public static void bufferFluidChange(BlockPos pos, int newAmount, boolean hasFluid, Fluid fluid) {
-        TickBuffer buffer = threadLocalBuffer.get();
+        TickBuffer buffer = getCurrentBuffer();
         buffer.fluidChanges.put(pos.immutable(), new FluidChange(newAmount, hasFluid, fluid));
     }
 
@@ -48,7 +65,7 @@ public class FluidTickBuffer {
      * @param gradient Gradient direction
      */
     public static void bufferGradientChange(BlockPos pos, Direction gradient) {
-        TickBuffer buffer = threadLocalBuffer.get();
+        TickBuffer buffer = getCurrentBuffer();
         buffer.gradientChanges.put(pos.immutable(), gradient);
     }
 
@@ -58,7 +75,7 @@ public class FluidTickBuffer {
      * @param pos Position to invalidate slope cache
      */
     public static void bufferSlopeCacheInvalidation(BlockPos pos) {
-        TickBuffer buffer = threadLocalBuffer.get();
+        TickBuffer buffer = getCurrentBuffer();
         buffer.slopeCacheInvalidations.add(pos.immutable());
     }
 
@@ -69,21 +86,35 @@ public class FluidTickBuffer {
      * @param radius Radius to invalidate
      */
     public static void bufferComponentInvalidation(BlockPos center, int radius) {
-        TickBuffer buffer = threadLocalBuffer.get();
+        TickBuffer buffer = getCurrentBuffer();
         buffer.componentInvalidations.add(new ComponentInvalidation(center.immutable(), radius));
     }
 
     /**
-     * Applies all buffered changes at once.
+     * Applies all buffered changes at once from ALL threads.
      * Call this at the end of each tick.
+     *
+     * FIXED: Properly collects and merges buffers from all parallel threads.
      *
      * @param level The level context for updates
      */
     public static void applyAll(Level level) {
-        TickBuffer buffer = threadLocalBuffer.get();
+        // Collect all buffers from all threads
+        Map<BlockPos, FluidChange> allFluidChanges = new HashMap<>();
+        Map<BlockPos, Direction> allGradientChanges = new HashMap<>();
+        Set<BlockPos> allSlopeCacheInvalidations = new HashSet<>();
+        List<ComponentInvalidation> allComponentInvalidations = new ArrayList<>();
+
+        // Merge all thread buffers
+        for (TickBuffer buffer : threadBuffers.values()) {
+            allFluidChanges.putAll(buffer.fluidChanges);
+            allGradientChanges.putAll(buffer.gradientChanges);
+            allSlopeCacheInvalidations.addAll(buffer.slopeCacheInvalidations);
+            allComponentInvalidations.addAll(buffer.componentInvalidations);
+        }
 
         // 1. Apply fluid changes to spatial grid
-        for (Map.Entry<BlockPos, FluidChange> entry : buffer.fluidChanges.entrySet()) {
+        for (Map.Entry<BlockPos, FluidChange> entry : allFluidChanges.entrySet()) {
             BlockPos pos = entry.getKey();
             FluidChange change = entry.getValue();
 
@@ -97,37 +128,49 @@ public class FluidTickBuffer {
         }
 
         // 2. Apply gradient changes
-        for (Map.Entry<BlockPos, Direction> entry : buffer.gradientChanges.entrySet()) {
+        for (Map.Entry<BlockPos, Direction> entry : allGradientChanges.entrySet()) {
             FluidSpatialGrid.setGradientDirection(entry.getKey(), entry.getValue());
         }
 
-        // 3. Apply slope cache invalidations
-        for (BlockPos pos : buffer.slopeCacheInvalidations) {
-            ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
+        // 3. Apply slope cache invalidations (deduplicated by chunk)
+        Set<ChunkPos> chunksToInvalidate = allSlopeCacheInvalidations.stream()
+            .map(ChunkPos::new)
+            .collect(Collectors.toSet());
+
+        for (ChunkPos chunkPos : chunksToInvalidate) {
+            ChunkLocalSlopeCache.clearChunk(chunkPos);
         }
 
         // 4. Apply component invalidations
-        for (ComponentInvalidation invalidation : buffer.componentInvalidations) {
+        for (ComponentInvalidation invalidation : allComponentInvalidations) {
             FluidSpatialGrid.invalidateComponentsInRegion(invalidation.center, invalidation.radius);
         }
 
-        // 5. Clear buffer for next tick
-        buffer.clear();
+        // 5. Clear all buffers for next tick
+        for (TickBuffer buffer : threadBuffers.values()) {
+            buffer.clear();
+        }
     }
 
     /**
-     * Clears the buffer without applying changes.
+     * Clears all buffers without applying changes.
      * Use this if tick is cancelled or aborted.
      */
     public static void clearBuffer() {
-        threadLocalBuffer.get().clear();
+        for (TickBuffer buffer : threadBuffers.values()) {
+            buffer.clear();
+        }
     }
 
     /**
-     * Gets the number of buffered fluid changes (for monitoring).
+     * Gets the total number of buffered fluid changes across all threads (for monitoring).
      */
     public static int getBufferedChangeCount() {
-        return threadLocalBuffer.get().fluidChanges.size();
+        int total = 0;
+        for (TickBuffer buffer : threadBuffers.values()) {
+            total += buffer.fluidChanges.size();
+        }
+        return total;
     }
 
     /**
