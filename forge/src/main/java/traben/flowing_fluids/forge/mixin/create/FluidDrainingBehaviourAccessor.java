@@ -18,10 +18,10 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(FluidDrainingBehaviour.class)
 public interface FluidDrainingBehaviourAccessor {
 
-    @Accessor("fluid")
+    @Accessor(value = "fluid", remap = false)
     Fluid ff$getFluid();
 
-    @Accessor("fluid")
+    @Accessor(value = "fluid", remap = false)
     void ff$setFluid(Fluid fluid);
 }
 #endif

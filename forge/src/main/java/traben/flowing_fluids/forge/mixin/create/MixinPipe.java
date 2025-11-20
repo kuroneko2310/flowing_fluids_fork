@@ -36,9 +36,9 @@ import traben.flowing_fluids.FlowingFluids;
 @Mixin(OpenEndedPipe.class)
 public abstract class MixinPipe{
 
-    @Shadow private Level world;
+    @Shadow(remap = false) private Level world;
 
-    @Shadow private BlockPos outputPos;
+    @Shadow(remap = false) private BlockPos outputPos;
 
     @ModifyArg(method = "removeFluidFromSpace",
             at = @At(value = "INVOKE",
