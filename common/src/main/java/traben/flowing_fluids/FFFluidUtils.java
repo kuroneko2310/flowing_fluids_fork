@@ -24,6 +24,9 @@ import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import org.jetbrains.annotations.NotNull;
+import traben.flowing_fluids.AdaptiveTickScheduler;
+import traben.flowing_fluids.ChunkLocalSlopeCache;
+import traben.flowing_fluids.FluidSpatialGrid;
 
 import java.util.function.Predicate;
 
@@ -137,17 +140,33 @@ public class FFFluidUtils {
 
     public static boolean setFluidStateAtPosToNewAmount(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid, int newAmount) {
         if (newAmount < 1) {
-            return removeAllFluidAtPos(levelAccessor, pos, fluid);
+            boolean result = removeAllFluidAtPos(levelAccessor, pos, fluid);
+            if (result) {
+                // Notify adaptive scheduler, cache, and spatial grid of fluid removal
+                AdaptiveTickScheduler.notifyFluidChange(pos);
+                ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
+                FluidSpatialGrid.removeFluidAt(pos);
+            }
+            return result;
         }
 
         //check if we are dealing with a waterlogged block
         var blockState = levelAccessor.getBlockState(pos);
         if (blockState.getBlock() instanceof LiquidBlockContainer liquidBlockContainer) {
             if (newAmount == 8) {
-                return liquidBlockContainer.placeLiquid(levelAccessor, pos, blockState, getStateForFluidByAmount(fluid, newAmount));
+                boolean result = liquidBlockContainer.placeLiquid(levelAccessor, pos, blockState, getStateForFluidByAmount(fluid, newAmount));
+                if (result) {
+                    AdaptiveTickScheduler.notifyFluidChange(pos);
+                    ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
+                    FluidSpatialGrid.setFluidAt(pos, true);
+                }
+                return result;
             }else if (blockState.getBlock() instanceof BucketPickup bucketPickup) {
                 //always drain the water loggable block if it's not full
                 bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
+                AdaptiveTickScheduler.notifyFluidChange(pos);
+                ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
+                FluidSpatialGrid.removeFluidAt(pos);
                 return true;
             }
             //if we cant fill or drain it check if we can just replace it with the new fluid level by itself
@@ -160,7 +179,13 @@ public class FFFluidUtils {
             flowingFluid.beforeDestroyingBlock(levelAccessor, pos, blockState);
         }
         //else place fluid block
-        return levelAccessor.setBlock(pos, getStateForFluidByAmount(fluid, newAmount).createLegacyBlock(), 3);
+        boolean result = levelAccessor.setBlock(pos, getStateForFluidByAmount(fluid, newAmount).createLegacyBlock(), 3);
+        if (result) {
+            AdaptiveTickScheduler.notifyFluidChange(pos);
+            ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
+            FluidSpatialGrid.setFluidAt(pos, true);
+        }
+        return result;
     }
 
 
@@ -169,6 +194,9 @@ public class FFFluidUtils {
         if (blockState.getBlock() instanceof LiquidBlockContainer
                 && blockState.getBlock() instanceof BucketPickup bucketPickup) {
             bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
+            AdaptiveTickScheduler.notifyFluidChange(pos);
+            ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
+            FluidSpatialGrid.removeFluidAt(pos);
             return true;
         }
 
@@ -176,7 +204,13 @@ public class FFFluidUtils {
             flowingFluid.beforeDestroyingBlock(levelAccessor, pos, blockState);
         }
 
-        return levelAccessor.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+        boolean result = levelAccessor.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+        if (result) {
+            AdaptiveTickScheduler.notifyFluidChange(pos);
+            ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
+            FluidSpatialGrid.removeFluidAt(pos);
+        }
+        return result;
     }
 
 

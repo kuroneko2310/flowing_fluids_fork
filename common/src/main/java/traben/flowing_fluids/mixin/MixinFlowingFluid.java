@@ -33,6 +33,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import traben.flowing_fluids.AdaptiveTickScheduler;
+import traben.flowing_fluids.ChunkLocalSlopeCache;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
@@ -276,7 +278,8 @@ public abstract class MixinFlowingFluid extends Fluid {
                     return;
                 }
 
-                // simple pressure algorithm that might skip some hassle
+                // Enhanced pressure-based fast path algorithm
+                // This optimization detects common patterns and skips expensive slope calculations
                 if (fluidState.getAmount() == 8 && thisState.liquid()) { // not messing with waterloggables here
                     BlockPos abovePos = blockPos.above();
                     var above = level.getBlockState(abovePos);
@@ -294,6 +297,40 @@ public abstract class MixinFlowingFluid extends Fluid {
                                     return;
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Extended fast path: detect fluid column patterns (vertical stack optimization)
+                // If we're a full block with more full blocks above, we can often skip horizontal flow checks
+                if (fluidState.getAmount() == 8 && thisState.liquid() && remainingAmount == 8) {
+                    boolean hasFluidAbove = false;
+                    BlockPos abovePos = blockPos.above();
+                    for (int i = 0; i < 3; i++) { // Check up to 3 blocks above
+                        var aboveState = level.getFluidState(abovePos);
+                        if (aboveState.getType().isSame(this) && aboveState.getAmount() == 8) {
+                            hasFluidAbove = true;
+                            break;
+                        }
+                        abovePos = abovePos.above();
+                    }
+
+                    if (hasFluidAbove) {
+                        // We're in a vertical column - check if all horizontal neighbors are also full
+                        boolean allNeighborsFull = true;
+                        for (Direction dir : Direction.Plane.HORIZONTAL) {
+                            var neighborPos = blockPos.relative(dir);
+                            var neighborFluid = level.getFluidState(neighborPos);
+                            if (!neighborFluid.getType().isSame(this) || neighborFluid.getAmount() < 8) {
+                                allNeighborsFull = false;
+                                break;
+                            }
+                        }
+
+                        if (allNeighborsFull) {
+                            // We're in a stable pool - no need to flow horizontally
+                            // Skip the expensive horizontal flow calculations
+                            return;
                         }
                     }
                 }
@@ -544,6 +581,9 @@ public abstract class MixinFlowingFluid extends Fluid {
             int bestDistance = Integer.MAX_VALUE;
             BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos(blockPos.getX(), blockPos.getY(), blockPos.getZ());
 
+            // Get chunk position for cache
+            var chunkPos = new net.minecraft.world.level.ChunkPos(blockPos);
+
             for (int i = 0; i < directionCount; i++) {
                 Direction dir = directionsCanSpreadToSortedByAmount[i];
                 mutablePos.set(blockPos.getX(), blockPos.getY(), blockPos.getZ());
@@ -555,10 +595,19 @@ public abstract class MixinFlowingFluid extends Fluid {
                     return dir;
                 }
 
-                int distance = flowing_fluids$getSlopeDistance(
-                        level, blockPos, 1, dir.getOpposite(),
-                        sourceFluid, amount + 1, mutablePos.immutable(), statesAtPos,
-                        posCanFlowDown, requiresSlope, adaptiveSlopeFindDistance);
+                // Check cache first for slope distance
+                int distance = ChunkLocalSlopeCache.getCached(chunkPos, blockPos, adaptiveSlopeFindDistance, dir);
+
+                if (distance == -1) {
+                    // Cache miss: calculate and store
+                    distance = flowing_fluids$getSlopeDistance(
+                            level, blockPos, 1, dir.getOpposite(),
+                            sourceFluid, amount + 1, mutablePos.immutable(), statesAtPos,
+                            posCanFlowDown, requiresSlope, adaptiveSlopeFindDistance);
+
+                    // Store in cache for future use
+                    ChunkLocalSlopeCache.putCached(chunkPos, blockPos, adaptiveSlopeFindDistance, dir, distance);
+                }
 
                 if ((!requiresSlope || distance <= adaptiveSlopeFindDistance) && distance < bestDistance) {
                     bestDistance = distance;
