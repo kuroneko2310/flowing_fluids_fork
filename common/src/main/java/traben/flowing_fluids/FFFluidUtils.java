@@ -454,8 +454,9 @@ public class FFFluidUtils {
                 return Pair.of(maxAmountToFind,()->{FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, blockPos, fluid, originalAmount - maxAmountToFind);});
             }
 
-            LongArrayFIFOQueue positionsToCheck = new LongArrayFIFOQueue();
-            LongOpenHashSet discoveredPositions = new LongOpenHashSet();
+            // FIXED: Use ThreadLocal caches for better performance and consistency
+            LongArrayFIFOQueue positionsToCheck = getPositionQueue();
+            LongOpenHashSet discoveredPositions = getVisitedPositions();
             LongArrayList positionBuffer = getPositionBuffer();
             IntArrayList levelBuffer = getLevelBuffer();
             RandomSource random = levelAccessor.getRandom();
@@ -518,8 +519,7 @@ public class FFFluidUtils {
                 }
             }
 
-            positionsToCheck.clear();
-            discoveredPositions.clear();
+            // FIXED: No need to clear ThreadLocal caches - they are managed automatically
 
             if (foundAmount < minAmountRequired) {
                 //failed to find enough fluid so cancel
