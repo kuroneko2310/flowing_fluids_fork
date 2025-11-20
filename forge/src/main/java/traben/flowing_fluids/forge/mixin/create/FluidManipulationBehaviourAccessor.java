@@ -22,7 +22,7 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 @Mixin(FluidManipulationBehaviour.class)
 public interface FluidManipulationBehaviourAccessor {
 
-    @Invoker("playEffect")
+    @Invoker(value = "playEffect", remap = false)
     void ff$PlayEffect(Level world, BlockPos pos, Fluid fluid, boolean fillSound);
 
 }
