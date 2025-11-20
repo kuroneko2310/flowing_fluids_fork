@@ -34,6 +34,35 @@ public class FFFluidUtils {
     private static final ThreadLocal<Direction[]> CARDINAL_BUFFER = ThreadLocal.withInitial(() -> new Direction[CARDINAL_DIRECTIONS.length]);
     private static final ThreadLocal<Direction[]> ALL_DIRECTION_BUFFER = ThreadLocal.withInitial(() -> new Direction[ALL_DIRECTIONS.length]);
 
+    // Pre-computed shuffle patterns for cardinal directions (24 permutations for 4 elements)
+    // This optimization avoids the Fisher-Yates shuffle overhead for frequently used cardinal directions
+    private static final Direction[][] CARDINAL_SHUFFLE_PATTERNS = {
+        {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST},
+        {Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST},
+        {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST},
+        {Direction.NORTH, Direction.EAST, Direction.WEST, Direction.SOUTH},
+        {Direction.NORTH, Direction.WEST, Direction.SOUTH, Direction.EAST},
+        {Direction.NORTH, Direction.WEST, Direction.EAST, Direction.SOUTH},
+        {Direction.SOUTH, Direction.NORTH, Direction.EAST, Direction.WEST},
+        {Direction.SOUTH, Direction.NORTH, Direction.WEST, Direction.EAST},
+        {Direction.SOUTH, Direction.EAST, Direction.NORTH, Direction.WEST},
+        {Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.NORTH},
+        {Direction.SOUTH, Direction.WEST, Direction.NORTH, Direction.EAST},
+        {Direction.SOUTH, Direction.WEST, Direction.EAST, Direction.NORTH},
+        {Direction.EAST, Direction.NORTH, Direction.SOUTH, Direction.WEST},
+        {Direction.EAST, Direction.NORTH, Direction.WEST, Direction.SOUTH},
+        {Direction.EAST, Direction.SOUTH, Direction.NORTH, Direction.WEST},
+        {Direction.EAST, Direction.SOUTH, Direction.WEST, Direction.NORTH},
+        {Direction.EAST, Direction.WEST, Direction.NORTH, Direction.SOUTH},
+        {Direction.EAST, Direction.WEST, Direction.SOUTH, Direction.NORTH},
+        {Direction.WEST, Direction.NORTH, Direction.SOUTH, Direction.EAST},
+        {Direction.WEST, Direction.NORTH, Direction.EAST, Direction.SOUTH},
+        {Direction.WEST, Direction.SOUTH, Direction.NORTH, Direction.EAST},
+        {Direction.WEST, Direction.SOUTH, Direction.EAST, Direction.NORTH},
+        {Direction.WEST, Direction.EAST, Direction.NORTH, Direction.SOUTH},
+        {Direction.WEST, Direction.EAST, Direction.SOUTH, Direction.NORTH}
+    };
+
     // ThreadLocal caches for fluid traversal to avoid allocations
     private static final ThreadLocal<LongArrayFIFOQueue> POSITION_QUEUE = ThreadLocal.withInitial(LongArrayFIFOQueue::new);
     private static final ThreadLocal<LongOpenHashSet> VISITED_POSITIONS = ThreadLocal.withInitial(LongOpenHashSet::new);
@@ -282,9 +311,11 @@ public class FFFluidUtils {
                 long currentKey = queue.dequeueLong();
                 currentPos.set(BlockPos.getX(currentKey), BlockPos.getY(currentKey), BlockPos.getZ(currentKey));
 
-                FluidState state = levelAccessor.getFluidState(currentPos);
+                // Optimize: get BlockState once and derive FluidState from it to avoid double lookup
+                BlockState blockState = levelAccessor.getBlockState(currentPos);
+                FluidState state = blockState.getFluidState();
                 boolean isSameFluid = fluid.isSame(state.getType());
-                if (isSameFluid || (state.isEmpty() && levelAccessor.getBlockState(currentPos).isAir())) {
+                if (isSameFluid || (state.isEmpty() && blockState.isAir())) {
                     int currentAmountAtPos = isSameFluid ? state.getAmount() : 0;
                     int space = 8 - currentAmountAtPos;
                     if (space > 0) {
@@ -293,11 +324,23 @@ public class FFFluidUtils {
                             positionBuffer.add(currentKey);
                             levelBuffer.add(newAmount);
                             amountLeftToPlace = 0;
-                            break;
+                            break; // Early exit: found enough space
                         } else {
                             positionBuffer.add(currentKey);
-                            levelBuffer.add(currentAmountAtPos + space);
+                            levelBuffer.add(8); // Fill to maximum
                             amountLeftToPlace -= space;
+                        }
+                    }
+
+                    // Optimized direction priority: down first (gravity), then sides, then up
+                    // This follows natural fluid flow and finds space more efficiently
+
+                    if (doDown) {
+                        neighbourPos.set(currentPos);
+                        neighbourPos.move(Direction.DOWN);
+                        long downKey = neighbourPos.asLong();
+                        if (visited.add(downKey)) {
+                            queue.enqueue(downKey);
                         }
                     }
 
@@ -318,17 +361,9 @@ public class FFFluidUtils {
                             queue.enqueue(upKey);
                         }
                     }
-
-                    if (doDown) {
-                        neighbourPos.set(currentPos);
-                        neighbourPos.move(Direction.DOWN);
-                        long downKey = neighbourPos.asLong();
-                        if (visited.add(downKey)) {
-                            queue.enqueue(downKey);
-                        }
-                    }
                 }
 
+                // Early exit check after exploring neighbors
                 if (amountLeftToPlace == 0) {
                     break;
                 }
@@ -418,7 +453,8 @@ public class FFFluidUtils {
                 long currentKey = positionsToCheck.dequeueLong();
                 mutablePos.set(BlockPos.getX(currentKey), BlockPos.getY(currentKey), BlockPos.getZ(currentKey));
 
-                var state = levelAccessor.getFluidState(mutablePos);
+                // Optimize: avoid redundant getFluidState call by getting state from blockstate
+                var state = levelAccessor.getBlockState(mutablePos).getFluidState();
                 if (fluid.isSame(state.getType())) {
                     int amount = state.getAmount();
                     if (amount > 0) {
@@ -482,10 +518,13 @@ public class FFFluidUtils {
     }
 
     public static Direction[] getCardinalsShuffle(RandomSource random) {
-        return shuffleDirections(random, CARDINAL_DIRECTIONS, CARDINAL_BUFFER.get());
+        // Optimized: use pre-computed shuffle patterns instead of Fisher-Yates algorithm
+        // This eliminates array copying and swap operations for cardinal directions
+        return CARDINAL_SHUFFLE_PATTERNS[random.nextInt(CARDINAL_SHUFFLE_PATTERNS.length)];
     }
 
     public static Direction[] getAllDirectionsShuffled(RandomSource random) {
+        // For all directions (6 elements), still use dynamic shuffle as pre-computing 720 patterns would be excessive
         return shuffleDirections(random, ALL_DIRECTIONS, ALL_DIRECTION_BUFFER.get());
     }
 
