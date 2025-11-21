@@ -6,6 +6,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.material.FluidState;
 
+import java.util.Iterator;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -65,6 +66,8 @@ public class AdaptiveTickScheduler {
      */
     public static float calculateEquilibriumIndex(Level level, BlockPos pos, int fluidAmount) {
         if (level == null) return 1.0f; // Force tick if no level context
+
+        updateChunkModificationTime(pos);
 
         long posKey = pos.asLong();
         FluidStabilityData data = stabilityMap.get(posKey);
@@ -203,6 +206,8 @@ public class AdaptiveTickScheduler {
      * Returns a higher delay for stable fluids, lower delay for active ones.
      */
     public static int getAdaptiveDelay(BlockPos pos, int fluidAmount, int baseDelay) {
+        updateChunkModificationTime(pos);
+
         long posKey = pos.asLong();
         FluidStabilityData data = stabilityMap.get(posKey);
 
@@ -301,7 +306,7 @@ public class AdaptiveTickScheduler {
      */
     public static void performMaintenance() {
         long currentTime = System.currentTimeMillis();
-        final long EXPIRY_TIME = 60000; // 1 minute
+        final long EXPIRY_TIME = FlowingFluids.config.adaptiveSchedulerChunkExpiryMs;
 
         // Clear chunks that haven't been modified recently
         chunkModificationTimes.entrySet().removeIf(entry -> {
@@ -313,7 +318,7 @@ public class AdaptiveTickScheduler {
         });
 
         // FIXED: Limit total size with proper LRU eviction
-        final int MAX_ENTRIES = 10000;
+        final int MAX_ENTRIES = FlowingFluids.config.adaptiveSchedulerMaxEntries;
         if (stabilityMap.size() > MAX_ENTRIES) {
             // Remove least recently used entries based on chunk modification times
             int toRemove = stabilityMap.size() - MAX_ENTRIES;
@@ -322,7 +327,23 @@ public class AdaptiveTickScheduler {
                 .limit(toRemove)
                 .map(java.util.Map.Entry::getKey)
                 .forEach(AdaptiveTickScheduler::clearChunk);
+
+            // Fallback: if modification times are missing or insufficient, remove entries directly
+            if (stabilityMap.size() > MAX_ENTRIES) {
+                Iterator<Long> iterator = stabilityMap.keySet().iterator();
+                int remaining = stabilityMap.size() - MAX_ENTRIES;
+                while (iterator.hasNext() && remaining > 0) {
+                    iterator.next();
+                    iterator.remove();
+                    remaining--;
+                }
+            }
         }
+    }
+
+    private static void updateChunkModificationTime(BlockPos pos) {
+        ChunkPos chunkPos = new ChunkPos(pos);
+        chunkModificationTimes.put(chunkPos, System.currentTimeMillis());
     }
 
     /**
