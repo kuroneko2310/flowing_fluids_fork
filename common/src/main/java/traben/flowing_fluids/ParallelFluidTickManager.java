@@ -76,37 +76,53 @@ public class ParallelFluidTickManager {
 
     /**
      * Processes fluid ticks for a single chunk.
-     * This is called from worker threads, so it must be thread-safe.
+     * FIXED: Removed dangerous synchronized(level) block and improved implementation.
+     *
+     * This collects fluid tick tasks from worker threads and queues them
+     * to be processed on the main server thread to avoid race conditions.
      */
     private static void processChunkFluidTicks(ServerLevel level, List<BlockPos> positions) {
-        // Note: Actual fluid tick logic would be integrated here
-        // For now, this is a placeholder that demonstrates the structure
-        // The actual implementation would need to be carefully synchronized
-        // to ensure thread safety when accessing world state
+        // FIXED: Instead of directly modifying world state from worker threads,
+        // we collect the positions that need ticking and schedule them properly.
+        // This avoids the dangerous synchronized(level) block.
+
+        // Thread-safe queue for collecting tick positions
+        java.util.concurrent.ConcurrentLinkedQueue<BlockPos> tickQueue =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
 
         for (BlockPos pos : positions) {
             // Check if position is still valid (chunk might have unloaded)
+            // This is a read-only operation, safe from worker threads
             if (!level.hasChunkAt(pos)) {
                 continue;
             }
 
             try {
-                // Get fluid state
+                // Get fluid state (read-only, safe)
                 FluidState fluidState = level.getFluidState(pos);
                 if (fluidState.isEmpty()) {
                     continue;
                 }
 
-                // Process fluid tick
-                // NOTE: This would need to be integrated with the existing
-                // MixinFlowingFluid.ff$tickMixin logic in a thread-safe way
-                // For now, we schedule the tick on the server thread
-                synchronized (level) {
-                    level.scheduleTick(pos, fluidState.getType(), FlowingFluids.config.waterTickDelay);
-                }
+                // FIXED: Add to queue instead of directly scheduling
+                // The tick will be scheduled on the main thread
+                tickQueue.add(pos);
             } catch (Exception e) {
                 FlowingFluids.error("Error processing fluid at " + pos + ": " + e.getMessage());
             }
+        }
+
+        // FIXED: Schedule all collected ticks on the main server thread
+        // This is thread-safe as we're just submitting a task
+        if (!tickQueue.isEmpty()) {
+            level.getServer().execute(() -> {
+                for (BlockPos pos : tickQueue) {
+                    FluidState fluidState = level.getFluidState(pos);
+                    if (!fluidState.isEmpty()) {
+                        level.scheduleTick(pos, fluidState.getType(), FlowingFluids.config.waterTickDelay);
+                    }
+                }
+            });
         }
     }
 

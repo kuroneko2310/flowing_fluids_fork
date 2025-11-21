@@ -122,15 +122,17 @@ public class ChunkLocalSlopeCache {
     /**
      * Estimates gradient vector from neighboring fluid heights.
      * This is a simplified calculation for performance.
+     * FIXED: Corrected gradient comments to accurately reflect flow direction.
      */
     public static Vec3i estimateGradientVector(BlockPos pos, int centerHeight,
                                                int northHeight, int southHeight,
                                                int eastHeight, int westHeight,
                                                int upHeight, int downHeight) {
         // Calculate gradient components
-        int dx = (westHeight - eastHeight) / 2;  // Positive = slope toward west
-        int dy = (downHeight - upHeight) / 2;    // Positive = slope toward down
-        int dz = (northHeight - southHeight) / 2; // Positive = slope toward north
+        // FIXED: Corrected comments - gradient points FROM high TO low (flow direction)
+        int dx = (westHeight - eastHeight) / 2;  // Positive = higher west, flows east
+        int dy = (downHeight - upHeight) / 2;    // Positive = higher above, flows down
+        int dz = (northHeight - southHeight) / 2; // Positive = higher north, flows south
 
         return new Vec3i(dx, dy, dz);
     }

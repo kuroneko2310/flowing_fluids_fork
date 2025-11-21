@@ -8,6 +8,7 @@ import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 
 import java.util.*;
@@ -32,6 +33,7 @@ public class EnhancedFluidBFS {
     private static final int DEPTH_OCEAN = 64;       // Large water bodies (ultra-light)
 
     // Direction cache to avoid repeated sorting (optimization)
+    private static final int MAX_DIRECTION_CACHE_SIZE = 1000; // Prevent unbounded growth
     private static final Map<Vec3i, Direction[]> directionCache = new java.util.concurrent.ConcurrentHashMap<>(100);
 
     // Default direction order (null gradient)
@@ -153,10 +155,16 @@ public class EnhancedFluidBFS {
      * Returns directions in order: downslope, horizontal, upslope.
      *
      * OPTIMIZED: Uses cache to avoid repeated sorting.
+     * FIXED: Added size limit to prevent memory leaks.
      */
     private static Direction[] getWeightedDirections(Vec3i gradientVector) {
         if (gradientVector == null) {
             return DEFAULT_DIRECTIONS;
+        }
+
+        // Check cache size and clear if too large (simple eviction strategy)
+        if (directionCache.size() > MAX_DIRECTION_CACHE_SIZE) {
+            directionCache.clear(); // Clear entire cache when limit is reached
         }
 
         // Check cache first
@@ -289,7 +297,10 @@ public class EnhancedFluidBFS {
             FluidState fluidState = level.getFluidState(pos);
             Fluid fluidType = (fluidState != null && !fluidState.isEmpty()) ? fluidState.getType() : null;
 
-            FluidTickBuffer.bufferFluidChange(pos, newAmount, newAmount > 0, fluidType);
+            // FIXED: Only buffer if fluidType is not null
+            if (fluidType != null) {
+                FluidTickBuffer.bufferFluidChange(pos, newAmount, newAmount > 0, fluidType);
+            }
         }
     }
 

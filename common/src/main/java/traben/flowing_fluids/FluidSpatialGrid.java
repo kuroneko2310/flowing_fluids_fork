@@ -24,6 +24,9 @@ public class FluidSpatialGrid {
     // Each chunk has a multi-resolution grid
     private static final ConcurrentHashMap<ChunkPos, ChunkFluidGrid> chunkGrids = new ConcurrentHashMap<>();
 
+    // FIXED: Track access times for LRU eviction
+    private static final ConcurrentHashMap<ChunkPos, Long> chunkAccessTimes = new ConcurrentHashMap<>();
+
     // Global connected component ID generator
     private static final AtomicInteger nextComponentId = new AtomicInteger(1);
 
@@ -38,6 +41,8 @@ public class FluidSpatialGrid {
         if (grid == null) {
             return false;
         }
+        // FIXED: Update access time for LRU
+        chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
         return grid.hasFluidAt(pos);
     }
 
@@ -54,6 +59,8 @@ public class FluidSpatialGrid {
      */
     public static void setFluidAt(BlockPos pos, boolean hasFluid, int amount) {
         ChunkPos chunkPos = new ChunkPos(pos);
+        // FIXED: Update access time for LRU
+        chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
         ChunkFluidGrid grid = chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
         grid.setFluidAt(pos, hasFluid, amount);
     }
@@ -205,9 +212,11 @@ public class FluidSpatialGrid {
 
     /**
      * Clears the grid for a specific chunk.
+     * FIXED: Also clear access time.
      */
     public static void clearChunk(ChunkPos chunkPos) {
         chunkGrids.remove(chunkPos);
+        chunkAccessTimes.remove(chunkPos);
     }
 
     /**
@@ -219,21 +228,31 @@ public class FluidSpatialGrid {
 
     /**
      * Clears all grids (useful for testing).
+     * FIXED: Also clear access times.
      */
     public static void clearAll() {
         chunkGrids.clear();
+        chunkAccessTimes.clear();
     }
 
     /**
      * Performs maintenance to prevent unbounded memory growth.
+     * FIXED: Implements proper LRU eviction instead of random removal.
      */
     public static void performMaintenance() {
         // Limit total chunks tracked to prevent memory issues
         final int MAX_CHUNKS = 1000;
         if (chunkGrids.size() > MAX_CHUNKS) {
-            // Remove oldest entries (simple approach: remove random entries)
+            // FIXED: Remove least recently used entries (LRU eviction)
             int toRemove = chunkGrids.size() - MAX_CHUNKS;
-            chunkGrids.keySet().stream().limit(toRemove).forEach(chunkGrids::remove);
+            chunkAccessTimes.entrySet().stream()
+                .sorted(java.util.Map.Entry.comparingByValue()) // Sort by access time (oldest first)
+                .limit(toRemove)
+                .map(java.util.Map.Entry::getKey)
+                .forEach(chunkPos -> {
+                    chunkGrids.remove(chunkPos);
+                    chunkAccessTimes.remove(chunkPos);
+                });
         }
     }
 
@@ -270,6 +289,9 @@ public class FluidSpatialGrid {
 
         // Layer 3: Connected component IDs
         private final int[] componentIds = new int[GRID_SIZE];
+
+        // FIXED: Track number of differential updates per macro cell for accuracy maintenance
+        private final int[] macroUpdateCounts = new int[MACRO_GRID_SIZE];
 
         /**
          * Converts block position to fine grid index.
@@ -374,6 +396,7 @@ public class FluidSpatialGrid {
         /**
          * Updates macro cell statistics using differential update (OPTIMIZED).
          * Instead of scanning all 4096 blocks, updates based on the change.
+         * FIXED: Periodically performs full scan to maintain accuracy.
          */
         private void updateMacroCellDifferential(BlockPos pos, int oldAmount, int newAmount,
                                                   boolean wasFluid, boolean isFluid) {
@@ -386,6 +409,15 @@ public class FluidSpatialGrid {
             // If this is the first update or macro cell is empty, do full scan
             if (!hadFluid && isFluid) {
                 updateMacroCellFull(pos);
+                macroUpdateCounts[macroIndex] = 0;
+                return;
+            }
+
+            // FIXED: Increment update counter and periodically do full scan to maintain accuracy
+            macroUpdateCounts[macroIndex]++;
+            if (macroUpdateCounts[macroIndex] > 100) { // Full scan every 100 updates
+                updateMacroCellFull(pos);
+                macroUpdateCounts[macroIndex] = 0;
                 return;
             }
 

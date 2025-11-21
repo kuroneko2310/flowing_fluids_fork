@@ -278,6 +278,7 @@ public class AdaptiveTickScheduler {
     /**
      * Clears old stability data to prevent memory leaks.
      * Call this periodically (e.g., every few minutes).
+     * FIXED: Implements proper LRU eviction instead of random removal.
      */
     public static void performMaintenance() {
         long currentTime = System.currentTimeMillis();
@@ -292,12 +293,16 @@ public class AdaptiveTickScheduler {
             return false;
         });
 
-        // Limit total size to prevent unbounded growth
+        // FIXED: Limit total size with proper LRU eviction
         final int MAX_ENTRIES = 10000;
         if (stabilityMap.size() > MAX_ENTRIES) {
-            // Remove random entries until we're under the limit
+            // Remove least recently used entries based on chunk modification times
             int toRemove = stabilityMap.size() - MAX_ENTRIES;
-            stabilityMap.keySet().stream().limit(toRemove).forEach(stabilityMap::remove);
+            chunkModificationTimes.entrySet().stream()
+                .sorted(java.util.Map.Entry.comparingByValue()) // Sort by modification time (oldest first)
+                .limit(toRemove)
+                .map(java.util.Map.Entry::getKey)
+                .forEach(AdaptiveTickScheduler::clearChunk);
         }
     }
 
