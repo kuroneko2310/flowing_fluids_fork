@@ -6,6 +6,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.material.Fluid;
 
+import java.lang.ref.WeakReference;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -32,8 +33,9 @@ public class FluidTickBuffer {
 
     // Thread ID tracker for cleanup
     private static final ThreadLocal<Long> currentThreadId = ThreadLocal.withInitial(() -> {
-        long threadId = Thread.currentThread().getId();
-        threadBuffers.putIfAbsent(threadId, new ThreadBufferEntry());
+        Thread thread = Thread.currentThread();
+        long threadId = thread.getId();
+        threadBuffers.computeIfAbsent(threadId, id -> new ThreadBufferEntry(thread));
         return threadId;
     });
 
@@ -45,7 +47,7 @@ public class FluidTickBuffer {
      */
     private static TickBuffer getCurrentBuffer() {
         long threadId = currentThreadId.get();
-        ThreadBufferEntry entry = threadBuffers.computeIfAbsent(threadId, k -> new ThreadBufferEntry());
+        ThreadBufferEntry entry = threadBuffers.computeIfAbsent(threadId, k -> new ThreadBufferEntry(Thread.currentThread()));
         entry.lastAccessTime = System.currentTimeMillis();
         return entry.buffer;
     }
@@ -195,15 +197,16 @@ public class FluidTickBuffer {
         final long THREAD_TIMEOUT = 300000; // 5 minutes
 
         threadBuffers.entrySet().removeIf(entry -> {
-            long threadId = entry.getKey();
             ThreadBufferEntry bufferEntry = entry.getValue();
+            Thread owner = bufferEntry.threadRef.get();
+            boolean threadAlive = owner != null && owner.isAlive();
 
-            // Check if thread is still alive
-            boolean threadAlive = Thread.getAllStackTraces().keySet().stream()
-                .anyMatch(t -> t.getId() == threadId);
-
-            // Remove if thread is dead or hasn't been accessed in 5 minutes
-            return !threadAlive || (currentTime - bufferEntry.lastAccessTime > THREAD_TIMEOUT);
+            boolean expired = currentTime - bufferEntry.lastAccessTime > THREAD_TIMEOUT;
+            if (!threadAlive || expired) {
+                bufferEntry.buffer.clear();
+                return true;
+            }
+            return false;
         });
     }
 
@@ -257,10 +260,12 @@ public class FluidTickBuffer {
      */
     private static class ThreadBufferEntry {
         final TickBuffer buffer;
+        final WeakReference<Thread> threadRef;
         volatile long lastAccessTime;
 
-        ThreadBufferEntry() {
+        ThreadBufferEntry(Thread ownerThread) {
             this.buffer = new TickBuffer();
+            this.threadRef = new WeakReference<>(ownerThread);
             this.lastAccessTime = System.currentTimeMillis();
         }
     }

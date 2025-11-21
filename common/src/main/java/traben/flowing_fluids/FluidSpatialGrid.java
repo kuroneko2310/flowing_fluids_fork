@@ -185,25 +185,31 @@ public class FluidSpatialGrid {
         if (level == null) return;
 
         ChunkFluidGrid grid = chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
+        // Ensure newly initialized chunks participate in LRU eviction
+        chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
 
         int minX = chunkPos.getMinBlockX();
         int minZ = chunkPos.getMinBlockZ();
         int maxX = chunkPos.getMaxBlockX();
         int maxZ = chunkPos.getMaxBlockZ();
+        int minY = level.getMinBuildHeight();
+        int maxY = level.getMaxBuildHeight();
 
-        // Scan all blocks in the chunk
+        BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
+
+        // Scan all blocks in the chunk with a reusable mutable position to avoid allocations
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
-                for (int y = level.getMinBuildHeight(); y < level.getMaxBuildHeight(); y++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    net.minecraft.world.level.material.FluidState fluidState = level.getFluidState(pos);
+                for (int y = minY; y < maxY; y++) {
+                    scanPos.set(x, y, z);
+                    net.minecraft.world.level.material.FluidState fluidState = level.getFluidState(scanPos);
 
                     if (!fluidState.isEmpty()) {
                         // Convert BlockState amount (0-8) to internal (0-255)
                         int blockStateAmount = fluidState.getAmount();
                         int internalAmount = FluidAmountConverter.toInternal(blockStateAmount);
 
-                        grid.setFluidAt(pos, true, internalAmount);
+                        grid.setFluidAt(scanPos, true, internalAmount);
                     }
                 }
             }
