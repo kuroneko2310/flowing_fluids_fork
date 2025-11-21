@@ -28,21 +28,26 @@ import java.util.stream.Collectors;
 public class FluidTickBuffer {
 
     // Thread-safe map to collect buffers from all threads during parallel ticking
-    private static final ConcurrentHashMap<Long, TickBuffer> threadBuffers = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, ThreadBufferEntry> threadBuffers = new ConcurrentHashMap<>();
 
     // Thread ID tracker for cleanup
     private static final ThreadLocal<Long> currentThreadId = ThreadLocal.withInitial(() -> {
         long threadId = Thread.currentThread().getId();
-        threadBuffers.putIfAbsent(threadId, new TickBuffer());
+        threadBuffers.putIfAbsent(threadId, new ThreadBufferEntry());
         return threadId;
     });
+
+    // Last cleanup time for dead thread removal
+    private static long lastCleanupTime = System.currentTimeMillis();
 
     /**
      * Gets the current thread's buffer, creating if necessary.
      */
     private static TickBuffer getCurrentBuffer() {
         long threadId = currentThreadId.get();
-        return threadBuffers.computeIfAbsent(threadId, k -> new TickBuffer());
+        ThreadBufferEntry entry = threadBuffers.computeIfAbsent(threadId, k -> new ThreadBufferEntry());
+        entry.lastAccessTime = System.currentTimeMillis();
+        return entry.buffer;
     }
 
     /**
@@ -99,6 +104,13 @@ public class FluidTickBuffer {
      * @param level The level context for updates
      */
     public static void applyAll(Level level) {
+        // Periodically clean up dead threads (every 60 seconds)
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastCleanupTime > 60000) {
+            cleanupDeadThreads();
+            lastCleanupTime = currentTime;
+        }
+
         // Collect all buffers from all threads
         Map<BlockPos, FluidChange> allFluidChanges = new HashMap<>();
         Map<BlockPos, Direction> allGradientChanges = new HashMap<>();
@@ -106,7 +118,8 @@ public class FluidTickBuffer {
         List<ComponentInvalidation> allComponentInvalidations = new ArrayList<>();
 
         // Merge all thread buffers
-        for (TickBuffer buffer : threadBuffers.values()) {
+        for (ThreadBufferEntry entry : threadBuffers.values()) {
+            TickBuffer buffer = entry.buffer;
             allFluidChanges.putAll(buffer.fluidChanges);
             allGradientChanges.putAll(buffer.gradientChanges);
             allSlopeCacheInvalidations.addAll(buffer.slopeCacheInvalidations);
@@ -147,8 +160,8 @@ public class FluidTickBuffer {
         }
 
         // 5. Clear all buffers for next tick
-        for (TickBuffer buffer : threadBuffers.values()) {
-            buffer.clear();
+        for (ThreadBufferEntry entry : threadBuffers.values()) {
+            entry.buffer.clear();
         }
     }
 
@@ -157,8 +170,8 @@ public class FluidTickBuffer {
      * Use this if tick is cancelled or aborted.
      */
     public static void clearBuffer() {
-        for (TickBuffer buffer : threadBuffers.values()) {
-            buffer.clear();
+        for (ThreadBufferEntry entry : threadBuffers.values()) {
+            entry.buffer.clear();
         }
     }
 
@@ -167,10 +180,31 @@ public class FluidTickBuffer {
      */
     public static int getBufferedChangeCount() {
         int total = 0;
-        for (TickBuffer buffer : threadBuffers.values()) {
-            total += buffer.fluidChanges.size();
+        for (ThreadBufferEntry entry : threadBuffers.values()) {
+            total += entry.buffer.fluidChanges.size();
         }
         return total;
+    }
+
+    /**
+     * Cleans up buffers from dead threads to prevent memory leaks.
+     * Called periodically from applyAll().
+     */
+    private static void cleanupDeadThreads() {
+        long currentTime = System.currentTimeMillis();
+        final long THREAD_TIMEOUT = 300000; // 5 minutes
+
+        threadBuffers.entrySet().removeIf(entry -> {
+            long threadId = entry.getKey();
+            ThreadBufferEntry bufferEntry = entry.getValue();
+
+            // Check if thread is still alive
+            boolean threadAlive = Thread.getAllStackTraces().keySet().stream()
+                .anyMatch(t -> t.getId() == threadId);
+
+            // Remove if thread is dead or hasn't been accessed in 5 minutes
+            return !threadAlive || (currentTime - bufferEntry.lastAccessTime > THREAD_TIMEOUT);
+        });
     }
 
     /**
@@ -215,6 +249,19 @@ public class FluidTickBuffer {
         ComponentInvalidation(BlockPos center, int radius) {
             this.center = center;
             this.radius = radius;
+        }
+    }
+
+    /**
+     * Wrapper for TickBuffer with metadata for dead thread cleanup.
+     */
+    private static class ThreadBufferEntry {
+        final TickBuffer buffer;
+        volatile long lastAccessTime;
+
+        ThreadBufferEntry() {
+            this.buffer = new TickBuffer();
+            this.lastAccessTime = System.currentTimeMillis();
         }
     }
 }

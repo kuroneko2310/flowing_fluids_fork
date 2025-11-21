@@ -59,6 +59,7 @@ public class AdaptiveTickScheduler {
      * E = |height - avgNeighborHeight| + localGradientChange + flowChangeRate
      *
      * OPTIMIZED: Samples only 3 directions instead of 6 for performance.
+     * OPTIMIZED: Caches calculation result and only recalculates when neighbors change.
      *
      * @return Equilibrium index (0.0 = perfect equilibrium, higher = more unstable)
      */
@@ -68,7 +69,24 @@ public class AdaptiveTickScheduler {
         long posKey = pos.asLong();
         FluidStabilityData data = stabilityMap.get(posKey);
 
-        // Calculate average neighbor height (sampled for performance)
+        // Calculate neighbor state hash for cache validation
+        int neighborHash = 0;
+        for (Direction dir : SAMPLED_DIRECTIONS) {
+            BlockPos neighborPos = pos.relative(dir);
+            int neighborAmount = FluidSpatialGrid.getFluidAmount(neighborPos);
+            neighborHash = 31 * neighborHash + neighborAmount;
+        }
+
+        // Check if we can use cached value
+        if (data != null && data.neighborHash == neighborHash && data.lastAmount == fluidAmount) {
+            Direction currentGradient = FluidSpatialGrid.getGradientDirection(pos);
+            // Only recalculate if gradient changed
+            if (data.lastGradient == currentGradient) {
+                return data.lastEquilibriumIndex;
+            }
+        }
+
+        // Cache miss or invalidated - perform full calculation
         float avgNeighborHeight = 0;
         int neighborCount = 0;
 
@@ -110,13 +128,14 @@ public class AdaptiveTickScheduler {
         // Combine components
         float equilibriumIndex = heightDiff + gradientChange + flowChangeRate;
 
-        // Update stability data
+        // Update stability data with cache
         if (data == null) {
             data = new FluidStabilityData(fluidAmount, 0, BASE_DELAY);
             stabilityMap.put(posKey, data);
         }
         data.lastGradient = currentGradient;
         data.lastEquilibriumIndex = equilibriumIndex;
+        data.neighborHash = neighborHash;
 
         return equilibriumIndex;
     }
@@ -340,6 +359,7 @@ public class AdaptiveTickScheduler {
         int currentDelay;
         Direction lastGradient; // For gradient change detection
         float lastEquilibriumIndex; // Cached equilibrium index
+        int neighborHash; // Hash of neighbor states for cache validation
 
         FluidStabilityData(int lastAmount, int stabilityCounter, int currentDelay) {
             this.lastAmount = lastAmount;
@@ -347,6 +367,7 @@ public class AdaptiveTickScheduler {
             this.currentDelay = currentDelay;
             this.lastGradient = null;
             this.lastEquilibriumIndex = 1.0f; // Start with high index (unstable)
+            this.neighborHash = 0;
         }
     }
 }

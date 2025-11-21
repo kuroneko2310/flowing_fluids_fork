@@ -631,6 +631,7 @@ public abstract class MixinFlowingFluid extends Fluid {
     protected int flowing_fluids$getSlopeDistance(LevelReader level, BlockPos sourcePosForKey, int distance, Direction fromDir, Fluid sourceFluid, int sourceAmount,
                                                   BlockPos newPos, Short2ObjectMap<Pair<BlockState, FluidState>> statesAtPos, Short2BooleanMap posCanFlowDown,
                                                   boolean forceSlopeDownSameOrEmpty, int slopeFindDistance) {
+        // OPTIMIZED: Early termination conditions to reduce cubic complexity
         // currently in a worse case scenario, water spreading on flat ground, this deep search will perform:
         // 160 side spread, flowing_fluids$canSpreadToOptionallySameOrEmpty() checks
         // 40 downwards spread, flowing_fluids$getSetFlowDownCache() checks,
@@ -649,9 +650,20 @@ public abstract class MixinFlowingFluid extends Fluid {
 
         int searchDistance = distance + 1;
 
+        // OPTIMIZATION: Early exit if we've already searched too far
+        if (searchDistance > slopeFindDistance) {
+            return smallest;
+        }
+
+        int checkedDirections = 0;
         //check all directions except the one we came from
         for (final Direction searchDir : Direction.Plane.HORIZONTAL) {
             if (searchDir != fromDir) {
+                // OPTIMIZATION: Early exit if we found a good enough path (distance <= 3)
+                if (smallest <= 3 && checkedDirections > 0) {
+                    break;
+                }
+
                 // get search context
                 var searchPos = newPos.relative(searchDir);
                 var searchKey = ffCacheKey(sourcePosForKey, searchPos);
@@ -662,6 +674,8 @@ public abstract class MixinFlowingFluid extends Fluid {
                         level.getBlockState(newPos), searchDir, searchPos,
                         searchStates.getFirst(), searchStates.getSecond(), forceSlopeDownSameOrEmpty)) {
 
+                    checkedDirections++;
+
                     // if we can flow down, cache the result of this and return this distance as it's the smallest
                     if (searchStates.getSecond().getAmount() < (sourceAmount - 2)
                             || flowing_fluids$getSetFlowDownCache(searchKey, level, posCanFlowDown, searchPos, sourceFluid, forceSlopeDownSameOrEmpty)) {
@@ -670,12 +684,19 @@ public abstract class MixinFlowingFluid extends Fluid {
                     }
                     // if we can't flow down here, check the next distance via iteration as long as we are within the slope search distance
                     if (searchDistance < slopeFindDistance) {
-                        int next = flowing_fluids$getSlopeDistance(level, sourcePosForKey, searchDistance,
-                                searchDir.getOpposite(), sourceFluid, sourceAmount, searchPos,
-                                statesAtPos, posCanFlowDown, forceSlopeDownSameOrEmpty, slopeFindDistance);
-                        // if the next distance is less than the current smallest, update the smallest
-                        if (next < smallest) {
-                            smallest = next;
+                        // OPTIMIZATION: Only recurse if searchDistance is less than current smallest
+                        if (searchDistance < smallest) {
+                            int next = flowing_fluids$getSlopeDistance(level, sourcePosForKey, searchDistance,
+                                    searchDir.getOpposite(), sourceFluid, sourceAmount, searchPos,
+                                    statesAtPos, posCanFlowDown, forceSlopeDownSameOrEmpty, slopeFindDistance);
+                            // if the next distance is less than the current smallest, update the smallest
+                            if (next < smallest) {
+                                smallest = next;
+                                // OPTIMIZATION: If we found a very close path, exit early
+                                if (smallest <= 2) {
+                                    return smallest;
+                                }
+                            }
                         }
                         // continue to check all directions for the smallest distance
                     }
