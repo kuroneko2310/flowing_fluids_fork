@@ -12,6 +12,7 @@ import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Enhanced BFS equalization algorithm with natural fluid behavior.
@@ -34,15 +35,28 @@ public class EnhancedFluidBFS {
 
     // Direction cache to avoid repeated sorting (optimization)
     private static final int MAX_DIRECTION_CACHE_SIZE = 1000; // Prevent unbounded growth
-    private static final Map<Vec3i, Direction[]> directionCache = new java.util.concurrent.ConcurrentHashMap<>(100);
+    // LRU cache implementation using LinkedHashMap
+    private static final Map<Vec3i, Direction[]> directionCache = java.util.Collections.synchronizedMap(
+        new java.util.LinkedHashMap<Vec3i, Direction[]>(100, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(java.util.Map.Entry<Vec3i, Direction[]> eldest) {
+                return size() > MAX_DIRECTION_CACHE_SIZE;
+            }
+        }
+    );
 
     // Default direction order (null gradient)
     private static final Direction[] DEFAULT_DIRECTIONS = new Direction[]{
         Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
     };
 
+    // Track positions currently being processed to prevent duplicate BFS runs
+    private static final Set<Long> processingPositions = ConcurrentHashMap.newKeySet();
+    private static long lastCleanupTime = System.currentTimeMillis();
+
     /**
      * Performs BFS equalization with all enhancements.
+     * OPTIMIZED: Prevents duplicate BFS runs on overlapping water sources.
      *
      * @param level World level
      * @param startPos Starting position
@@ -65,54 +79,72 @@ public class EnhancedFluidBFS {
             return equalizedPositions; // Too stable, skip BFS
         }
 
-        // Initialize BFS
-        LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
-        Set<Long> visited = new HashSet<>();
+        // OPTIMIZATION: Check if this position is already being processed
+        long posKey = startPos.asLong();
+        if (!processingPositions.add(posKey)) {
+            return equalizedPositions; // Already being processed by another thread/source
+        }
 
-        queue.enqueue(startPos.asLong());
-        visited.add(startPos.asLong());
+        // Cleanup old processing entries periodically (every 5 seconds)
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastCleanupTime > 5000) {
+            cleanupProcessingPositions();
+            lastCleanupTime = currentTime;
+        }
 
-        int nodesExplored = 0;
-        ChunkPos chunkPos = new ChunkPos(startPos);
+        try {
+            // Initialize BFS
+            LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+            Set<Long> visited = new HashSet<>();
 
-        // Get or estimate gradient vector for weighted search
-        Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(chunkPos, startPos);
+            queue.enqueue(startPos.asLong());
+            visited.add(startPos.asLong());
 
-        while (!queue.isEmpty() && nodesExplored < maxNodes && visited.size() < maxDepth) {
-            long currentLong = queue.dequeueLong();
-            BlockPos currentPos = BlockPos.of(currentLong);
-            nodesExplored++;
+            int nodesExplored = 0;
+            ChunkPos chunkPos = new ChunkPos(startPos);
 
-            // Get current fluid amount
-            FluidState currentFluid = level.getFluidState(currentPos);
-            int currentAmount = FluidSpatialGrid.getFluidAmount(currentPos);
+            // Get or estimate gradient vector for weighted search
+            Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(chunkPos, startPos);
 
-            // Explore neighbors with weighted priority
-            Direction[] directions = getWeightedDirections(gradientVector);
+            while (!queue.isEmpty() && nodesExplored < maxNodes && visited.size() < maxDepth) {
+                long currentLong = queue.dequeueLong();
+                BlockPos currentPos = BlockPos.of(currentLong);
+                nodesExplored++;
 
-            for (Direction dir : directions) {
-                BlockPos neighborPos = currentPos.relative(dir);
-                long neighborLong = neighborPos.asLong();
+                // Get current fluid amount
+                FluidState currentFluid = level.getFluidState(currentPos);
+                int currentAmount = FluidSpatialGrid.getFluidAmount(currentPos);
 
-                if (visited.contains(neighborLong)) {
-                    continue;
-                }
+                // Explore neighbors with weighted priority
+                Direction[] directions = getWeightedDirections(gradientVector);
 
-                // CRITICAL: Include air blocks and replaceable blocks!
-                if (canIncludeInBFS(level, neighborPos, startFluid)) {
-                    visited.add(neighborLong);
-                    queue.enqueue(neighborLong);
+                for (Direction dir : directions) {
+                    BlockPos neighborPos = currentPos.relative(dir);
+                    long neighborLong = neighborPos.asLong();
 
-                    // Add to equalization list if it needs balancing
-                    int neighborAmount = FluidSpatialGrid.getFluidAmount(neighborPos);
-                    if (shouldEqualize(currentAmount, neighborAmount)) {
-                        equalizedPositions.add(neighborPos.immutable());
+                    if (visited.contains(neighborLong)) {
+                        continue;
+                    }
+
+                    // CRITICAL: Include air blocks and replaceable blocks!
+                    if (canIncludeInBFS(level, neighborPos, startFluid)) {
+                        visited.add(neighborLong);
+                        queue.enqueue(neighborLong);
+
+                        // Add to equalization list if it needs balancing
+                        int neighborAmount = FluidSpatialGrid.getFluidAmount(neighborPos);
+                        if (shouldEqualize(currentAmount, neighborAmount)) {
+                            equalizedPositions.add(neighborPos.immutable());
+                        }
                     }
                 }
             }
-        }
 
-        return equalizedPositions;
+            return equalizedPositions;
+        } finally {
+            // Always remove from processing set when done
+            processingPositions.remove(posKey);
+        }
     }
 
     /**
@@ -154,20 +186,15 @@ public class EnhancedFluidBFS {
      * Gets directions sorted by weight (gradient preference).
      * Returns directions in order: downslope, horizontal, upslope.
      *
-     * OPTIMIZED: Uses cache to avoid repeated sorting.
-     * FIXED: Added size limit to prevent memory leaks.
+     * OPTIMIZED: Uses LRU cache to avoid repeated sorting.
+     * FIXED: Replaced cache thundering herd with proper LRU eviction.
      */
     private static Direction[] getWeightedDirections(Vec3i gradientVector) {
         if (gradientVector == null) {
             return DEFAULT_DIRECTIONS;
         }
 
-        // Check cache size and clear if too large (simple eviction strategy)
-        if (directionCache.size() > MAX_DIRECTION_CACHE_SIZE) {
-            directionCache.clear(); // Clear entire cache when limit is reached
-        }
-
-        // Check cache first
+        // Check cache first - LRU automatically handles size limit
         return directionCache.computeIfAbsent(gradientVector, gv -> {
             Direction[] directions = Direction.values().clone();
 
@@ -310,5 +337,20 @@ public class EnhancedFluidBFS {
     private static boolean canAcceptFluid(BlockGetter level, BlockPos pos) {
         BlockState state = level.getBlockState(pos);
         return state.isAir() || state.canBeReplaced() || !level.getFluidState(pos).isEmpty();
+    }
+
+    /**
+     * Cleans up the processing positions set to prevent memory leaks.
+     * Called periodically from performEqualization().
+     */
+    private static void cleanupProcessingPositions() {
+        // Clear all processing positions as they should have been removed by their respective threads
+        // If any positions remain, they're likely from crashed/interrupted BFS runs
+        // Note: In normal operation, processingPositions should be empty or nearly empty
+        // because each BFS removes its position in the finally block
+        if (processingPositions.size() > 100) {
+            // If too many positions are stuck, clear them all
+            processingPositions.clear();
+        }
     }
 }

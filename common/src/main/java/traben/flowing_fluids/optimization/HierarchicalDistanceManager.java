@@ -1,9 +1,13 @@
 package traben.flowing_fluids.optimization;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.material.FluidState;
 import traben.flowing_fluids.config.FFConfig;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Hierarchical Distance Management System
@@ -36,6 +40,12 @@ public class HierarchicalDistanceManager {
 
     // Player proximity boost
     private static final int PLAYER_PROXIMITY_BOOST = 32; // Blocks within this distance always update frequently
+
+    // Spatial grid for player position caching (reduces O(n×p) to O(1))
+    private static final int GRID_CELL_SIZE = 32; // Same as PLAYER_PROXIMITY_BOOST for efficiency
+    private static final Map<Long, List<PlayerCacheEntry>> playerGridCache = new ConcurrentHashMap<>();
+    private static long lastPlayerCacheUpdate = 0;
+    private static final long PLAYER_CACHE_REFRESH_INTERVAL = 1000; // Update every 1 second (20 ticks)
 
     private HierarchicalDistanceManager() {
     }
@@ -173,16 +183,67 @@ public class HierarchicalDistanceManager {
 
     /**
      * Checks if any player is nearby (within PLAYER_PROXIMITY_BOOST blocks).
+     * OPTIMIZED: Uses spatial grid cache to reduce from O(n×p) to O(1).
      */
     private boolean isPlayerNearby(BlockPos pos, Level level) {
+        // Update player cache if needed
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastPlayerCacheUpdate > PLAYER_CACHE_REFRESH_INTERVAL) {
+            updatePlayerCache(level);
+            lastPlayerCacheUpdate = currentTime;
+        }
+
+        // Check surrounding grid cells (3x3x3 = 27 cells)
+        int cellX = pos.getX() / GRID_CELL_SIZE;
+        int cellY = pos.getY() / GRID_CELL_SIZE;
+        int cellZ = pos.getZ() / GRID_CELL_SIZE;
+
         double sqrDist = PLAYER_PROXIMITY_BOOST * PLAYER_PROXIMITY_BOOST;
-        return level.getNearestPlayer(
-            pos.getX() + 0.5,
-            pos.getY() + 0.5,
-            pos.getZ() + 0.5,
-            PLAYER_PROXIMITY_BOOST,
-            false
-        ) != null;
+
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    long gridKey = getGridKey(cellX + dx, cellY + dy, cellZ + dz);
+                    List<PlayerCacheEntry> players = playerGridCache.get(gridKey);
+
+                    if (players != null) {
+                        for (PlayerCacheEntry player : players) {
+                            double distSqr = pos.distSqr(player.blockPos);
+                            if (distSqr <= sqrDist) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Updates the player grid cache with current player positions.
+     */
+    private static void updatePlayerCache(Level level) {
+        playerGridCache.clear();
+
+        for (Player player : level.players()) {
+            BlockPos playerPos = player.blockPosition();
+            int cellX = playerPos.getX() / GRID_CELL_SIZE;
+            int cellY = playerPos.getY() / GRID_CELL_SIZE;
+            int cellZ = playerPos.getZ() / GRID_CELL_SIZE;
+
+            long gridKey = getGridKey(cellX, cellY, cellZ);
+            playerGridCache.computeIfAbsent(gridKey, k -> new ArrayList<>())
+                .add(new PlayerCacheEntry(playerPos));
+        }
+    }
+
+    /**
+     * Generates a grid key from cell coordinates.
+     */
+    private static long getGridKey(int cellX, int cellY, int cellZ) {
+        return ((long) cellX & 0x3FFFFF) | (((long) cellY & 0x3FF) << 22) | (((long) cellZ & 0x3FFFFF) << 32);
     }
 
     /**
@@ -224,6 +285,17 @@ public class HierarchicalDistanceManager {
         CANAL,      // Artificial water channel
         MOUNTAIN,   // Steep terrain, vertical flow dominant
         FLAT        // Flat terrain, standard flow
+    }
+
+    /**
+     * Cache entry for player position in spatial grid.
+     */
+    private static class PlayerCacheEntry {
+        final BlockPos blockPos;
+
+        PlayerCacheEntry(BlockPos blockPos) {
+            this.blockPos = blockPos;
+        }
     }
 
     /**
