@@ -3,7 +3,6 @@ package traben.flowing_fluids;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 
 import java.util.*;
@@ -86,9 +85,9 @@ public class ParallelFluidTickManager {
         // we collect the positions that need ticking and schedule them properly.
         // This avoids the dangerous synchronized(level) block.
 
-        // Thread-safe queue for collecting tick positions
-        java.util.concurrent.ConcurrentLinkedQueue<BlockPos> tickQueue =
-            new java.util.concurrent.ConcurrentLinkedQueue<>();
+        // Thread-safe queue for collecting tick positions with per-chunk deduplication
+        Set<BlockPos> uniquePositions = Collections.newSetFromMap(new ConcurrentHashMap<>());
+        ChunkPos chunkPos = null;
 
         for (BlockPos pos : positions) {
             // Check if position is still valid (chunk might have unloaded)
@@ -106,7 +105,10 @@ public class ParallelFluidTickManager {
 
                 // FIXED: Add to queue instead of directly scheduling
                 // The tick will be scheduled on the main thread
-                tickQueue.add(pos);
+                if (chunkPos == null) {
+                    chunkPos = new ChunkPos(pos);
+                }
+                uniquePositions.add(pos.immutable());
             } catch (Exception e) {
                 FlowingFluids.error("Error processing fluid at " + pos + ": " + e.getMessage());
             }
@@ -114,16 +116,43 @@ public class ParallelFluidTickManager {
 
         // FIXED: Schedule all collected ticks on the main server thread
         // This is thread-safe as we're just submitting a task
-        if (!tickQueue.isEmpty()) {
+        if (!uniquePositions.isEmpty() && chunkPos != null) {
+            ChunkPos finalChunkPos = chunkPos;
             level.getServer().execute(() -> {
-                for (BlockPos pos : tickQueue) {
+                BlockPos chunkCenter = finalChunkPos.getMiddleBlockPosition(level.getMinBuildHeight());
+                List<ScheduledFluidTick> sortedTicks = new ArrayList<>();
+
+                for (BlockPos pos : uniquePositions) {
                     FluidState fluidState = level.getFluidState(pos);
-                    if (!fluidState.isEmpty()) {
-                        level.scheduleTick(pos, fluidState.getType(), FlowingFluids.config.waterTickDelay);
+                    if (fluidState.isEmpty()) {
+                        continue;
                     }
+
+                    double dx = pos.getX() - chunkCenter.getX();
+                    double dz = pos.getZ() - chunkCenter.getZ();
+                    double distanceSq = dx * dx + dz * dz;
+                    boolean isSource = fluidState.isSource();
+
+                    int distanceDelay = (int) Math.min(8, Math.sqrt(distanceSq) / 16); // one tick every ~16 blocks radius
+                    int stabilityBias = isSource ? 1 : -1;
+                    int adjustedDelay = Math.max(1, FlowingFluids.config.waterTickDelay + distanceDelay + stabilityBias);
+
+                    sortedTicks.add(new ScheduledFluidTick(pos, fluidState.getType(), adjustedDelay, isSource, distanceSq));
+                }
+
+                sortedTicks.sort(Comparator
+                        .comparingInt(ScheduledFluidTick::delay)
+                        .thenComparing(ScheduledFluidTick::isSource)
+                        .thenComparingDouble(ScheduledFluidTick::distanceSq));
+
+                for (ScheduledFluidTick tick : sortedTicks) {
+                    level.scheduleTick(tick.pos(), tick.fluidType(), tick.delay());
                 }
             });
         }
+    }
+
+    private record ScheduledFluidTick(BlockPos pos, net.minecraft.world.level.material.Fluid fluidType, int delay, boolean isSource, double distanceSq) {
     }
 
     /**
