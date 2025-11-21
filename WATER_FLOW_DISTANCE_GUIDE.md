@@ -235,25 +235,25 @@
 サーバーログまたはゲームログに以下のような情報が出力されます:
 
 ```
-=== Fluid Performance Monitor Report ===
-Total fluid ticks: 15,423
-Total tick time: 234.56 ms (avg: 15.210 μs/tick)
-BFS operations: 3,842 (24.92% of ticks)
-BFS time: 156.23 ms (avg: 40.652 μs/op)
-BFS nodes visited: 234,521 (avg: 61.0 nodes/op)
-Max BFS depth reached: 32 blocks
-Max flow distance used: 16 blocks
+=== 流体パフォーマンスモニター レポート ===
+総流体tick数: 15,423
+総tick時間: 234.56 ms (平均: 15.210 μs/tick)
+BFS操作回数: 3,842 (tick数の 24.92%)
+BFS時間: 156.23 ms (平均: 40.652 μs/操作)
+BFS訪問ノード数: 234,521 (平均: 61.0 ノード/操作)
+最大BFS深度: 32 ブロック
+使用された最大流動距離: 16 ブロック
 
-Performance by distance:
-  Distance 4: 8,234 ticks (53.40%), avg time: 8.234 μs
-  Distance 8: 4,123 ticks (26.73%), avg time: 18.456 μs
-  Distance 16: 2,056 ticks (13.33%), avg time: 35.678 μs
-  Distance 32: 1,010 ticks (6.55%), avg time: 72.345 μs
+距離別パフォーマンス:
+  距離 4: 8,234 ticks (53.40%), 平均時間: 8.234 μs
+  距離 8: 4,123 ticks (26.73%), 平均時間: 18.456 μs
+  距離 16: 2,056 ticks (13.33%), 平均時間: 35.678 μs
+  距離 32: 1,010 ticks (6.55%), 平均時間: 72.345 μs
 
-Fast path hits: 9,234 (85.67%)
-Slow path hits: 1,543 (14.33%)
-Equilibrium skips: 5,678 (saved 26.91% of ticks)
-Spatial grid hit rate: 78.45% (12,456 hits, 3,421 misses)
+高速パスヒット: 9,234 (85.67%)
+低速パスヒット: 1,543 (14.33%)
+平衡スキップ: 5,678 (tick数の 26.91% 削減)
+空間グリッドヒット率: 78.45% (12,456 ヒット, 3,421 ミス)
 =====================================
 ```
 

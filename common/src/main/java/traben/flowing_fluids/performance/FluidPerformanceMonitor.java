@@ -122,39 +122,39 @@ public class FluidPerformanceMonitor {
     public void logPerformanceData() {
         long ticks = totalFluidTicks.get();
         if (ticks == 0) {
-            FlowingFluids.info("=== Fluid Performance Monitor: No data yet ===");
+            FlowingFluids.info("=== 流体パフォーマンスモニター: データなし ===");
             return;
         }
 
-        FlowingFluids.info("=== Fluid Performance Monitor Report ===");
-        FlowingFluids.info(String.format("Total fluid ticks: %,d", ticks));
-        FlowingFluids.info(String.format("Total tick time: %.2f ms (avg: %.3f μs/tick)",
+        FlowingFluids.info("=== 流体パフォーマンスモニター レポート ===");
+        FlowingFluids.info(String.format("総流体tick数: %,d", ticks));
+        FlowingFluids.info(String.format("総tick時間: %.2f ms (平均: %.3f μs/tick)",
                 totalTickTimeNanos.get() / 1_000_000.0,
                 totalTickTimeNanos.get() / (double) ticks / 1000.0));
 
         // BFS Statistics
         long bfsOps = totalBFSOperations.get();
         if (bfsOps > 0) {
-            FlowingFluids.info(String.format("BFS operations: %,d (%.2f%% of ticks)",
+            FlowingFluids.info(String.format("BFS操作回数: %,d (tick数の %.2f%%)",
                     bfsOps, (bfsOps * 100.0) / ticks));
-            FlowingFluids.info(String.format("BFS time: %.2f ms (avg: %.3f μs/op)",
+            FlowingFluids.info(String.format("BFS時間: %.2f ms (平均: %.3f μs/操作)",
                     totalBFSTimeNanos.get() / 1_000_000.0,
                     totalBFSTimeNanos.get() / (double) bfsOps / 1000.0));
-            FlowingFluids.info(String.format("BFS nodes visited: %,d (avg: %.1f nodes/op)",
+            FlowingFluids.info(String.format("BFS訪問ノード数: %,d (平均: %.1f ノード/操作)",
                     totalBFSNodes.get(),
                     totalBFSNodes.get() / (double) bfsOps));
-            FlowingFluids.info(String.format("Max BFS depth reached: %d blocks", maxBFSDepth.get()));
+            FlowingFluids.info(String.format("最大BFS深度: %d ブロック", maxBFSDepth.get()));
         }
 
         // Distance Statistics
-        FlowingFluids.info(String.format("Max flow distance used: %d blocks", maxFlowDistanceUsed.get()));
-        FlowingFluids.info("Performance by distance:");
+        FlowingFluids.info(String.format("使用された最大流動距離: %d ブロック", maxFlowDistanceUsed.get()));
+        FlowingFluids.info("距離別パフォーマンス:");
         ticksByDistance.keySet().stream()
                 .sorted()
                 .forEach(distance -> {
                     long distTicks = ticksByDistance.get(distance).get();
                     long distTime = timeByDistance.get(distance).get();
-                    FlowingFluids.info(String.format("  Distance %d: %,d ticks (%.2f%%), avg time: %.3f μs",
+                    FlowingFluids.info(String.format("  距離 %d: %,d ticks (%.2f%%), 平均時間: %.3f μs",
                             distance,
                             distTicks,
                             (distTicks * 100.0) / ticks,
@@ -166,15 +166,15 @@ public class FluidPerformanceMonitor {
         long slowPaths = slowPathHits.get();
         long totalPaths = fastPaths + slowPaths;
         if (totalPaths > 0) {
-            FlowingFluids.info(String.format("Fast path hits: %,d (%.2f%%)",
+            FlowingFluids.info(String.format("高速パスヒット: %,d (%.2f%%)",
                     fastPaths, (fastPaths * 100.0) / totalPaths));
-            FlowingFluids.info(String.format("Slow path hits: %,d (%.2f%%)",
+            FlowingFluids.info(String.format("低速パスヒット: %,d (%.2f%%)",
                     slowPaths, (slowPaths * 100.0) / totalPaths));
         }
 
         long eqSkips = equilibriumSkips.get();
         if (eqSkips > 0) {
-            FlowingFluids.info(String.format("Equilibrium skips: %,d (saved %.2f%% of ticks)",
+            FlowingFluids.info(String.format("平衡スキップ: %,d (tick数の %.2f%% 削減)",
                     eqSkips, (eqSkips * 100.0) / (ticks + eqSkips)));
         }
 
@@ -182,7 +182,7 @@ public class FluidPerformanceMonitor {
         long misses = cacheMisses.get();
         long totalLookups = gridHits + misses;
         if (totalLookups > 0) {
-            FlowingFluids.info(String.format("Spatial grid hit rate: %.2f%% (%,d hits, %,d misses)",
+            FlowingFluids.info(String.format("空間グリッドヒット率: %.2f%% (%,d ヒット, %,d ミス)",
                     (gridHits * 100.0) / totalLookups, gridHits, misses));
         }
 
@@ -212,7 +212,7 @@ public class FluidPerformanceMonitor {
 
         tickCounter = 0;
 
-        FlowingFluids.info("Performance monitor data reset.");
+        FlowingFluids.info("パフォーマンスモニターデータをリセットしました。");
     }
 
     /**
@@ -223,18 +223,18 @@ public class FluidPerformanceMonitor {
         long ticks = totalFluidTicks.get();
 
         if (ticks == 0) {
-            return "No performance data available yet.";
+            return "パフォーマンスデータはまだありません。";
         }
 
-        report.append("=== Performance Analysis ===\n");
-        report.append(String.format("Total Ticks: %,d\n", ticks));
-        report.append(String.format("Avg Tick Time: %.3f μs\n",
+        report.append("=== パフォーマンス分析 ===\n");
+        report.append(String.format("総tick数: %,d\n", ticks));
+        report.append(String.format("平均tick時間: %.3f μs\n",
                 totalTickTimeNanos.get() / (double) ticks / 1000.0));
 
         long bfsOps = totalBFSOperations.get();
         if (bfsOps > 0) {
-            report.append(String.format("BFS Usage: %.2f%%\n", (bfsOps * 100.0) / ticks));
-            report.append(String.format("Avg BFS Nodes: %.1f\n",
+            report.append(String.format("BFS使用率: %.2f%%\n", (bfsOps * 100.0) / ticks));
+            report.append(String.format("平均BFSノード数: %.1f\n",
                     totalBFSNodes.get() / (double) bfsOps));
         }
 
@@ -242,7 +242,7 @@ public class FluidPerformanceMonitor {
         long slowPaths = slowPathHits.get();
         long totalPaths = fastPaths + slowPaths;
         if (totalPaths > 0) {
-            report.append(String.format("Fast Path Rate: %.2f%%\n",
+            report.append(String.format("高速パス率: %.2f%%\n",
                     (fastPaths * 100.0) / totalPaths));
         }
 

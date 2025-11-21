@@ -273,57 +273,57 @@ public class FFCommands {
                                                 )
                                         )
                                 ).then(Commands.literal("advanced_flow_distances")
-                                        .executes(cont -> message(cont, "Advanced flow distance settings for controlling how far water flows in different scenarios.\nThese settings allow fine-tuned control over flow behavior and performance."))
+                                        .executes(cont -> message(cont, "高度な流動距離設定 - 様々なシナリオで水が流れる距離を制御します。\nこれらの設定により、流動の挙動とパフォーマンスを細かく調整できます。"))
                                         .then(intCommand("max_water_flow_distance",
-                                                "Maximum horizontal flow distance for water (can exceed base flow distance).\nHigher values = more realistic but more CPU usage.\nDefault: 8, Range: 1-256",
+                                                "水の最大水平流動距離（基本流動距離を超えることが可能）。\n高い値 = よりリアルだがCPU使用率が上昇。\nデフォルト: 8, 範囲: 1-256",
                                                 "distance", 1, 256,
                                                 a -> FlowingFluids.config.maxWaterFlowDistance = a, () -> FlowingFluids.config.maxWaterFlowDistance)
                                         ).then(intCommand("bfs_max_search_distance",
-                                                "Maximum BFS (Breadth-First Search) distance for water equalization.\nHigher values = better flow accuracy but more CPU usage.\nDefault: 16, Range: 4-128",
+                                                "水の平衡化のためのBFS（幅優先探索）の最大距離。\n高い値 = より正確な流動だがCPU使用率が上昇。\nデフォルト: 16, 範囲: 4-128",
                                                 "distance", 4, 128,
                                                 a -> FlowingFluids.config.bfsMaxSearchDistance = a, () -> FlowingFluids.config.bfsMaxSearchDistance)
                                         ).then(floatCommand("slope_find_distance_multiplier",
-                                                "Multiplier for slope finding distance (1.0 = default).\nHigher values = water finds lower ground from farther away.\nDefault: 1.0, Range: 0.5-3.0",
+                                                "傾斜探索距離の倍率（1.0 = デフォルト）。\n高い値 = 水がより遠くの低い場所を見つけやすくなる。\nデフォルト: 1.0, 範囲: 0.5-3.0",
                                                 "multiplier", 0.5f, 3.0f,
                                                 a -> FlowingFluids.config.slopeFindDistanceMultiplier = a, () -> FlowingFluids.config.slopeFindDistanceMultiplier)
                                         ).then(booleanCommand("enable_adaptive_flow_distance",
-                                                "Automatically adjust flow distance based on terrain type (ocean, river, canal, etc.).\nEnables biome-specific flow distances for more realistic water behavior.",
-                                                "Adaptive flow distance enabled. Water will flow different distances based on terrain type.",
-                                                "Adaptive flow distance disabled. Water will use standard flow distance everywhere.",
+                                                "地形タイプ（海、川、運河など）に基づいて流動距離を自動調整します。\nバイオーム別の流動距離を有効にし、よりリアルな水の挙動を実現します。",
+                                                "適応型流動距離が有効になりました。水は地形タイプに応じて異なる距離を流れます。",
+                                                "適応型流動距離が無効になりました。水はすべての場所で標準距離を使用します。",
                                                 a -> FlowingFluids.config.enableAdaptiveFlowDistance = a, () -> FlowingFluids.config.enableAdaptiveFlowDistance)
                                         ).then(intCommand("river_flow_distance",
-                                                "Flow distance in river biomes (only active if adaptive flow is enabled).\nDefault: 64, Range: 4-256",
+                                                "川バイオームでの流動距離（適応型流動が有効な場合のみ動作）。\nデフォルト: 64, 範囲: 4-256",
                                                 "distance", 4, 256,
                                                 a -> FlowingFluids.config.riverFlowDistance = a, () -> FlowingFluids.config.riverFlowDistance)
                                         ).then(intCommand("ocean_flow_distance",
-                                                "Flow distance in ocean biomes (only active if adaptive flow is enabled).\nOptimizations keep this performant even at high values.\nDefault: 128, Range: 4-512",
+                                                "海洋バイオームでの流動距離（適応型流動が有効な場合のみ動作）。\n最適化により高い値でもパフォーマンスを維持します。\nデフォルト: 128, 範囲: 4-512",
                                                 "distance", 4, 512,
                                                 a -> FlowingFluids.config.oceanFlowDistance = a, () -> FlowingFluids.config.oceanFlowDistance)
                                         ).then(intCommand("canal_flow_distance",
-                                                "Flow distance for artificial canals (flat terrain with water).\nOnly active if adaptive flow is enabled.\nDefault: 32, Range: 4-128",
+                                                "人工水路（運河）の流動距離（平地に水がある場合）。\n適応型流動が有効な場合のみ動作します。\nデフォルト: 32, 範囲: 4-128",
                                                 "distance", 4, 128,
                                                 a -> FlowingFluids.config.canalFlowDistance = a, () -> FlowingFluids.config.canalFlowDistance)
                                         ).then(booleanCommand("enable_distance_based_optimization",
-                                                "Hierarchical distance management: updates distant water less frequently.\nProvides 50-70% performance improvement for long-distance flows with minimal visual impact.",
-                                                "Distance-based optimization enabled. Distant water will update less frequently for better performance.",
-                                                "Distance-based optimization disabled. All water updates at the same rate.",
+                                                "階層的距離管理: 遠距離の水を低頻度で更新します。\n長距離流動で50-70%のパフォーマンス向上を提供し、視覚的影響は最小限です。",
+                                                "距離ベース最適化が有効になりました。遠距離の水は低頻度で更新され、パフォーマンスが向上します。",
+                                                "距離ベース最適化が無効になりました。すべての水が同じ頻度で更新されます。",
                                                 a -> FlowingFluids.config.enableDistanceBasedOptimization = a, () -> FlowingFluids.config.enableDistanceBasedOptimization)
                                         )
                                 ).then(Commands.literal("performance_monitoring")
-                                        .executes(cont -> message(cont, "Performance monitoring tools for analyzing fluid flow performance.\nUse these to optimize your settings and debug performance issues."))
+                                        .executes(cont -> message(cont, "パフォーマンスモニタリングツール - 流体フローのパフォーマンスを分析します。\nこれらを使用して設定を最適化し、パフォーマンス問題をデバッグできます。"))
                                         .then(booleanCommand("enable_performance_monitoring",
-                                                "Enable detailed performance tracking for fluid systems.\nTracks tick times, BFS operations, cache hits, and more.\nNote: Has minimal performance overhead when enabled.",
-                                                "Performance monitoring enabled. Detailed metrics will be collected and logged.",
-                                                "Performance monitoring disabled. No performance data will be collected.",
+                                                "流体システムの詳細なパフォーマンス追跡を有効にします。\ntick時間、BFS操作、キャッシュヒット率などを追跡します。\n注意: 有効時のパフォーマンスオーバーヘッドは最小限です。",
+                                                "パフォーマンスモニタリングが有効になりました。詳細なメトリクスが収集され、ログに記録されます。",
+                                                "パフォーマンスモニタリングが無効になりました。パフォーマンスデータは収集されません。",
                                                 a -> FlowingFluids.config.enablePerformanceMonitoring = a, () -> FlowingFluids.config.enablePerformanceMonitoring)
                                         ).then(intCommand("performance_log_interval",
-                                                "How often to log performance data (in ticks, 20 ticks = 1 second).\nOnly applies when performance monitoring is enabled.\nDefault: 200 (10 seconds), Range: 20-1200",
+                                                "パフォーマンスデータをログに記録する間隔（tick単位、20 tick = 1秒）。\nパフォーマンスモニタリングが有効な場合のみ適用されます。\nデフォルト: 200 (10秒), 範囲: 20-1200",
                                                 "ticks", 20, 1200,
                                                 a -> FlowingFluids.config.performanceLogInterval = a, () -> FlowingFluids.config.performanceLogInterval)
                                         ).then(Commands.literal("show_stats")
                                                 .executes(cont -> {
                                                     if (!FlowingFluids.config.enablePerformanceMonitoring) {
-                                                        return message(cont, "Performance monitoring is currently disabled.\nEnable it with: /flowing_fluids settings performance_monitoring enable_performance_monitoring on");
+                                                        return message(cont, "パフォーマンスモニタリングは現在無効です。\n有効にするには: /flowing_fluids settings behaviour performance_monitoring enable_performance_monitoring on");
                                                     }
                                                     try {
                                                         var monitor = Class.forName("traben.flowing_fluids.performance.FluidPerformanceMonitor")
@@ -334,13 +334,13 @@ public class FFCommands {
                                                                 .invoke(monitor);
                                                         return message(cont, report.toString());
                                                     } catch (Exception e) {
-                                                        return message(cont, "Error retrieving performance data: " + e.getMessage());
+                                                        return message(cont, "パフォーマンスデータの取得エラー: " + e.getMessage());
                                                     }
                                                 })
                                         ).then(Commands.literal("reset_stats")
                                                 .executes(cont -> {
                                                     if (!FlowingFluids.config.enablePerformanceMonitoring) {
-                                                        return message(cont, "Performance monitoring is currently disabled.");
+                                                        return message(cont, "パフォーマンスモニタリングは現在無効です。");
                                                     }
                                                     try {
                                                         var monitor = Class.forName("traben.flowing_fluids.performance.FluidPerformanceMonitor")
@@ -349,9 +349,9 @@ public class FFCommands {
                                                         monitor.getClass()
                                                                 .getMethod("reset")
                                                                 .invoke(monitor);
-                                                        return message(cont, "Performance monitoring data has been reset.");
+                                                        return message(cont, "パフォーマンスモニタリングデータがリセットされました。");
                                                     } catch (Exception e) {
-                                                        return message(cont, "Error resetting performance data: " + e.getMessage());
+                                                        return message(cont, "パフォーマンスデータのリセットエラー: " + e.getMessage());
                                                     }
                                                 })
                                         )
