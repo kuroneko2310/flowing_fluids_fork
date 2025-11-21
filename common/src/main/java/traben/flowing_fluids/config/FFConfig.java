@@ -74,6 +74,10 @@ public class FFConfig {
     public int playerBlockDistanceForFlowing = 0;
     public float concreteDrainsWaterChance = 0.5f;
 
+    // Adaptive scheduler settings
+    public long adaptiveSchedulerChunkExpiryMs = 60_000; // 1 minute by default
+    public int adaptiveSchedulerMaxEntries = 10_000; // Max cached stability entries
+
 
     // create mod options
     public CreateWaterWheelMode create_waterWheelMode = CreateWaterWheelMode.REQUIRE_FLOW_OR_RIVER;
@@ -198,6 +202,9 @@ public class FFConfig {
         playerBlockDistanceForFlowing = buffer.readVarInt();
         concreteDrainsWaterChance = buffer.readFloat();
 
+        adaptiveSchedulerChunkExpiryMs = buffer.readVarLong();
+        adaptiveSchedulerMaxEntries = buffer.readVarInt();
+
 
         //create mod options
         create_waterWheelMode = buffer.readEnum(CreateWaterWheelMode.class);
@@ -266,6 +273,9 @@ public class FFConfig {
         buffer.writeBoolean(fastBiomeRefillAtSeaLevelOnly);
         buffer.writeVarInt(playerBlockDistanceForFlowing);
         buffer.writeFloat(concreteDrainsWaterChance);
+
+        buffer.writeVarLong(adaptiveSchedulerChunkExpiryMs);
+        buffer.writeVarInt(adaptiveSchedulerMaxEntries);
 
         //create mod options
         buffer.writeEnum(create_waterWheelMode);
