@@ -98,6 +98,7 @@ subprojects {
 
         maven { url "https://maven.parchmentmc.org" }
         maven { url "https://mvnrepository.com/artifact/com.demonwav.mcdev/annotations" }
+        maven { url "https://repo.spongepowered.org/maven" }
 
 //        if (rootProject.mc_build as int == 3 || rootProject.mc_build as int == 7) {
 //            maven { // Flywheel
@@ -132,18 +133,9 @@ subprojects {
 
     processResources {
         inputs.property "version", rootProject.mod_version
-        inputs.property "compatible_mc_fabric", rootProject.compatible_mc_fabric
         inputs.property "compatible_mc_forge", rootProject.compatible_mc_forge
 
-        filesMatching("fabric.mod.json") {
-            expand(["version": rootProject.mod_version,
-                    "compatible_mc_fabric": rootProject.compatible_mc_fabric])
-        }
         filesMatching("META-INF/mods.toml") {
-            expand(["version": rootProject.mod_version,
-                    "compatible_mc_forge": rootProject.compatible_mc_forge])
-        }
-        filesMatching("META-INF/neoforge.mods.toml") {
             expand(["version": rootProject.mod_version,
                     "compatible_mc_forge": rootProject.compatible_mc_forge])
         }
