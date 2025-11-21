@@ -42,6 +42,21 @@ public class FFConfig {
     public int lavaTickDelay= 15;
     public int lavaNetherTickDelay = 5;
     public int randomTickLevelingDistance = 32;
+
+    // Advanced water flow distance settings
+    public int maxWaterFlowDistance = 8; // Maximum horizontal flow distance (can be higher than base flow distance)
+    public int bfsMaxSearchDistance = 16; // Maximum BFS search distance for equalization
+    public float slopeFindDistanceMultiplier = 1.0f; // Multiplier for slope finding distance (1.0 = default, higher = farther search)
+    public boolean enableAdaptiveFlowDistance = true; // Adjust flow distance based on terrain type
+    public int riverFlowDistance = 64; // Flow distance in river biomes
+    public int oceanFlowDistance = 128; // Flow distance in ocean biomes
+    public int canalFlowDistance = 32; // Flow distance for artificial canals (flat terrain)
+
+    // Performance monitoring settings
+    public boolean enablePerformanceMonitoring = false; // Enable detailed performance tracking
+    public int performanceLogInterval = 200; // Log performance data every N ticks (20 ticks = 1 second)
+    public boolean enableDistanceBasedOptimization = true; // Apply optimizations based on flow distance
+
     public float drinkWaterToBreedAnimalChance = 0.1f;
     public boolean encloseAllFluidOnWorldGen = true;
     public boolean announceWorldGenActions = false;
@@ -151,6 +166,21 @@ public class FFConfig {
         lavaTickDelay = buffer.readVarInt();
         lavaNetherTickDelay = buffer.readVarInt();
         randomTickLevelingDistance = buffer.readVarInt();
+
+        // Advanced water flow distance settings
+        maxWaterFlowDistance = buffer.readVarInt();
+        bfsMaxSearchDistance = buffer.readVarInt();
+        slopeFindDistanceMultiplier = buffer.readFloat();
+        enableAdaptiveFlowDistance = buffer.readBoolean();
+        riverFlowDistance = buffer.readVarInt();
+        oceanFlowDistance = buffer.readVarInt();
+        canalFlowDistance = buffer.readVarInt();
+
+        // Performance monitoring settings
+        enablePerformanceMonitoring = buffer.readBoolean();
+        performanceLogInterval = buffer.readVarInt();
+        enableDistanceBasedOptimization = buffer.readBoolean();
+
         drinkWaterToBreedAnimalChance = buffer.readFloat();
         encloseAllFluidOnWorldGen = buffer.readBoolean();
         announceWorldGenActions = buffer.readBoolean();
@@ -205,6 +235,21 @@ public class FFConfig {
         buffer.writeVarInt(lavaTickDelay);
         buffer.writeVarInt(lavaNetherTickDelay);
         buffer.writeVarInt(randomTickLevelingDistance);
+
+        // Advanced water flow distance settings
+        buffer.writeVarInt(maxWaterFlowDistance);
+        buffer.writeVarInt(bfsMaxSearchDistance);
+        buffer.writeFloat(slopeFindDistanceMultiplier);
+        buffer.writeBoolean(enableAdaptiveFlowDistance);
+        buffer.writeVarInt(riverFlowDistance);
+        buffer.writeVarInt(oceanFlowDistance);
+        buffer.writeVarInt(canalFlowDistance);
+
+        // Performance monitoring settings
+        buffer.writeBoolean(enablePerformanceMonitoring);
+        buffer.writeVarInt(performanceLogInterval);
+        buffer.writeBoolean(enableDistanceBasedOptimization);
+
         buffer.writeFloat(drinkWaterToBreedAnimalChance);
         buffer.writeBoolean(encloseAllFluidOnWorldGen);
         buffer.writeBoolean(announceWorldGenActions);
