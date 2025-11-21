@@ -5,6 +5,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
 import net.minecraft.world.level.ChunkPos;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,32 +25,39 @@ public class ChunkLocalSlopeCache {
     private static final int CACHE_SIZE_PER_CHUNK = 64;
 
     // Map from ChunkPos to LRU cache for slope distances
-    private static final ConcurrentHashMap<ChunkPos, LRUCache<CacheKey, Integer>> chunkCaches = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ChunkPos, Map<CacheKey, Integer>> chunkCaches = new ConcurrentHashMap<>();
 
     // Map from ChunkPos to gradient vector cache
-    private static final ConcurrentHashMap<ChunkPos, LRUCache<Long, Vec3i>> gradientCaches = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ChunkPos, Map<Long, Vec3i>> gradientCaches = new ConcurrentHashMap<>();
+
+    // Shared locks to guard cache access per chunk
+    private static final ConcurrentHashMap<ChunkPos, Object> chunkLocks = new ConcurrentHashMap<>();
 
     /**
      * Gets the cached slope distance or returns -1 if not cached.
      */
     public static int getCached(ChunkPos chunkPos, BlockPos sourcePos, int searchDistance, Direction direction) {
-        var cache = chunkCaches.get(chunkPos);
-        if (cache == null) {
-            return -1;
-        }
+        synchronized (getChunkLock(chunkPos)) {
+            var cache = chunkCaches.get(chunkPos);
+            if (cache == null) {
+                return -1;
+            }
 
-        CacheKey key = new CacheKey(sourcePos, searchDistance, direction);
-        Integer result = cache.get(key);
-        return result != null ? result : -1;
+            CacheKey key = new CacheKey(sourcePos, searchDistance, direction);
+            Integer result = cache.get(key);
+            return result != null ? result : -1;
+        }
     }
 
     /**
      * Caches a slope distance result.
      */
     public static void putCached(ChunkPos chunkPos, BlockPos sourcePos, int searchDistance, Direction direction, int slopeDistance) {
-        var cache = chunkCaches.computeIfAbsent(chunkPos, k -> new LRUCache<>(CACHE_SIZE_PER_CHUNK));
-        CacheKey key = new CacheKey(sourcePos, searchDistance, direction);
-        cache.put(key, slopeDistance);
+        synchronized (getChunkLock(chunkPos)) {
+            var cache = chunkCaches.computeIfAbsent(chunkPos, k -> Collections.synchronizedMap(new LRUCache<>(CACHE_SIZE_PER_CHUNK)));
+            CacheKey key = new CacheKey(sourcePos, searchDistance, direction);
+            cache.put(key, slopeDistance);
+        }
     }
 
     /**
@@ -57,19 +65,23 @@ public class ChunkLocalSlopeCache {
      * Returns null if not cached.
      */
     public static Vec3i getGradientVector(ChunkPos chunkPos, BlockPos pos) {
-        var cache = gradientCaches.get(chunkPos);
-        if (cache == null) {
-            return null;
+        synchronized (getChunkLock(chunkPos)) {
+            var cache = gradientCaches.get(chunkPos);
+            if (cache == null) {
+                return null;
+            }
+            return cache.get(pos.asLong());
         }
-        return cache.get(pos.asLong());
     }
 
     /**
      * Caches a gradient vector for a position.
      */
     public static void putGradientVector(ChunkPos chunkPos, BlockPos pos, Vec3i gradientVector) {
-        var cache = gradientCaches.computeIfAbsent(chunkPos, k -> new LRUCache<>(CACHE_SIZE_PER_CHUNK));
-        cache.put(pos.asLong(), gradientVector);
+        synchronized (getChunkLock(chunkPos)) {
+            var cache = gradientCaches.computeIfAbsent(chunkPos, k -> Collections.synchronizedMap(new LRUCache<>(CACHE_SIZE_PER_CHUNK)));
+            cache.put(pos.asLong(), gradientVector);
+        }
     }
 
     /**
@@ -143,6 +155,7 @@ public class ChunkLocalSlopeCache {
     public static void clearChunk(ChunkPos chunkPos) {
         chunkCaches.remove(chunkPos);
         gradientCaches.remove(chunkPos);
+        chunkLocks.remove(chunkPos);
     }
 
     /**
@@ -151,6 +164,7 @@ public class ChunkLocalSlopeCache {
     public static void clearAll() {
         chunkCaches.clear();
         gradientCaches.clear();
+        chunkLocks.clear();
     }
 
     /**
@@ -175,6 +189,10 @@ public class ChunkLocalSlopeCache {
         protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
             return size() > maxSize;
         }
+    }
+
+    private static Object getChunkLock(ChunkPos chunkPos) {
+        return chunkLocks.computeIfAbsent(chunkPos, key -> new Object());
     }
 
     /**

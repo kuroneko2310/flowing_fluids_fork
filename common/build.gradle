@@ -15,7 +15,16 @@ dependencies {
         exclude(group: "net.fabricmc.fabric-api")
     }
 
+    testAnnotationProcessor 'systems.manifold:manifold-preprocessor:2025.1.16'
+    testCompileOnly 'systems.manifold:manifold-preprocessor:2025.1.16'
+
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
 }
 loom {
     accessWidenerPath = file("src/main/resources/flowing_fluids_${project.mc_build}.accesswidener")
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
 }
