@@ -1,7 +1,6 @@
 package traben.flowing_fluids.mixin;
 
 
-import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
@@ -11,6 +10,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BucketPickup;
 import net.minecraft.world.level.block.FlowingFluidBlock;
 import net.minecraft.world.level.material.FlowingFluid;
+import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -33,17 +33,19 @@ public abstract class MixinFlowingFluidBlock extends Block implements BucketPick
     }
 
 
-    @ModifyExpressionValue(method = "shouldSpreadLiquid", at = @At(value = "INVOKE",
+    @WrapOperation(method = "shouldSpreadLiquid", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/world/level/material/Fluid;is(Lnet/minecraft/tags/TagKey;)Z"))
-    // this is a real dodgey mixin target but any other way failed to grab the locals
-    private boolean ff$consumeLevelObsidianOrCobbleCreation(final boolean original,
+    private boolean ff$consumeLevelObsidianOrCobbleCreation(final Fluid fluidInstance,
+                                                            final TagKey<Fluid> tag,
+                                                            final Operation<Boolean> original,
                                                             @Local(argsOnly = true) Level level,
                                                             @Local(ordinal = 1) BlockPos blockPos) {
-        if (original && FlowingFluids.config.enableMod && FlowingFluids.config.isFluidAllowed(this.fluid)) {
+        boolean result = original.call(fluidInstance, tag);
+        if (result && FlowingFluids.config.enableMod && FlowingFluids.config.isFluidAllowed(this.fluid)) {
             var state = level.getFluidState(blockPos);
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, state.getType(), state.getAmount() - 1);
         }
-        return original;
+        return result;
     }
 
     @WrapOperation(method = "shouldSpreadLiquid", at = @At(value = "INVOKE",
