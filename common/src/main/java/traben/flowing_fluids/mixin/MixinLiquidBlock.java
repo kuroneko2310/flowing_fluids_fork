@@ -44,7 +44,7 @@ public abstract class MixinLiquidBlock extends Block implements BucketPickup {
 
 
     @ModifyExpressionValue(method = "shouldSpreadLiquid", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/world/level/material/FluidState;is(Lnet/minecraft/tags/TagKey;)Z"))
+            target = "Lnet/minecraft/world/level/material/Fluid;is(Lnet/minecraft/tags/TagKey;)Z"))
     // this is a real dodgey mixin target but any other way failed to grab the locals
     private boolean ff$consumeLevelObsidianOrCobbleCreation(final boolean original,
                                                             @Local(argsOnly = true) Level level,
