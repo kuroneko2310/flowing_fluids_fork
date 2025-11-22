@@ -50,6 +50,9 @@ public class EnhancedFluidBFS {
         Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
     };
 
+    // Downhill acceleration bonus (simulates momentum gained from drops)
+    private static final int MAX_MOMENTUM_BONUS = 256;
+
     // Track positions currently being processed to prevent duplicate BFS runs
     private static final Set<Long> processingPositions = ConcurrentHashMap.newKeySet();
     private static long lastCleanupTime = System.currentTimeMillis();
@@ -102,12 +105,13 @@ public class EnhancedFluidBFS {
             equalizedPositions.add(startPos.immutable());
 
             int nodesExplored = 0;
+            int momentumBudget = 0;
             ChunkPos chunkPos = new ChunkPos(startPos);
 
             // Get or estimate gradient vector for weighted search
             Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(level, chunkPos, startPos);
 
-            while (!queue.isEmpty() && nodesExplored < maxNodes && visited.size() < maxDepth) {
+            while (!queue.isEmpty() && nodesExplored < maxNodes + momentumBudget && visited.size() < maxDepth) {
                 long currentLong = queue.dequeueLong();
                 BlockPos currentPos = BlockPos.of(currentLong);
                 nodesExplored++;
@@ -136,6 +140,12 @@ public class EnhancedFluidBFS {
                         int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
                         if (shouldEqualize(currentAmount, neighborAmount)) {
                             equalizedPositions.add(neighborPos.immutable());
+                        }
+
+                        // Grant additional budget when flowing downhill to mimic acceleration
+                        int drop = currentPos.getY() - neighborPos.getY();
+                        if (drop > 0) {
+                            momentumBudget = Math.min(MAX_MOMENTUM_BONUS, momentumBudget + drop);
                         }
                     }
                 }
