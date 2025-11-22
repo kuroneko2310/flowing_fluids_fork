@@ -29,6 +29,10 @@ public final class DimensionKey {
         return new DimensionKey(dimension, false);
     }
 
+    public static DimensionKey ofIdentity(Object token) {
+        return new DimensionKey(token, true);
+    }
+
     public static DimensionKey of(LevelAccessor accessor) {
         if (accessor instanceof Level level) {
             return of(level);

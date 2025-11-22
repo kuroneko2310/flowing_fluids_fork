@@ -289,6 +289,10 @@ public class EnhancedFluidBFS {
      * FIXED: NPE handling and proper iteration through valid positions only.
      */
     public static void equalizePositions(Level level, List<BlockPos> positions) {
+        equalizePositions(level, positions, findFirstFluidType(level, positions));
+    }
+
+    public static void equalizePositions(Level level, List<BlockPos> positions, Fluid fallbackFluid) {
         if (positions.isEmpty()) {
             return;
         }
@@ -322,13 +326,22 @@ public class EnhancedFluidBFS {
 
             // Buffer the change with null safety
             FluidState fluidState = level.getFluidState(pos);
-            Fluid fluidType = (fluidState != null && !fluidState.isEmpty()) ? fluidState.getType() : null;
+            Fluid fluidType = (fluidState != null && !fluidState.isEmpty()) ? fluidState.getType() : fallbackFluid;
 
-            // FIXED: Only buffer if fluidType is not null
             if (fluidType != null) {
-                FluidTickBuffer.bufferFluidChange(pos, newAmount, newAmount > 0, fluidType);
+                FluidTickBuffer.bufferFluidChange(level, pos, newAmount, newAmount > 0, fluidType);
             }
         }
+    }
+
+    private static Fluid findFirstFluidType(Level level, List<BlockPos> positions) {
+        for (BlockPos pos : positions) {
+            FluidState state = level.getFluidState(pos);
+            if (state != null && !state.isEmpty()) {
+                return state.getType();
+            }
+        }
+        return null;
     }
 
     /**

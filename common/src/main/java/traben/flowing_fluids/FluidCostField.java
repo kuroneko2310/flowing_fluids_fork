@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.material.FluidState;
 
 import java.util.*;
@@ -206,11 +207,12 @@ public class FluidCostField {
 
         // Can accept if already has fluid (merge)
         if (!fluidState.isEmpty()) {
-            int existingAmount = FluidSpatialGrid.getFluidAmount(pos);
             int maxAmount = FluidAmountConverter.getMaxInternal();
-
-            // Can accept if not already full
-            return existingAmount + fluidAmount <= maxAmount;
+            if (level instanceof LevelAccessor levelAccessor) {
+                int existingAmount = FluidSpatialGrid.getFluidAmount(levelAccessor, pos);
+                return existingAmount + fluidAmount <= maxAmount;
+            }
+            return true; // Without level context, assume merge is possible
         }
 
         return false;

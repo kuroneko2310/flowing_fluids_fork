@@ -38,6 +38,12 @@ public class FluidSpatialGrid {
         return DIMENSION_STORES.computeIfAbsent(key, k -> new DimensionStorage());
     }
 
+    private static void cleanupStorageIfEmpty(LevelAccessor level, DimensionStorage storage) {
+        if (storage.chunkGrids.isEmpty()) {
+            DIMENSION_STORES.remove(DimensionKey.of(level), storage);
+        }
+    }
+
     /**
      * Checks if there is fluid at the given position.
      * Returns true if fluid exists, false otherwise.
@@ -74,6 +80,7 @@ public class FluidSpatialGrid {
         if (grid.isEmpty()) {
             storage.chunkGrids.remove(chunkPos, grid);
             storage.chunkAccessTimes.remove(chunkPos);
+            cleanupStorageIfEmpty(level, storage);
         }
     }
 
@@ -194,6 +201,7 @@ public class FluidSpatialGrid {
             if (grid.isEmpty()) {
                 storage.chunkGrids.remove(chunkPos, grid);
                 storage.chunkAccessTimes.remove(chunkPos);
+                cleanupStorageIfEmpty(level, storage);
             }
         }
     }
@@ -238,6 +246,12 @@ public class FluidSpatialGrid {
                 }
             }
         }
+
+        if (grid.isEmpty()) {
+            storage.chunkGrids.remove(chunkPos, grid);
+            storage.chunkAccessTimes.remove(chunkPos);
+            cleanupStorageIfEmpty(level, storage);
+        }
     }
 
     /**
@@ -248,6 +262,7 @@ public class FluidSpatialGrid {
         DimensionStorage storage = getStorage(level);
         storage.chunkGrids.remove(chunkPos);
         storage.chunkAccessTimes.remove(chunkPos);
+        cleanupStorageIfEmpty(level, storage);
     }
 
     /**

@@ -27,23 +27,18 @@ public class ChunkLocalSlopeCache {
     private static final int CACHE_SIZE_PER_CHUNK = 64;
 
     private static final ConcurrentHashMap<DimensionKey, DimensionCache> DIMENSION_CACHES = new ConcurrentHashMap<>();
+    private static final DimensionKey FALLBACK_KEY = DimensionKey.ofIdentity(ChunkLocalSlopeCache.class);
 
     private static DimensionCache getDimensionCache(LevelAccessor level) {
-        return DIMENSION_CACHES.computeIfAbsent(DimensionKey.of(level), key -> new DimensionCache());
+        DimensionKey key = level != null ? DimensionKey.of(level) : FALLBACK_KEY;
+        return DIMENSION_CACHES.computeIfAbsent(key, k -> new DimensionCache());
     }
 
     /**
      * Gets the cached slope distance or returns -1 if not cached.
      */
     public static int getCached(LevelAccessor level, ChunkPos chunkPos, BlockPos sourcePos, int searchDistance, Direction direction) {
-        return getCached(getDimensionCache(level), chunkPos, sourcePos, searchDistance, direction);
-    }
-
-    public static int getCached(DimensionKey dimension, ChunkPos chunkPos, BlockPos sourcePos, int searchDistance, Direction direction) {
-        return getCached(getDimensionCache(dimension), chunkPos, sourcePos, searchDistance, direction);
-    }
-
-    private static int getCached(DimensionCache cache, ChunkPos chunkPos, BlockPos sourcePos, int searchDistance, Direction direction) {
+        DimensionCache cache = getDimensionCache(level);
         synchronized (getChunkLock(cache, chunkPos)) {
             var chunkCache = cache.chunkCaches.get(chunkPos);
             if (chunkCache == null) {
@@ -56,6 +51,10 @@ public class ChunkLocalSlopeCache {
         }
     }
 
+    public static int getCached(ChunkPos chunkPos, BlockPos sourcePos, int searchDistance, Direction direction) {
+        return getCached(null, chunkPos, sourcePos, searchDistance, direction);
+    }
+
     /**
      * Caches a slope distance result.
      */
@@ -66,6 +65,10 @@ public class ChunkLocalSlopeCache {
             CacheKey key = new CacheKey(sourcePos, searchDistance, direction);
             chunkCache.put(key, slopeDistance);
         }
+    }
+
+    public static void putCached(ChunkPos chunkPos, BlockPos sourcePos, int searchDistance, Direction direction, int slopeDistance) {
+        putCached(null, chunkPos, sourcePos, searchDistance, direction, slopeDistance);
     }
 
     /**
@@ -83,6 +86,10 @@ public class ChunkLocalSlopeCache {
         }
     }
 
+    public static Vec3i getGradientVector(ChunkPos chunkPos, BlockPos pos) {
+        return getGradientVector(null, chunkPos, pos);
+    }
+
     /**
      * Caches a gradient vector for a position.
      */
@@ -92,6 +99,10 @@ public class ChunkLocalSlopeCache {
             var gradientCache = cache.gradientCaches.computeIfAbsent(chunkPos, k -> Collections.synchronizedMap(new LRUCache<>(CACHE_SIZE_PER_CHUNK)));
             gradientCache.put(pos.asLong(), gradientVector);
         }
+    }
+
+    public static void putGradientVector(ChunkPos chunkPos, BlockPos pos, Vec3i gradientVector) {
+        putGradientVector(null, chunkPos, pos, gradientVector);
     }
 
     /**
