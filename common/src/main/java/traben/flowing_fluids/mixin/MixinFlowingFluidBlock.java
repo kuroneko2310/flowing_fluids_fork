@@ -25,7 +25,7 @@ public abstract class MixinFlowingFluidBlock extends Block implements BucketPick
 
     @Shadow
     @Final
-    protected FlowingFluid fluid;
+    private FlowingFluid fluid;
 
     public MixinFlowingFluidBlock() {
         //noinspection DataFlowIssue
