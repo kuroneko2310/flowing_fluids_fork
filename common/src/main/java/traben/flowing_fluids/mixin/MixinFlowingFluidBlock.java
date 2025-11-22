@@ -42,7 +42,7 @@ public abstract class MixinFlowingFluidBlock extends Block implements BucketPick
 
 
     @ModifyExpressionValue(method = "shouldSpreadLiquid", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/world/level/material/Fluid;is(Lnet/minecraft/tags/TagKey;)Z"), require = 0)
+            target = "Lnet/minecraft/world/level/material/Fluid;is(Lnet/minecraft/tags/TagKey;)Z"))
     // this is a real dodgey mixin target but any other way failed to grab the locals
     private boolean ff$consumeLevelObsidianOrCobbleCreation(final boolean original,
                                                             @Local(argsOnly = true) Level level,
@@ -55,7 +55,7 @@ public abstract class MixinFlowingFluidBlock extends Block implements BucketPick
     }
 
     @WrapOperation(method = "shouldSpreadLiquid", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/world/level/material/FluidState;isSource()Z"), require = 0)
+            target = "Lnet/minecraft/world/level/material/FluidState;isSource()Z"))
     private boolean ff$modifyObsidianCondition(final FluidState instance, final Operation<Boolean> original) {
         boolean source = original.call(instance); // so any other mixin may run
         if (!source
