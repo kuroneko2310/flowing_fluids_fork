@@ -17,6 +17,7 @@
     "MixinDispenserBlock",
     "MixinEntityBreeding",
     "MixinFarmBlock",
+    "MixinFlowingFluidBlock",
     "MixinFlowingFluid",
     "MixinIceCreationCondition",
     "MixinKelpPlantBlock",
