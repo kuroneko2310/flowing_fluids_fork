@@ -74,7 +74,7 @@ public class EnhancedFluidBFS {
         }
 
         // Check equilibrium index - skip if stable
-        int startAmount = FluidSpatialGrid.getFluidAmount(startPos);
+        int startAmount = FluidSpatialGrid.getFluidAmount(level, startPos);
         if (!AdaptiveTickScheduler.shouldRunBFS(level, startPos, startAmount)) {
             return equalizedPositions; // Too stable, skip BFS
         }
@@ -104,7 +104,7 @@ public class EnhancedFluidBFS {
             ChunkPos chunkPos = new ChunkPos(startPos);
 
             // Get or estimate gradient vector for weighted search
-            Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(chunkPos, startPos);
+            Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(level, chunkPos, startPos);
 
             while (!queue.isEmpty() && nodesExplored < maxNodes && visited.size() < maxDepth) {
                 long currentLong = queue.dequeueLong();
@@ -113,7 +113,7 @@ public class EnhancedFluidBFS {
 
                 // Get current fluid amount
                 FluidState currentFluid = level.getFluidState(currentPos);
-                int currentAmount = FluidSpatialGrid.getFluidAmount(currentPos);
+                int currentAmount = FluidSpatialGrid.getFluidAmount(level, currentPos);
 
                 // Explore neighbors with weighted priority
                 Direction[] directions = getWeightedDirections(gradientVector);
@@ -132,7 +132,7 @@ public class EnhancedFluidBFS {
                         queue.enqueue(neighborLong);
 
                         // Add to equalization list if it needs balancing
-                        int neighborAmount = FluidSpatialGrid.getFluidAmount(neighborPos);
+                        int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
                         if (shouldEqualize(currentAmount, neighborAmount)) {
                             equalizedPositions.add(neighborPos.immutable());
                         }
@@ -268,7 +268,7 @@ public class EnhancedFluidBFS {
      */
     private static AdaptiveTickScheduler.AreaType getAreaType(Level level, ChunkPos chunkPos) {
         // Try to get from scheduler
-        int budget = AdaptiveTickScheduler.getBFSBudget(new BlockPos(
+        int budget = AdaptiveTickScheduler.getBFSBudget(level, new BlockPos(
             chunkPos.getMinBlockX(), 64, chunkPos.getMinBlockZ()
         ));
 
@@ -298,7 +298,7 @@ public class EnhancedFluidBFS {
         List<BlockPos> validPos = new ArrayList<>();
 
         for (BlockPos pos : positions) {
-            int amount = FluidSpatialGrid.getFluidAmount(pos);
+            int amount = FluidSpatialGrid.getFluidAmount(level, pos);
             if (amount > 0 || canAcceptFluid(level, pos)) {
                 totalAmount += amount;
                 validPos.add(pos);
