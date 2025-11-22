@@ -9,7 +9,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BucketPickup;
-#if MC > MC_20_1
+#if MC >= MC_20_2
 import net.minecraft.world.level.block.FlowingFluidBlock;
 #else
 import net.minecraft.world.level.block.LiquidBlock;
@@ -24,7 +24,7 @@ import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 
 
-#if MC > MC_20_1
+#if MC >= MC_20_2
 @Mixin(FlowingFluidBlock.class)
 #else
 @Mixin(LiquidBlock.class)
