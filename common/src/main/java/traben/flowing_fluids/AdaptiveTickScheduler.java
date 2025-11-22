@@ -4,9 +4,12 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.material.FluidState;
+import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.Iterator;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -40,14 +43,11 @@ public class AdaptiveTickScheduler {
     private static final int BFS_BUDGET_HIGH_ACTIVITY = 8000; // Villages, canals
     private static final int BFS_BUDGET_OCEAN = 1000; // Large water bodies
 
-    // Map from BlockPos.asLong() to FluidStabilityData
-    private static final ConcurrentHashMap<Long, FluidStabilityData> stabilityMap = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<DimensionKey, SchedulerDimensionData> DIMENSION_DATA = new ConcurrentHashMap<>();
 
-    // Map from ChunkPos to last modification time for bulk invalidation
-    private static final ConcurrentHashMap<ChunkPos, Long> chunkModificationTimes = new ConcurrentHashMap<>();
-
-    // Map from ChunkPos to area type for BFS budget determination
-    private static final ConcurrentHashMap<ChunkPos, AreaType> areaTypes = new ConcurrentHashMap<>();
+    private static SchedulerDimensionData getData(LevelAccessor level) {
+        return DIMENSION_DATA.computeIfAbsent(DimensionKey.of(level), key -> new SchedulerDimensionData());
+    }
 
     // Sampled directions for faster equilibrium calculation (optimized)
     private static final Direction[] SAMPLED_DIRECTIONS = new Direction[]{
@@ -67,22 +67,23 @@ public class AdaptiveTickScheduler {
     public static float calculateEquilibriumIndex(Level level, BlockPos pos, int fluidAmount) {
         if (level == null) return 1.0f; // Force tick if no level context
 
-        updateChunkModificationTime(pos);
+        SchedulerDimensionData dimensionData = getData(level);
+        updateChunkModificationTime(level, pos);
 
         long posKey = pos.asLong();
-        FluidStabilityData data = stabilityMap.get(posKey);
+        FluidStabilityData data = dimensionData.stabilityMap.get(posKey);
 
         // Calculate neighbor state hash for cache validation
         int neighborHash = 0;
         for (Direction dir : SAMPLED_DIRECTIONS) {
             BlockPos neighborPos = pos.relative(dir);
-            int neighborAmount = FluidSpatialGrid.getFluidAmount(neighborPos);
+            int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
             neighborHash = 31 * neighborHash + neighborAmount;
         }
 
         // Check if we can use cached value
         if (data != null && data.neighborHash == neighborHash && data.lastAmount == fluidAmount) {
-            Direction currentGradient = FluidSpatialGrid.getGradientDirection(pos);
+            Direction currentGradient = FluidSpatialGrid.getGradientDirection(level, pos);
             // Only recalculate if gradient changed
             if (data.lastGradient == currentGradient) {
                 return data.lastEquilibriumIndex;
@@ -97,7 +98,7 @@ public class AdaptiveTickScheduler {
             BlockPos neighborPos = pos.relative(dir);
             FluidState neighborFluid = level.getFluidState(neighborPos);
             if (!neighborFluid.isEmpty()) {
-                int neighborAmount = FluidSpatialGrid.getFluidAmount(neighborPos);
+                    int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
                 if (neighborAmount > 0) {
                     avgNeighborHeight += neighborAmount;
                     neighborCount++;
@@ -116,7 +117,7 @@ public class AdaptiveTickScheduler {
 
         // Component 2: Local gradient change (from SlopeCache)
         float gradientChange = 0.0f;
-        Direction currentGradient = FluidSpatialGrid.getGradientDirection(pos);
+        Direction currentGradient = FluidSpatialGrid.getGradientDirection(level, pos);
         if (data != null && data.lastGradient != currentGradient) {
             gradientChange = 0.1f; // Gradient changed
         }
@@ -134,7 +135,7 @@ public class AdaptiveTickScheduler {
         // Update stability data with cache
         if (data == null) {
             data = new FluidStabilityData(fluidAmount, 0, BASE_DELAY);
-            stabilityMap.put(posKey, data);
+            dimensionData.stabilityMap.put(posKey, data);
         }
         data.lastGradient = currentGradient;
         data.lastEquilibriumIndex = equilibriumIndex;
@@ -166,9 +167,10 @@ public class AdaptiveTickScheduler {
     /**
      * Gets the BFS budget (max nodes) for a position based on area type.
      */
-    public static int getBFSBudget(BlockPos pos) {
+    public static int getBFSBudget(LevelAccessor level, BlockPos pos) {
+        SchedulerDimensionData dimensionData = getData(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        AreaType areaType = areaTypes.getOrDefault(chunkPos, AreaType.NORMAL);
+        AreaType areaType = dimensionData.areaTypes.getOrDefault(chunkPos, AreaType.NORMAL);
 
         return switch (areaType) {
             case HIGH_ACTIVITY -> BFS_BUDGET_HIGH_ACTIVITY;
@@ -180,24 +182,24 @@ public class AdaptiveTickScheduler {
     /**
      * Sets the area type for a chunk (for BFS budget control).
      */
-    public static void setAreaType(ChunkPos chunkPos, AreaType type) {
-        areaTypes.put(chunkPos, type);
+    public static void setAreaType(LevelAccessor level, ChunkPos chunkPos, AreaType type) {
+        getData(level).areaTypes.put(chunkPos, type);
     }
 
     /**
      * Auto-detects area type based on fluid density.
      * Call this periodically to classify chunks.
      */
-    public static void autoDetectAreaType(ChunkPos chunkPos, int fluidBlockCount) {
+    public static void autoDetectAreaType(LevelAccessor level, ChunkPos chunkPos, int fluidBlockCount) {
         // Ocean: > 1000 fluid blocks
         // High activity (village/canal): 100-1000 blocks
         // Normal: < 100 blocks
         if (fluidBlockCount > 1000) {
-            areaTypes.put(chunkPos, AreaType.OCEAN);
+            setAreaType(level, chunkPos, AreaType.OCEAN);
         } else if (fluidBlockCount > 100) {
-            areaTypes.put(chunkPos, AreaType.HIGH_ACTIVITY);
+            setAreaType(level, chunkPos, AreaType.HIGH_ACTIVITY);
         } else {
-            areaTypes.put(chunkPos, AreaType.NORMAL);
+            setAreaType(level, chunkPos, AreaType.NORMAL);
         }
     }
 
@@ -205,15 +207,16 @@ public class AdaptiveTickScheduler {
      * Calculates the appropriate tick delay for a fluid at the given position.
      * Returns a higher delay for stable fluids, lower delay for active ones.
      */
-    public static int getAdaptiveDelay(BlockPos pos, int fluidAmount, int baseDelay) {
-        updateChunkModificationTime(pos);
+    public static int getAdaptiveDelay(LevelAccessor level, BlockPos pos, int fluidAmount, int baseDelay) {
+        SchedulerDimensionData dimensionData = getData(level);
+        updateChunkModificationTime(level, pos);
 
         long posKey = pos.asLong();
-        FluidStabilityData data = stabilityMap.get(posKey);
+        FluidStabilityData data = dimensionData.stabilityMap.get(posKey);
 
         if (data == null) {
             // New fluid position, start with base delay
-            stabilityMap.put(posKey, new FluidStabilityData(fluidAmount, 0, baseDelay));
+            dimensionData.stabilityMap.put(posKey, new FluidStabilityData(fluidAmount, 0, baseDelay));
             return baseDelay;
         }
 
@@ -252,9 +255,10 @@ public class AdaptiveTickScheduler {
      * Notifies the scheduler that a fluid state has changed at the given position.
      * This resets the stability for this position and neighboring positions.
      */
-    public static void notifyFluidChange(BlockPos pos) {
+    public static void notifyFluidChange(LevelAccessor level, BlockPos pos) {
+        SchedulerDimensionData dimensionData = getData(level);
         long posKey = pos.asLong();
-        stabilityMap.remove(posKey);
+        dimensionData.stabilityMap.remove(posKey);
 
         // Also invalidate neighbors as they may be affected
         for (int dx = -1; dx <= 1; dx++) {
@@ -262,7 +266,7 @@ public class AdaptiveTickScheduler {
                 for (int dz = -1; dz <= 1; dz++) {
                     if (dx == 0 && dy == 0 && dz == 0) continue;
                     long neighborKey = pos.offset(dx, dy, dz).asLong();
-                    FluidStabilityData neighborData = stabilityMap.get(neighborKey);
+                    FluidStabilityData neighborData = dimensionData.stabilityMap.get(neighborKey);
                     if (neighborData != null) {
                         // Reset neighbor delay to base, but don't remove completely
                         neighborData.currentDelay = BASE_DELAY;
@@ -274,29 +278,34 @@ public class AdaptiveTickScheduler {
 
         // Update chunk modification time
         ChunkPos chunkPos = new ChunkPos(pos);
-        chunkModificationTimes.put(chunkPos, System.currentTimeMillis());
+        dimensionData.chunkModificationTimes.put(chunkPos, System.currentTimeMillis());
     }
 
     /**
      * Clears stability data for an entire chunk.
      * Called when chunk unloads or when bulk fluid changes occur.
      */
-    public static void clearChunk(ChunkPos chunkPos) {
+    public static void clearChunk(LevelAccessor level, ChunkPos chunkPos) {
+        SchedulerDimensionData dimensionData = getData(level);
+        clearChunk(dimensionData, chunkPos);
+    }
+
+    private static void clearChunk(SchedulerDimensionData dimensionData, ChunkPos chunkPos) {
         int minX = chunkPos.getMinBlockX();
         int maxX = chunkPos.getMaxBlockX();
         int minZ = chunkPos.getMinBlockZ();
         int maxZ = chunkPos.getMaxBlockZ();
 
         // Remove all entries in this chunk
-        stabilityMap.entrySet().removeIf(entry -> {
+        dimensionData.stabilityMap.entrySet().removeIf(entry -> {
             long key = entry.getKey();
             int x = BlockPos.getX(key);
             int z = BlockPos.getZ(key);
             return x >= minX && x <= maxX && z >= minZ && z <= maxZ;
         });
 
-        chunkModificationTimes.remove(chunkPos);
-        areaTypes.remove(chunkPos);
+        dimensionData.chunkModificationTimes.remove(chunkPos);
+        dimensionData.areaTypes.remove(chunkPos);
     }
 
     /**
@@ -304,34 +313,43 @@ public class AdaptiveTickScheduler {
      * Call this periodically (e.g., every few minutes).
      * FIXED: Implements proper LRU eviction instead of random removal.
      */
-    public static void performMaintenance() {
+    public static void performMaintenance(LevelAccessor level) {
+        cleanupDimension(DimensionKey.of(level));
+    }
+
+    public static void performMaintenanceAll() {
+        DIMENSION_DATA.keySet().forEach(AdaptiveTickScheduler::cleanupDimension);
+    }
+
+    private static void cleanupDimension(DimensionKey key) {
+        SchedulerDimensionData dimensionData = DIMENSION_DATA.get(key);
+        if (dimensionData == null) {
+            return;
+        }
+
         long currentTime = System.currentTimeMillis();
         final long EXPIRY_TIME = FlowingFluids.config.adaptiveSchedulerChunkExpiryMs;
 
-        // Clear chunks that haven't been modified recently
-        chunkModificationTimes.entrySet().removeIf(entry -> {
+        dimensionData.chunkModificationTimes.entrySet().removeIf(entry -> {
             if (currentTime - entry.getValue() > EXPIRY_TIME) {
-                clearChunk(entry.getKey());
+                clearChunk(dimensionData, entry.getKey());
                 return true;
             }
             return false;
         });
 
-        // FIXED: Limit total size with proper LRU eviction
         final int MAX_ENTRIES = FlowingFluids.config.adaptiveSchedulerMaxEntries;
-        if (stabilityMap.size() > MAX_ENTRIES) {
-            // Remove least recently used entries based on chunk modification times
-            int toRemove = stabilityMap.size() - MAX_ENTRIES;
-            chunkModificationTimes.entrySet().stream()
-                .sorted(java.util.Map.Entry.comparingByValue()) // Sort by modification time (oldest first)
+        if (dimensionData.stabilityMap.size() > MAX_ENTRIES) {
+            int toRemove = dimensionData.stabilityMap.size() - MAX_ENTRIES;
+            dimensionData.chunkModificationTimes.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue())
                 .limit(toRemove)
-                .map(java.util.Map.Entry::getKey)
-                .forEach(AdaptiveTickScheduler::clearChunk);
+                .map(Map.Entry::getKey)
+                .forEach(chunkPos -> clearChunk(dimensionData, chunkPos));
 
-            // Fallback: if modification times are missing or insufficient, remove entries directly
-            if (stabilityMap.size() > MAX_ENTRIES) {
-                Iterator<Long> iterator = stabilityMap.keySet().iterator();
-                int remaining = stabilityMap.size() - MAX_ENTRIES;
+            if (dimensionData.stabilityMap.size() > MAX_ENTRIES) {
+                Iterator<Long> iterator = dimensionData.stabilityMap.keySet().iterator();
+                int remaining = dimensionData.stabilityMap.size() - MAX_ENTRIES;
                 while (iterator.hasNext() && remaining > 0) {
                     iterator.next();
                     iterator.remove();
@@ -339,27 +357,34 @@ public class AdaptiveTickScheduler {
                 }
             }
         }
+
+        if (dimensionData.stabilityMap.isEmpty()
+            && dimensionData.chunkModificationTimes.isEmpty()
+            && dimensionData.areaTypes.isEmpty()) {
+            DIMENSION_DATA.remove(key, dimensionData);
+        }
     }
 
-    private static void updateChunkModificationTime(BlockPos pos) {
+    private static void updateChunkModificationTime(LevelAccessor level, BlockPos pos) {
+        SchedulerDimensionData dimensionData = getData(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        chunkModificationTimes.put(chunkPos, System.currentTimeMillis());
+        dimensionData.chunkModificationTimes.put(chunkPos, System.currentTimeMillis());
     }
 
     /**
      * Gets the current number of tracked fluid positions for monitoring.
      */
     public static int getTrackedFluidCount() {
-        return stabilityMap.size();
+        return DIMENSION_DATA.values().stream()
+            .mapToInt(data -> data.stabilityMap.size())
+            .sum();
     }
 
     /**
      * Clears all stability data (useful for testing).
      */
     public static void clearAll() {
-        stabilityMap.clear();
-        chunkModificationTimes.clear();
-        areaTypes.clear();
+        DIMENSION_DATA.clear();
     }
 
     /**
@@ -390,5 +415,11 @@ public class AdaptiveTickScheduler {
             this.lastEquilibriumIndex = 1.0f; // Start with high index (unstable)
             this.neighborHash = 0;
         }
+    }
+
+    private static class SchedulerDimensionData {
+        final ConcurrentHashMap<Long, FluidStabilityData> stabilityMap = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<ChunkPos, Long> chunkModificationTimes = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<ChunkPos, AreaType> areaTypes = new ConcurrentHashMap<>();
     }
 }

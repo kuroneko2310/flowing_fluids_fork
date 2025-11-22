@@ -3,9 +3,13 @@ package traben.flowing_fluids;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.material.Fluid;
+import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.BitSet;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -21,57 +25,73 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class FluidSpatialGrid {
 
-    // Each chunk has a multi-resolution grid
-    private static final ConcurrentHashMap<ChunkPos, ChunkFluidGrid> chunkGrids = new ConcurrentHashMap<>();
-
-    // FIXED: Track access times for LRU eviction
-    private static final ConcurrentHashMap<ChunkPos, Long> chunkAccessTimes = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<DimensionKey, DimensionStorage> DIMENSION_STORES = new ConcurrentHashMap<>();
 
     // Global connected component ID generator
     private static final AtomicInteger nextComponentId = new AtomicInteger(1);
+
+    private static DimensionStorage getStorage(LevelAccessor level) {
+        return getStorage(DimensionKey.of(level));
+    }
+
+    private static DimensionStorage getStorage(DimensionKey key) {
+        return DIMENSION_STORES.computeIfAbsent(key, k -> new DimensionStorage());
+    }
+
+    private static void cleanupStorageIfEmpty(LevelAccessor level, DimensionStorage storage) {
+        if (storage.chunkGrids.isEmpty()) {
+            DIMENSION_STORES.remove(DimensionKey.of(level), storage);
+        }
+    }
 
     /**
      * Checks if there is fluid at the given position.
      * Returns true if fluid exists, false otherwise.
      * This is an O(1) operation.
      */
-    public static boolean hasFluidAt(BlockPos pos) {
+    public static boolean hasFluidAt(LevelAccessor level, BlockPos pos) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        ChunkFluidGrid grid = chunkGrids.get(chunkPos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
             return false;
         }
-        // FIXED: Update access time for LRU
-        chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
+        storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
         return grid.hasFluidAt(pos);
     }
 
     /**
      * Marks that fluid exists at the given position with precise amount (0-255).
      */
-    public static void setFluidAt(BlockPos pos, boolean hasFluid) {
-        setFluidAt(pos, hasFluid, 0);
+    public static void setFluidAt(LevelAccessor level, BlockPos pos, boolean hasFluid) {
+        setFluidAt(level, pos, hasFluid, 0);
     }
 
     /**
      * Sets fluid at position with precise internal amount (0-255).
      * @param amount Internal precision amount (0-255), will be converted from BlockState amount (0-8)
      */
-    public static void setFluidAt(BlockPos pos, boolean hasFluid, int amount) {
+    public static void setFluidAt(LevelAccessor level, BlockPos pos, boolean hasFluid, int amount) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        // FIXED: Update access time for LRU
-        chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
-        ChunkFluidGrid grid = chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
+        storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
+        ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
         grid.setFluidAt(pos, hasFluid, amount);
+        if (grid.isEmpty()) {
+            storage.chunkGrids.remove(chunkPos, grid);
+            storage.chunkAccessTimes.remove(chunkPos);
+            cleanupStorageIfEmpty(level, storage);
+        }
     }
 
     /**
      * Gets the precise internal fluid amount (0-255) at a position.
      * Returns 0 if no fluid exists.
      */
-    public static int getFluidAmount(BlockPos pos) {
+    public static int getFluidAmount(LevelAccessor level, BlockPos pos) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        ChunkFluidGrid grid = chunkGrids.get(chunkPos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
             return 0;
         }
@@ -82,9 +102,10 @@ public class FluidSpatialGrid {
      * Gets the connected component ID for the fluid at this position.
      * Returns 0 if no fluid or no component assigned.
      */
-    public static int getComponentId(BlockPos pos) {
+    public static int getComponentId(LevelAccessor level, BlockPos pos) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        ChunkFluidGrid grid = chunkGrids.get(chunkPos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
             return 0;
         }
@@ -95,9 +116,10 @@ public class FluidSpatialGrid {
      * Assigns a connected component ID to fluid at this position.
      * Used to track fluid regions and avoid redundant BFS.
      */
-    public static void setComponentId(BlockPos pos, int componentId) {
+    public static void setComponentId(LevelAccessor level, BlockPos pos, int componentId) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        ChunkFluidGrid grid = chunkGrids.get(chunkPos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid != null) {
             grid.setComponentId(pos, componentId);
         }
@@ -114,9 +136,10 @@ public class FluidSpatialGrid {
      * Gets the gradient direction for the macro cell containing this position.
      * Returns null if no gradient information available.
      */
-    public static Direction getGradientDirection(BlockPos pos) {
+    public static Direction getGradientDirection(LevelAccessor level, BlockPos pos) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        ChunkFluidGrid grid = chunkGrids.get(chunkPos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
             return null;
         }
@@ -126,18 +149,20 @@ public class FluidSpatialGrid {
     /**
      * Sets the gradient direction for the macro cell containing this position.
      */
-    public static void setGradientDirection(BlockPos pos, Direction direction) {
+    public static void setGradientDirection(LevelAccessor level, BlockPos pos, Direction direction) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        ChunkFluidGrid grid = chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
+        ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
         grid.setGradientDirection(pos, direction);
     }
 
     /**
      * Gets the average fluid level in the macro cell containing this position.
      */
-    public static float getMacroAverageLevel(BlockPos pos) {
+    public static float getMacroAverageLevel(LevelAccessor level, BlockPos pos) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        ChunkFluidGrid grid = chunkGrids.get(chunkPos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
             return 0.0f;
         }
@@ -148,14 +173,15 @@ public class FluidSpatialGrid {
      * Invalidates component IDs in a region, forcing BFS recalculation.
      * Call this when fluid changes significantly.
      */
-    public static void invalidateComponentsInRegion(BlockPos center, int radius) {
+    public static void invalidateComponentsInRegion(LevelAccessor level, BlockPos center, int radius) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos centerChunk = new ChunkPos(center);
         int chunkRadius = (radius + 15) / 16; // Convert to chunk radius
 
         for (int cx = -chunkRadius; cx <= chunkRadius; cx++) {
             for (int cz = -chunkRadius; cz <= chunkRadius; cz++) {
                 ChunkPos chunkPos = new ChunkPos(centerChunk.x + cx, centerChunk.z + cz);
-                ChunkFluidGrid grid = chunkGrids.get(chunkPos);
+                ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
                 if (grid != null) {
                     grid.invalidateComponents();
                 }
@@ -166,11 +192,17 @@ public class FluidSpatialGrid {
     /**
      * Removes fluid marking at the given position.
      */
-    public static void removeFluidAt(BlockPos pos) {
+    public static void removeFluidAt(LevelAccessor level, BlockPos pos) {
+        DimensionStorage storage = getStorage(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        ChunkFluidGrid grid = chunkGrids.get(chunkPos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid != null) {
             grid.setFluidAt(pos, false, 0);
+            if (grid.isEmpty()) {
+                storage.chunkGrids.remove(chunkPos, grid);
+                storage.chunkAccessTimes.remove(chunkPos);
+                cleanupStorageIfEmpty(level, storage);
+            }
         }
     }
 
@@ -181,12 +213,12 @@ public class FluidSpatialGrid {
      * @param level World level
      * @param chunkPos Chunk position to initialize
      */
-    public static void initializeChunk(net.minecraft.world.level.Level level, ChunkPos chunkPos) {
+    public static void initializeChunk(Level level, ChunkPos chunkPos) {
         if (level == null) return;
 
-        ChunkFluidGrid grid = chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
-        // Ensure newly initialized chunks participate in LRU eviction
-        chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
+        DimensionStorage storage = getStorage(level);
+        ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
+        storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
 
         int minX = chunkPos.getMinBlockX();
         int minZ = chunkPos.getMinBlockZ();
@@ -214,22 +246,32 @@ public class FluidSpatialGrid {
                 }
             }
         }
+
+        if (grid.isEmpty()) {
+            storage.chunkGrids.remove(chunkPos, grid);
+            storage.chunkAccessTimes.remove(chunkPos);
+            cleanupStorageIfEmpty(level, storage);
+        }
     }
 
     /**
      * Clears the grid for a specific chunk.
      * FIXED: Also clear access time.
      */
-    public static void clearChunk(ChunkPos chunkPos) {
-        chunkGrids.remove(chunkPos);
-        chunkAccessTimes.remove(chunkPos);
+    public static void clearChunk(LevelAccessor level, ChunkPos chunkPos) {
+        DimensionStorage storage = getStorage(level);
+        storage.chunkGrids.remove(chunkPos);
+        storage.chunkAccessTimes.remove(chunkPos);
+        cleanupStorageIfEmpty(level, storage);
     }
 
     /**
      * Gets the number of chunks with fluid grids for monitoring.
      */
     public static int getTrackedChunkCount() {
-        return chunkGrids.size();
+        return DIMENSION_STORES.values().stream()
+            .mapToInt(storage -> storage.chunkGrids.size())
+            .sum();
     }
 
     /**
@@ -237,29 +279,48 @@ public class FluidSpatialGrid {
      * FIXED: Also clear access times.
      */
     public static void clearAll() {
-        chunkGrids.clear();
-        chunkAccessTimes.clear();
+        DIMENSION_STORES.clear();
     }
 
     /**
      * Performs maintenance to prevent unbounded memory growth.
      * FIXED: Implements proper LRU eviction instead of random removal.
      */
-    public static void performMaintenance() {
-        // Limit total chunks tracked to prevent memory issues
+    public static void performMaintenance(LevelAccessor level) {
+        cleanupStorage(DimensionKey.of(level));
+    }
+
+    public static void performMaintenanceAll() {
+        DIMENSION_STORES.keySet().forEach(FluidSpatialGrid::cleanupStorage);
+    }
+
+    private static void cleanupStorage(DimensionKey key) {
+        DimensionStorage storage = DIMENSION_STORES.get(key);
+        if (storage == null) {
+            return;
+        }
+
         final int MAX_CHUNKS = 1000;
-        if (chunkGrids.size() > MAX_CHUNKS) {
-            // FIXED: Remove least recently used entries (LRU eviction)
-            int toRemove = chunkGrids.size() - MAX_CHUNKS;
-            chunkAccessTimes.entrySet().stream()
-                .sorted(java.util.Map.Entry.comparingByValue()) // Sort by access time (oldest first)
+        if (storage.chunkGrids.size() > MAX_CHUNKS) {
+            int toRemove = storage.chunkGrids.size() - MAX_CHUNKS;
+            storage.chunkAccessTimes.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue())
                 .limit(toRemove)
-                .map(java.util.Map.Entry::getKey)
+                .map(Map.Entry::getKey)
                 .forEach(chunkPos -> {
-                    chunkGrids.remove(chunkPos);
-                    chunkAccessTimes.remove(chunkPos);
+                    storage.chunkGrids.remove(chunkPos);
+                    storage.chunkAccessTimes.remove(chunkPos);
                 });
         }
+
+        if (storage.chunkGrids.isEmpty()) {
+            DIMENSION_STORES.remove(key, storage);
+        }
+    }
+
+    private static class DimensionStorage {
+        final ConcurrentHashMap<ChunkPos, ChunkFluidGrid> chunkGrids = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<ChunkPos, Long> chunkAccessTimes = new ConcurrentHashMap<>();
     }
 
     /**

@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.material.FluidState;
+import traben.flowing_fluids.FlowingFluids;
 
 import java.util.*;
 import java.util.concurrent.*;
@@ -44,115 +45,120 @@ public class ParallelFluidTickManager {
 
         // Process each group sequentially, but chunks within a group in parallel
         for (Set<ChunkPos> group : parallelGroups) {
-            if (group.size() == 1) {
-                // Single chunk, process directly without threading overhead
-                ChunkPos chunkPos = group.iterator().next();
+            List<FluidChunkSnapshot> snapshots = new ArrayList<>();
+            for (ChunkPos chunkPos : group) {
                 List<BlockPos> positions = positionsByChunk.get(chunkPos);
-                processChunkFluidTicks(level, positions);
+                FluidChunkSnapshot snapshot = createSnapshot(level, chunkPos, positions);
+                if (snapshot != null) {
+                    snapshots.add(snapshot);
+                }
+            }
+
+            if (snapshots.isEmpty()) {
+                continue;
+            }
+
+            List<ScheduledFluidTick> aggregatedTicks = new ArrayList<>();
+            if (snapshots.size() == 1) {
+                aggregatedTicks.addAll(processChunkSnapshot(snapshots.get(0)));
             } else {
-                // Multiple non-adjacent chunks, process in parallel
-                List<Future<?>> futures = new ArrayList<>();
-                for (ChunkPos chunkPos : group) {
-                    List<BlockPos> positions = positionsByChunk.get(chunkPos);
-                    Future<?> future = FLUID_WORKER_POOL.submit(() -> {
-                        processChunkFluidTicks(level, positions);
-                    });
-                    futures.add(future);
+                List<Future<List<ScheduledFluidTick>>> futures = new ArrayList<>();
+                for (FluidChunkSnapshot snapshot : snapshots) {
+                    futures.add(FLUID_WORKER_POOL.submit(() -> processChunkSnapshot(snapshot)));
                 }
 
-                // Wait for all parallel tasks to complete
-                for (Future<?> future : futures) {
+                for (Future<List<ScheduledFluidTick>> future : futures) {
                     try {
-                        future.get(); // Block until complete
-                    } catch (InterruptedException | ExecutionException e) {
+                        aggregatedTicks.addAll(future.get());
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        FlowingFluids.error("Parallel fluid tick processing interrupted: " + e.getMessage());
+                    } catch (ExecutionException e) {
                         FlowingFluids.error("Error in parallel fluid tick processing: " + e.getMessage());
-                        e.printStackTrace();
                     }
                 }
             }
+
+            scheduleTicks(level, aggregatedTicks);
         }
     }
 
-    /**
-     * Processes fluid ticks for a single chunk.
-     * FIXED: Removed dangerous synchronized(level) block and improved implementation.
-     *
-     * This collects fluid tick tasks from worker threads and queues them
-     * to be processed on the main server thread to avoid race conditions.
-     */
-    private static void processChunkFluidTicks(ServerLevel level, List<BlockPos> positions) {
-        // FIXED: Instead of directly modifying world state from worker threads,
-        // we collect the positions that need ticking and schedule them properly.
-        // This avoids the dangerous synchronized(level) block.
+    private static FluidChunkSnapshot createSnapshot(ServerLevel level, ChunkPos chunkPos, List<BlockPos> positions) {
+        if (positions == null || positions.isEmpty()) {
+            return null;
+        }
 
-        // Thread-safe queue for collecting tick positions with per-chunk deduplication
-        Set<BlockPos> uniquePositions = Collections.newSetFromMap(new ConcurrentHashMap<>());
-        ChunkPos chunkPos = null;
+        Set<BlockPos> uniquePositions = new HashSet<>();
+        List<FluidEntry> fluids = new ArrayList<>();
 
         for (BlockPos pos : positions) {
-            // Check if position is still valid (chunk might have unloaded)
-            // This is a read-only operation, safe from worker threads
             if (!level.hasChunkAt(pos)) {
                 continue;
             }
 
-            try {
-                // Get fluid state (read-only, safe)
-                FluidState fluidState = level.getFluidState(pos);
-                if (fluidState.isEmpty()) {
-                    continue;
-                }
-
-                // FIXED: Add to queue instead of directly scheduling
-                // The tick will be scheduled on the main thread
-                if (chunkPos == null) {
-                    chunkPos = new ChunkPos(pos);
-                }
-                uniquePositions.add(pos.immutable());
-            } catch (Exception e) {
-                FlowingFluids.error("Error processing fluid at " + pos + ": " + e.getMessage());
+            BlockPos immutablePos = pos.immutable();
+            if (!uniquePositions.add(immutablePos)) {
+                continue;
             }
+
+            FluidState fluidState = level.getFluidState(immutablePos);
+            if (fluidState.isEmpty()) {
+                continue;
+            }
+
+            fluids.add(new FluidEntry(immutablePos, fluidState.getType(), fluidState.isSource()));
         }
 
-        // FIXED: Schedule all collected ticks on the main server thread
-        // This is thread-safe as we're just submitting a task
-        if (!uniquePositions.isEmpty() && chunkPos != null) {
-            ChunkPos finalChunkPos = chunkPos;
-            level.getServer().execute(() -> {
-                BlockPos chunkCenter = finalChunkPos.getMiddleBlockPosition(level.getMinBuildHeight());
-                List<ScheduledFluidTick> sortedTicks = new ArrayList<>();
-
-                for (BlockPos pos : uniquePositions) {
-                    FluidState fluidState = level.getFluidState(pos);
-                    if (fluidState.isEmpty()) {
-                        continue;
-                    }
-
-                    double dx = pos.getX() - chunkCenter.getX();
-                    double dz = pos.getZ() - chunkCenter.getZ();
-                    double distanceSq = dx * dx + dz * dz;
-                    boolean isSource = fluidState.isSource();
-
-                    int distanceDelay = (int) Math.min(8, Math.sqrt(distanceSq) / 16); // one tick every ~16 blocks radius
-                    int stabilityBias = isSource ? 1 : -1;
-                    int adjustedDelay = Math.max(1, FlowingFluids.config.waterTickDelay + distanceDelay + stabilityBias);
-
-                    sortedTicks.add(new ScheduledFluidTick(pos, fluidState.getType(), adjustedDelay, isSource, distanceSq));
-                }
-
-                sortedTicks.sort(Comparator
-                        .comparingInt(ScheduledFluidTick::delay)
-                        .thenComparing(ScheduledFluidTick::isSource)
-                        .thenComparingDouble(ScheduledFluidTick::distanceSq));
-
-                for (ScheduledFluidTick tick : sortedTicks) {
-                    level.scheduleTick(tick.pos(), tick.fluidType(), tick.delay());
-                }
-            });
+        if (fluids.isEmpty()) {
+            return null;
         }
+
+        BlockPos chunkCenter = chunkPos.getMiddleBlockPosition(level.getMinBuildHeight());
+        return new FluidChunkSnapshot(chunkPos, chunkCenter, List.copyOf(fluids));
+    }
+
+    private static List<ScheduledFluidTick> processChunkSnapshot(FluidChunkSnapshot snapshot) {
+        List<ScheduledFluidTick> sortedTicks = new ArrayList<>();
+
+        for (FluidEntry entry : snapshot.entries()) {
+            double dx = entry.pos().getX() - snapshot.chunkCenter().getX();
+            double dz = entry.pos().getZ() - snapshot.chunkCenter().getZ();
+            double distanceSq = dx * dx + dz * dz;
+
+            int distanceDelay = (int) Math.min(8, Math.sqrt(distanceSq) / 16);
+            int stabilityBias = entry.isSource() ? 1 : -1;
+            int adjustedDelay = Math.max(1, FlowingFluids.config.waterTickDelay + distanceDelay + stabilityBias);
+
+            sortedTicks.add(new ScheduledFluidTick(entry.pos(), entry.fluidType(), adjustedDelay, entry.isSource(), distanceSq));
+        }
+
+        sortedTicks.sort(Comparator
+                .comparingInt(ScheduledFluidTick::delay)
+                .thenComparing(ScheduledFluidTick::isSource)
+                .thenComparingDouble(ScheduledFluidTick::distanceSq));
+
+        return sortedTicks;
+    }
+
+    private static void scheduleTicks(ServerLevel level, List<ScheduledFluidTick> ticks) {
+        if (ticks.isEmpty()) {
+            return;
+        }
+
+        level.getServer().execute(() -> {
+            for (ScheduledFluidTick tick : ticks) {
+                level.scheduleTick(tick.pos(), tick.fluidType(), tick.delay());
+            }
+        });
     }
 
     private record ScheduledFluidTick(BlockPos pos, net.minecraft.world.level.material.Fluid fluidType, int delay, boolean isSource, double distanceSq) {
+    }
+
+    private record FluidEntry(BlockPos pos, net.minecraft.world.level.material.Fluid fluidType, boolean isSource) {
+    }
+
+    private record FluidChunkSnapshot(ChunkPos chunkPos, BlockPos chunkCenter, List<FluidEntry> entries) {
     }
 
     /**

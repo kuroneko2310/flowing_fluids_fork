@@ -143,9 +143,9 @@ public class FFFluidUtils {
             boolean result = removeAllFluidAtPos(levelAccessor, pos, fluid);
             if (result) {
                 // Notify adaptive scheduler, cache, and spatial grid of fluid removal
-                AdaptiveTickScheduler.notifyFluidChange(pos);
-                ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
-                FluidSpatialGrid.removeFluidAt(pos);
+                AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+                ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+                FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
             }
             return result;
         }
@@ -156,17 +156,17 @@ public class FFFluidUtils {
             if (newAmount == 8) {
                 boolean result = liquidBlockContainer.placeLiquid(levelAccessor, pos, blockState, getStateForFluidByAmount(fluid, newAmount));
                 if (result) {
-                    AdaptiveTickScheduler.notifyFluidChange(pos);
-                    ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
-                    FluidSpatialGrid.setFluidAt(pos, true);
+                    AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+                    ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+                    FluidSpatialGrid.setFluidAt(levelAccessor, pos, true);
                 }
                 return result;
             }else if (blockState.getBlock() instanceof BucketPickup bucketPickup) {
                 //always drain the water loggable block if it's not full
                 bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
-                AdaptiveTickScheduler.notifyFluidChange(pos);
-                ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
-                FluidSpatialGrid.removeFluidAt(pos);
+                AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+                ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+                FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
                 return true;
             }
             //if we cant fill or drain it check if we can just replace it with the new fluid level by itself
@@ -181,9 +181,9 @@ public class FFFluidUtils {
         //else place fluid block
         boolean result = levelAccessor.setBlock(pos, getStateForFluidByAmount(fluid, newAmount).createLegacyBlock(), 3);
         if (result) {
-            AdaptiveTickScheduler.notifyFluidChange(pos);
-            ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
-            FluidSpatialGrid.setFluidAt(pos, true);
+            AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+            ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+            FluidSpatialGrid.setFluidAt(levelAccessor, pos, true);
         }
         return result;
     }
@@ -194,9 +194,9 @@ public class FFFluidUtils {
         if (blockState.getBlock() instanceof LiquidBlockContainer
                 && blockState.getBlock() instanceof BucketPickup bucketPickup) {
             bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
-            AdaptiveTickScheduler.notifyFluidChange(pos);
-            ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
-            FluidSpatialGrid.removeFluidAt(pos);
+            AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+            ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+            FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
             return true;
         }
 
@@ -206,9 +206,9 @@ public class FFFluidUtils {
 
         boolean result = levelAccessor.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
         if (result) {
-            AdaptiveTickScheduler.notifyFluidChange(pos);
-            ChunkLocalSlopeCache.clearChunk(new net.minecraft.world.level.ChunkPos(pos));
-            FluidSpatialGrid.removeFluidAt(pos);
+            AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+            ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+            FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
         }
         return result;
     }

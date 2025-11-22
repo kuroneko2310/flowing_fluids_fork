@@ -596,7 +596,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                 }
 
                 // Check cache first for slope distance
-                int distance = ChunkLocalSlopeCache.getCached(chunkPos, blockPos, adaptiveSlopeFindDistance, dir);
+                int distance = ChunkLocalSlopeCache.getCached(level, chunkPos, blockPos, adaptiveSlopeFindDistance, dir);
 
                 if (distance == -1) {
                     // Cache miss: calculate and store
@@ -606,7 +606,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                             posCanFlowDown, requiresSlope, adaptiveSlopeFindDistance);
 
                     // Store in cache for future use
-                    ChunkLocalSlopeCache.putCached(chunkPos, blockPos, adaptiveSlopeFindDistance, dir, distance);
+                    ChunkLocalSlopeCache.putCached(level, chunkPos, blockPos, adaptiveSlopeFindDistance, dir, distance);
                 }
 
                 if ((!requiresSlope || distance <= adaptiveSlopeFindDistance) && distance < bestDistance) {

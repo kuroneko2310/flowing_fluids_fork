@@ -74,7 +74,7 @@ public class EnhancedFluidBFS {
         }
 
         // Check equilibrium index - skip if stable
-        int startAmount = FluidSpatialGrid.getFluidAmount(startPos);
+        int startAmount = FluidSpatialGrid.getFluidAmount(level, startPos);
         if (!AdaptiveTickScheduler.shouldRunBFS(level, startPos, startAmount)) {
             return equalizedPositions; // Too stable, skip BFS
         }
@@ -104,7 +104,7 @@ public class EnhancedFluidBFS {
             ChunkPos chunkPos = new ChunkPos(startPos);
 
             // Get or estimate gradient vector for weighted search
-            Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(chunkPos, startPos);
+            Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(level, chunkPos, startPos);
 
             while (!queue.isEmpty() && nodesExplored < maxNodes && visited.size() < maxDepth) {
                 long currentLong = queue.dequeueLong();
@@ -113,7 +113,7 @@ public class EnhancedFluidBFS {
 
                 // Get current fluid amount
                 FluidState currentFluid = level.getFluidState(currentPos);
-                int currentAmount = FluidSpatialGrid.getFluidAmount(currentPos);
+                int currentAmount = FluidSpatialGrid.getFluidAmount(level, currentPos);
 
                 // Explore neighbors with weighted priority
                 Direction[] directions = getWeightedDirections(gradientVector);
@@ -132,7 +132,7 @@ public class EnhancedFluidBFS {
                         queue.enqueue(neighborLong);
 
                         // Add to equalization list if it needs balancing
-                        int neighborAmount = FluidSpatialGrid.getFluidAmount(neighborPos);
+                        int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
                         if (shouldEqualize(currentAmount, neighborAmount)) {
                             equalizedPositions.add(neighborPos.immutable());
                         }
@@ -268,7 +268,7 @@ public class EnhancedFluidBFS {
      */
     private static AdaptiveTickScheduler.AreaType getAreaType(Level level, ChunkPos chunkPos) {
         // Try to get from scheduler
-        int budget = AdaptiveTickScheduler.getBFSBudget(new BlockPos(
+        int budget = AdaptiveTickScheduler.getBFSBudget(level, new BlockPos(
             chunkPos.getMinBlockX(), 64, chunkPos.getMinBlockZ()
         ));
 
@@ -289,6 +289,10 @@ public class EnhancedFluidBFS {
      * FIXED: NPE handling and proper iteration through valid positions only.
      */
     public static void equalizePositions(Level level, List<BlockPos> positions) {
+        equalizePositions(level, positions, findFirstFluidType(level, positions));
+    }
+
+    public static void equalizePositions(Level level, List<BlockPos> positions, Fluid fallbackFluid) {
         if (positions.isEmpty()) {
             return;
         }
@@ -298,7 +302,7 @@ public class EnhancedFluidBFS {
         List<BlockPos> validPos = new ArrayList<>();
 
         for (BlockPos pos : positions) {
-            int amount = FluidSpatialGrid.getFluidAmount(pos);
+            int amount = FluidSpatialGrid.getFluidAmount(level, pos);
             if (amount > 0 || canAcceptFluid(level, pos)) {
                 totalAmount += amount;
                 validPos.add(pos);
@@ -322,13 +326,22 @@ public class EnhancedFluidBFS {
 
             // Buffer the change with null safety
             FluidState fluidState = level.getFluidState(pos);
-            Fluid fluidType = (fluidState != null && !fluidState.isEmpty()) ? fluidState.getType() : null;
+            Fluid fluidType = (fluidState != null && !fluidState.isEmpty()) ? fluidState.getType() : fallbackFluid;
 
-            // FIXED: Only buffer if fluidType is not null
             if (fluidType != null) {
-                FluidTickBuffer.bufferFluidChange(pos, newAmount, newAmount > 0, fluidType);
+                FluidTickBuffer.bufferFluidChange(level, pos, newAmount, newAmount > 0, fluidType);
             }
         }
+    }
+
+    private static Fluid findFirstFluidType(Level level, List<BlockPos> positions) {
+        for (BlockPos pos : positions) {
+            FluidState state = level.getFluidState(pos);
+            if (state != null && !state.isEmpty()) {
+                return state.getType();
+            }
+        }
+        return null;
     }
 
     /**

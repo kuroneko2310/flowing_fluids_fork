@@ -4,7 +4,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.material.Fluid;
+import traben.flowing_fluids.util.DimensionKey;
 
 import java.lang.ref.WeakReference;
 import java.util.*;
@@ -60,9 +62,9 @@ public class FluidTickBuffer {
      * @param hasFluid True if fluid exists at position
      * @param fluid The fluid type
      */
-    public static void bufferFluidChange(BlockPos pos, int newAmount, boolean hasFluid, Fluid fluid) {
+    public static void bufferFluidChange(LevelAccessor level, BlockPos pos, int newAmount, boolean hasFluid, Fluid fluid) {
         TickBuffer buffer = getCurrentBuffer();
-        buffer.fluidChanges.put(pos.immutable(), new FluidChange(newAmount, hasFluid, fluid));
+        buffer.putFluidChange(level, pos, new FluidChange(newAmount, hasFluid, fluid));
     }
 
     /**
@@ -71,9 +73,9 @@ public class FluidTickBuffer {
      * @param pos Position
      * @param gradient Gradient direction
      */
-    public static void bufferGradientChange(BlockPos pos, Direction gradient) {
+    public static void bufferGradientChange(LevelAccessor level, BlockPos pos, Direction gradient) {
         TickBuffer buffer = getCurrentBuffer();
-        buffer.gradientChanges.put(pos.immutable(), gradient);
+        buffer.putGradientChange(level, pos, gradient);
     }
 
     /**
@@ -81,9 +83,9 @@ public class FluidTickBuffer {
      *
      * @param pos Position to invalidate slope cache
      */
-    public static void bufferSlopeCacheInvalidation(BlockPos pos) {
+    public static void bufferSlopeCacheInvalidation(LevelAccessor level, BlockPos pos) {
         TickBuffer buffer = getCurrentBuffer();
-        buffer.slopeCacheInvalidations.add(pos.immutable());
+        buffer.addSlopeInvalidation(level, pos);
     }
 
     /**
@@ -92,9 +94,9 @@ public class FluidTickBuffer {
      * @param center Center position of invalidation
      * @param radius Radius to invalidate
      */
-    public static void bufferComponentInvalidation(BlockPos center, int radius) {
+    public static void bufferComponentInvalidation(LevelAccessor level, BlockPos center, int radius) {
         TickBuffer buffer = getCurrentBuffer();
-        buffer.componentInvalidations.add(new ComponentInvalidation(center.immutable(), radius));
+        buffer.addComponentInvalidation(level, new ComponentInvalidation(center.immutable(), radius));
     }
 
     /**
@@ -114,6 +116,7 @@ public class FluidTickBuffer {
         }
 
         // Collect all buffers from all threads
+        DimensionKey dimensionKey = DimensionKey.of(level);
         Map<BlockPos, FluidChange> allFluidChanges = new HashMap<>();
         Map<BlockPos, Direction> allGradientChanges = new HashMap<>();
         Set<BlockPos> allSlopeCacheInvalidations = new HashSet<>();
@@ -122,10 +125,10 @@ public class FluidTickBuffer {
         // Merge all thread buffers
         for (ThreadBufferEntry entry : threadBuffers.values()) {
             TickBuffer buffer = entry.buffer;
-            allFluidChanges.putAll(buffer.fluidChanges);
-            allGradientChanges.putAll(buffer.gradientChanges);
-            allSlopeCacheInvalidations.addAll(buffer.slopeCacheInvalidations);
-            allComponentInvalidations.addAll(buffer.componentInvalidations);
+            allFluidChanges.putAll(buffer.getFluidChanges(dimensionKey));
+            allGradientChanges.putAll(buffer.getGradientChanges(dimensionKey));
+            allSlopeCacheInvalidations.addAll(buffer.getSlopeInvalidations(dimensionKey));
+            allComponentInvalidations.addAll(buffer.getComponentInvalidations(dimensionKey));
         }
 
         // 1. Apply fluid changes to spatial grid
@@ -134,17 +137,15 @@ public class FluidTickBuffer {
             FluidChange change = entry.getValue();
 
             // Update spatial grid with precise amount
-            FluidSpatialGrid.setFluidAt(pos, change.hasFluid, change.amount);
+            FluidSpatialGrid.setFluidAt(level, pos, change.hasFluid, change.amount);
 
             // Notify adaptive scheduler (batch notification is more efficient)
-            if (change.hasFluid) {
-                AdaptiveTickScheduler.notifyFluidChange(pos);
-            }
+            AdaptiveTickScheduler.notifyFluidChange(level, pos);
         }
 
         // 2. Apply gradient changes
         for (Map.Entry<BlockPos, Direction> entry : allGradientChanges.entrySet()) {
-            FluidSpatialGrid.setGradientDirection(entry.getKey(), entry.getValue());
+            FluidSpatialGrid.setGradientDirection(level, entry.getKey(), entry.getValue());
         }
 
         // 3. Apply slope cache invalidations (deduplicated by chunk)
@@ -153,17 +154,17 @@ public class FluidTickBuffer {
             .collect(Collectors.toSet());
 
         for (ChunkPos chunkPos : chunksToInvalidate) {
-            ChunkLocalSlopeCache.clearChunk(chunkPos);
+            ChunkLocalSlopeCache.clearChunk(level, chunkPos);
         }
 
         // 4. Apply component invalidations
         for (ComponentInvalidation invalidation : allComponentInvalidations) {
-            FluidSpatialGrid.invalidateComponentsInRegion(invalidation.center, invalidation.radius);
+            FluidSpatialGrid.invalidateComponentsInRegion(level, invalidation.center, invalidation.radius);
         }
 
         // 5. Clear all buffers for next tick
         for (ThreadBufferEntry entry : threadBuffers.values()) {
-            entry.buffer.clear();
+            entry.buffer.clearDimension(dimensionKey);
         }
     }
 
@@ -173,7 +174,7 @@ public class FluidTickBuffer {
      */
     public static void clearBuffer() {
         for (ThreadBufferEntry entry : threadBuffers.values()) {
-            entry.buffer.clear();
+            entry.buffer.clearAll();
         }
     }
 
@@ -203,7 +204,7 @@ public class FluidTickBuffer {
 
             boolean expired = currentTime - bufferEntry.lastAccessTime > THREAD_TIMEOUT;
             if (!threadAlive || expired) {
-                bufferEntry.buffer.clear();
+                bufferEntry.buffer.clearAll();
                 return true;
             }
             return false;
@@ -214,12 +215,59 @@ public class FluidTickBuffer {
      * Internal buffer for a single tick.
      */
     private static class TickBuffer {
-        final Map<BlockPos, FluidChange> fluidChanges = new HashMap<>();
-        final Map<BlockPos, Direction> gradientChanges = new HashMap<>();
-        final List<BlockPos> slopeCacheInvalidations = new ArrayList<>();
-        final List<ComponentInvalidation> componentInvalidations = new ArrayList<>();
+        private final Map<DimensionKey, Map<BlockPos, FluidChange>> fluidChanges = new HashMap<>();
+        private final Map<DimensionKey, Map<BlockPos, Direction>> gradientChanges = new HashMap<>();
+        private final Map<DimensionKey, List<BlockPos>> slopeCacheInvalidations = new HashMap<>();
+        private final Map<DimensionKey, List<ComponentInvalidation>> componentInvalidations = new HashMap<>();
 
-        void clear() {
+        void putFluidChange(LevelAccessor level, BlockPos pos, FluidChange change) {
+            fluidChanges.computeIfAbsent(DimensionKey.of(level), key -> new HashMap<>())
+                .put(pos.immutable(), change);
+        }
+
+        void putGradientChange(LevelAccessor level, BlockPos pos, Direction direction) {
+            gradientChanges.computeIfAbsent(DimensionKey.of(level), key -> new HashMap<>())
+                .put(pos.immutable(), direction);
+        }
+
+        void addSlopeInvalidation(LevelAccessor level, BlockPos pos) {
+            slopeCacheInvalidations.computeIfAbsent(DimensionKey.of(level), key -> new ArrayList<>())
+                .add(pos.immutable());
+        }
+
+        void addComponentInvalidation(LevelAccessor level, ComponentInvalidation invalidation) {
+            componentInvalidations.computeIfAbsent(DimensionKey.of(level), key -> new ArrayList<>())
+                .add(invalidation);
+        }
+
+        Map<BlockPos, FluidChange> getFluidChanges(DimensionKey key) {
+            Map<BlockPos, FluidChange> map = fluidChanges.get(key);
+            return map != null ? new HashMap<>(map) : Collections.emptyMap();
+        }
+
+        Map<BlockPos, Direction> getGradientChanges(DimensionKey key) {
+            Map<BlockPos, Direction> map = gradientChanges.get(key);
+            return map != null ? new HashMap<>(map) : Collections.emptyMap();
+        }
+
+        Set<BlockPos> getSlopeInvalidations(DimensionKey key) {
+            List<BlockPos> list = slopeCacheInvalidations.get(key);
+            return list != null ? new HashSet<>(list) : Collections.emptySet();
+        }
+
+        List<ComponentInvalidation> getComponentInvalidations(DimensionKey key) {
+            List<ComponentInvalidation> list = componentInvalidations.get(key);
+            return list != null ? new ArrayList<>(list) : Collections.emptyList();
+        }
+
+        void clearDimension(DimensionKey key) {
+            fluidChanges.remove(key);
+            gradientChanges.remove(key);
+            slopeCacheInvalidations.remove(key);
+            componentInvalidations.remove(key);
+        }
+
+        void clearAll() {
             fluidChanges.clear();
             gradientChanges.clear();
             slopeCacheInvalidations.clear();
