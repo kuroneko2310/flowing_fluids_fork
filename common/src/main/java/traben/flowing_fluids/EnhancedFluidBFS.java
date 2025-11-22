@@ -50,6 +50,9 @@ public class EnhancedFluidBFS {
         Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
     };
 
+    // Downhill acceleration bonus (simulates momentum gained from drops)
+    private static final int MAX_MOMENTUM_BONUS = 256;
+
     // Track positions currently being processed to prevent duplicate BFS runs
     private static final Set<Long> processingPositions = ConcurrentHashMap.newKeySet();
     private static long lastCleanupTime = System.currentTimeMillis();
@@ -99,14 +102,17 @@ public class EnhancedFluidBFS {
 
             queue.enqueue(startPos.asLong());
             visited.add(startPos.asLong());
+            equalizedPositions.add(startPos.immutable());
 
             int nodesExplored = 0;
+            int momentumBudget = 0;
+            int momentumCap = getDistanceScaledMomentumCap();
             ChunkPos chunkPos = new ChunkPos(startPos);
 
             // Get or estimate gradient vector for weighted search
             Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(level, chunkPos, startPos);
 
-            while (!queue.isEmpty() && nodesExplored < maxNodes && visited.size() < maxDepth) {
+            while (!queue.isEmpty() && nodesExplored < maxNodes + momentumBudget && visited.size() < maxDepth) {
                 long currentLong = queue.dequeueLong();
                 BlockPos currentPos = BlockPos.of(currentLong);
                 nodesExplored++;
@@ -135,6 +141,12 @@ public class EnhancedFluidBFS {
                         int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
                         if (shouldEqualize(currentAmount, neighborAmount)) {
                             equalizedPositions.add(neighborPos.immutable());
+                        }
+
+                        // Grant additional budget when flowing downhill to mimic acceleration
+                        int drop = currentPos.getY() - neighborPos.getY();
+                        if (drop > 0) {
+                            momentumBudget = Math.min(momentumCap, momentumBudget + drop);
                         }
                     }
                 }
@@ -207,6 +219,19 @@ public class EnhancedFluidBFS {
 
             return directions;
         });
+    }
+
+    /**
+     * 水流距離が長い場合に探索が暴走しないよう、モーメントムの上限を距離に応じて縮小する。
+     * 例: 距離6では 4/6 ≒0.67 倍に抑制し、長距離設定での追加探索コストを抑える。
+     */
+    private static int getDistanceScaledMomentumCap() {
+        int distance = Math.max(FlowingFluids.config.waterFlowDistance, 1);
+        if (distance <= 4) {
+            return MAX_MOMENTUM_BONUS;
+        }
+        int scaled = Math.round(MAX_MOMENTUM_BONUS * (4.0f / distance));
+        return Math.max(32, scaled);
     }
 
     /**
