@@ -98,9 +98,9 @@ subprojects {
 
         mavenCentral()
 
-        maven { url "https://maven.parchmentmc.org" }
-        maven { url "https://mvnrepository.com/artifact/com.demonwav.mcdev/annotations" }
-        maven { url "https://repo.spongepowered.org/maven" }
+        maven { url = uri("https://maven.parchmentmc.org") }
+        maven { url = uri("https://mvnrepository.com/artifact/com.demonwav.mcdev/annotations") }
+        maven { url = uri("https://repo.spongepowered.org/maven") }
 
 //        if (rootProject.mc_build as int == 3 || rootProject.mc_build as int == 7) {
 //            maven { // Flywheel
