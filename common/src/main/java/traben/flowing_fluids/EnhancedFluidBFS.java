@@ -106,7 +106,6 @@ public class EnhancedFluidBFS {
 
             int nodesExplored = 0;
             int momentumBudget = 0;
-            int momentumCap = getDistanceScaledMomentumCap();
             ChunkPos chunkPos = new ChunkPos(startPos);
 
             // Get or estimate gradient vector for weighted search
@@ -146,7 +145,7 @@ public class EnhancedFluidBFS {
                         // Grant additional budget when flowing downhill to mimic acceleration
                         int drop = currentPos.getY() - neighborPos.getY();
                         if (drop > 0) {
-                            momentumBudget = Math.min(momentumCap, momentumBudget + drop);
+                            momentumBudget = Math.min(MAX_MOMENTUM_BONUS, momentumBudget + drop);
                         }
                     }
                 }
