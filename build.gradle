@@ -96,11 +96,8 @@ subprojects {
         // See https://docs.gradle.org/current/userguide/declaring_repositories.html
         // for more information about repositories.
 
-        mavenCentral()
-
-        maven { url = uri("https://maven.parchmentmc.org") }
-        maven { url = uri("https://mvnrepository.com/artifact/com.demonwav.mcdev/annotations") }
-        maven { url = uri("https://repo.spongepowered.org/maven") }
+        maven { url "https://maven.parchmentmc.org" }
+        maven { url "https://mvnrepository.com/artifact/com.demonwav.mcdev/annotations" }
 
 //        if (rootProject.mc_build as int == 3 || rootProject.mc_build as int == 7) {
 //            maven { // Flywheel
@@ -114,8 +111,6 @@ subprojects {
     }
 
     dependencies {
-        def manifoldVersion = '2025.1.16'
-
         minecraft "net.minecraft:minecraft:$rootProject.minecraft_version"
 
         if(rootProject.parchment_version != "no") {
@@ -131,18 +126,24 @@ subprojects {
 
         implementation 'com.demonwav.mcdev:annotations:2.1.0'
 
-        compileOnly "systems.manifold:manifold-all:${manifoldVersion}"
-        testCompileOnly "systems.manifold:manifold-all:${manifoldVersion}"
-
-        annotationProcessor "systems.manifold:manifold-preprocessor:${manifoldVersion}"
-        testAnnotationProcessor "systems.manifold:manifold-preprocessor:${manifoldVersion}"
+        //annotationProcessor 'systems.manifold:manifold-preprocessor:2023.1.17'
+        annotationProcessor 'systems.manifold:manifold-preprocessor:2025.1.16'
     }
 
     processResources {
         inputs.property "version", rootProject.mod_version
+        inputs.property "compatible_mc_fabric", rootProject.compatible_mc_fabric
         inputs.property "compatible_mc_forge", rootProject.compatible_mc_forge
 
+        filesMatching("fabric.mod.json") {
+            expand(["version": rootProject.mod_version,
+                    "compatible_mc_fabric": rootProject.compatible_mc_fabric])
+        }
         filesMatching("META-INF/mods.toml") {
+            expand(["version": rootProject.mod_version,
+                    "compatible_mc_forge": rootProject.compatible_mc_forge])
+        }
+        filesMatching("META-INF/neoforge.mods.toml") {
             expand(["version": rootProject.mod_version,
                     "compatible_mc_forge": rootProject.compatible_mc_forge])
         }
