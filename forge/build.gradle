@@ -82,6 +82,7 @@ shadowJar {
     exclude "fabric.mod.json"
     exclude "architectury.common.json"
     exclude "net/minecraftforge/api/distmarker/**"
+    exclude "net/fabricmc/api/**"
 
     configurations = [project.configurations.shadowBundle]
     archiveClassifier = 'dev-shadow'

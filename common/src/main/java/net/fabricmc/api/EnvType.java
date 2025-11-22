@@ -1,8 +1,9 @@
 package net.fabricmc.api;
 
 /**
- * Minimal stub of Fabric's EnvType to satisfy compile-time references when
- * targeting Forge only builds.
+ * Compile-time stub of Fabric's EnvType enum.
+ * Exists only so that Forge builds depending on Architectury
+ * can compile without bundling Fabric classes.
  */
 public enum EnvType {
     CLIENT,
