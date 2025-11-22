@@ -99,6 +99,7 @@ public class EnhancedFluidBFS {
 
             queue.enqueue(startPos.asLong());
             visited.add(startPos.asLong());
+            equalizedPositions.add(startPos.immutable());
 
             int nodesExplored = 0;
             ChunkPos chunkPos = new ChunkPos(startPos);
