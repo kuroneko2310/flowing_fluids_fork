@@ -96,6 +96,8 @@ subprojects {
         // See https://docs.gradle.org/current/userguide/declaring_repositories.html
         // for more information about repositories.
 
+        mavenCentral()
+
         maven { url "https://maven.parchmentmc.org" }
         maven { url "https://mvnrepository.com/artifact/com.demonwav.mcdev/annotations" }
         maven { url "https://repo.spongepowered.org/maven" }
@@ -112,6 +114,8 @@ subprojects {
     }
 
     dependencies {
+        def manifoldVersion = '2025.1.16'
+
         minecraft "net.minecraft:minecraft:$rootProject.minecraft_version"
 
         if(rootProject.parchment_version != "no") {
@@ -127,8 +131,11 @@ subprojects {
 
         implementation 'com.demonwav.mcdev:annotations:2.1.0'
 
-        //annotationProcessor 'systems.manifold:manifold-preprocessor:2023.1.17'
-        annotationProcessor 'systems.manifold:manifold-preprocessor:2025.1.16'
+        compileOnly "systems.manifold:manifold-all:${manifoldVersion}"
+        testCompileOnly "systems.manifold:manifold-all:${manifoldVersion}"
+
+        annotationProcessor "systems.manifold:manifold-preprocessor:${manifoldVersion}"
+        testAnnotationProcessor "systems.manifold:manifold-preprocessor:${manifoldVersion}"
     }
 
     processResources {
