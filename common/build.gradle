@@ -1,3 +1,5 @@
+import org.gradle.jvm.tasks.Jar
+
 architectury {
     common("forge")
 }
@@ -5,15 +7,11 @@ architectury {
 repositories{
 
     maven { url = "https://api.modrinth.com/maven" }
-    maven { url = "https://maven.fabricmc.net/" }
 }
 
 dependencies {
     compileOnly("org.spongepowered:mixin:0.8.5")
     compileOnly("io.github.llamalad7:mixinextras-common:0.4.1")
-
-    // Needed so Architectury's @Environment annotations resolve without bundling Fabric classes.
-    compileOnly("net.fabricmc:fabric-loader:0.15.11")
 
     modCompileOnly("maven.modrinth:sodium:${project.sodium_version}") {
         exclude(group: "net.fabricmc.fabric-api")
@@ -30,4 +28,8 @@ loom {
 
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
+}
+
+tasks.withType(Jar).configureEach {
+    exclude("net/fabricmc/api/**")
 }
