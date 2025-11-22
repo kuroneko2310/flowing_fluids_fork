@@ -221,6 +221,19 @@ public class EnhancedFluidBFS {
     }
 
     /**
+     * 水流距離が長い場合に探索が暴走しないよう、モーメントムの上限を距離に応じて縮小する。
+     * 例: 距離6では 4/6 ≒0.67 倍に抑制し、長距離設定での追加探索コストを抑える。
+     */
+    private static int getDistanceScaledMomentumCap() {
+        int distance = Math.max(FlowingFluids.config.waterFlowDistance, 1);
+        if (distance <= 4) {
+            return MAX_MOMENTUM_BONUS;
+        }
+        int scaled = Math.round(MAX_MOMENTUM_BONUS * (4.0f / distance));
+        return Math.max(32, scaled);
+    }
+
+    /**
      * Determines dynamic depth based on terrain analysis.
      *
      * @param level World level

@@ -8,6 +8,15 @@
 
 ## 1. 距離によるパフォーマンス影響の分析
 
+### 1.0 水流距離を4→6に引き上げた際に負荷が跳ね上がる主因
+
+* **バニラ側の探索半径がそのまま拡大**: `MixinWaterFluid#getSlopeFindDistance` で `waterFlowDistance` をそのまま返しているため、スロープ探索の二重ループが 4 → 6 に拡大し、1tickあたりの近傍チェック回数が約1.5倍になる。【F:common/src/main/java/traben/flowing_fluids/mixin/MixinWaterFluid.java†L182-L186】
+* **BFS1回あたりのノード上限が一定のまま**: AdaptiveTickScheduler の BFS 予算は地形種別に応じて固定（通常 4,000 ノード）で、流距離に比例して増える水源・流れブロック数にスケールしていない。【F:common/src/main/java/traben/flowing_fluids/AdaptiveTickScheduler.java†L24-L44】
+* **BFSが空気も踏破しつつモーメント拡張するため実質探索幅が広い**: EnhancedFluidBFS は空気・置換可能ブロックも訪問し、落差があるたびに `momentumBudget` で探索上限を最大256ノード上乗せするため、4,000ノード上限でも実際にはさらに膨らむ。【F:common/src/main/java/traben/flowing_fluids/EnhancedFluidBFS.java†L114-L149】
+* **結果として“増えた水量 × 1回あたりの高コストBFS”が同時多発**: 流距離を伸ばすことで生成される流体セルが増え、平衡化しにくいエリアでは BFS 発火回数も増加。予算が距離に応じてダウンサンプリングされないため、負荷が直線ではなく準二乗的に増えてしまう。
+
+このため、単に流距離を6にするだけでも「バニラ側の探索コスト増」＋「BFSの多重実行コスト増」が重なり、TPSやCPU使用率が急上昇する構造になっています。
+
 ### 1.1 計算量の増加パターン
 
 水流距離が増加すると、以下の計算量が影響を受けます:
@@ -56,6 +65,12 @@
 - **距離の影響**:
   - 長距離ではキャッシュヒット率低下
   - **提案**: 距離に応じてキャッシュサイズを動的調整
+
+### 1.3 追加の暫定対策（実装済み）
+
+- **距離連動のBFS予算スケーリング**: `waterFlowDistance` がバニラ値4を超える場合、`AdaptiveTickScheduler` の探索予算を `4/distance` 倍に自動縮小し、1tickあたりの探索ノード数を抑制。【F:common/src/main/java/traben/flowing_fluids/AdaptiveTickScheduler.java†L93-L112】
+- **モーメントム蓄積の距離スケーリング**: 落差による追加探索枠（momentumBudget）の上限を距離に比例して縮小し、長距離設定時の過剰な踏破を防止。【F:common/src/main/java/traben/flowing_fluids/EnhancedFluidBFS.java†L130-L150】【F:common/src/main/java/traben/flowing_fluids/EnhancedFluidBFS.java†L177-L188】
+- **最低予算の確保**: 過度な縮小で水路が止まらないよう、BFS予算は最低500ノード、モーメントムは32を下回らないようにガード。
 
 ---
 
