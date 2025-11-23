@@ -568,9 +568,10 @@ public abstract class MixinFlowingFluid extends Fluid {
         int slopeFindDistance = getSlopeFindDistance(level);
         if (slopeFindDistance < 1) return null;
 
-        // Adaptive distance optimization: reduce search distance for smaller fluid amounts
-        // This reduces unnecessary checks when fluid amount is low
-        int adaptiveSlopeFindDistance = amount > 4 ? slopeFindDistance : Math.max(1, slopeFindDistance / 2);
+        // Keep full slope search distance even for low fluid amounts so ledges further away
+        // are still discovered. Reducing this distance to half (as before) limited searches
+        // to 2 blocks for thin streams, making water ignore nearby drops.
+        int adaptiveSlopeFindDistance = slopeFindDistance;
 
         Short2BooleanOpenHashMap posCanFlowDown = ff$getFlowDownCache();
         posCanFlowDown.put(ffCacheKey(blockPos, blockPos), false);
