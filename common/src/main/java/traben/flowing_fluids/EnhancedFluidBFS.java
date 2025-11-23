@@ -69,6 +69,7 @@ public class EnhancedFluidBFS {
      */
     public static List<BlockPos> performEqualization(Level level, BlockPos startPos, int maxDepth, int maxNodes) {
         List<BlockPos> equalizedPositions = new ArrayList<>();
+        Set<Long> equalizedKeys = new HashSet<>();
 
         // Get starting fluid state
         FluidState startFluid = level.getFluidState(startPos);
@@ -99,6 +100,7 @@ public class EnhancedFluidBFS {
             // Initialize BFS
             LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
             Set<Long> visited = new HashSet<>();
+            List<Long> visitedOrder = new ArrayList<>();
 
             queue.enqueue(startPos.asLong());
             visited.add(startPos.asLong());
@@ -134,12 +136,22 @@ public class EnhancedFluidBFS {
                     // CRITICAL: Include air blocks and replaceable blocks!
                     if (canIncludeInBFS(level, neighborPos, startFluid)) {
                         visited.add(neighborLong);
+                        visitedOrder.add(neighborLong);
                         queue.enqueue(neighborLong);
 
                         // Add to equalization list if it needs balancing
                         int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
-                        if (shouldEqualize(currentAmount, neighborAmount)) {
-                            equalizedPositions.add(neighborPos.immutable());
+                        boolean isDrop = currentPos.getY() > neighborPos.getY();
+                        if (shouldEqualize(currentAmount, neighborAmount) || isDrop) {
+                            dropEncountered = dropEncountered || isDrop;
+                            addEqualizationTarget(equalizedPositions, equalizedKeys, neighborPos);
+                            addEqualizationTarget(equalizedPositions, equalizedKeys, currentPos);
+                        }
+
+                        // Grant additional budget when flowing downhill to mimic acceleration
+                        int drop = currentPos.getY() - neighborPos.getY();
+                        if (drop > 0) {
+                            momentumBudget = Math.min(momentumCap, momentumBudget + drop);
                         }
 
                         // Grant additional budget when flowing downhill to mimic acceleration
@@ -151,10 +163,26 @@ public class EnhancedFluidBFS {
                 }
             }
 
+            // 追加の掃き出し: 雨など一時的な落下で流入が途絶えた場合でも、
+            // 一度でも段差を踏んだ探索では訪問済みセル全体を均衡候補に加える。
+            // これにより段差の手前・奥に残った水をもう一段深く平均化し、取り残しを防ぐ。
+            if (dropEncountered) {
+                for (long visitedKey : visitedOrder) {
+                    addEqualizationTarget(equalizedPositions, equalizedKeys, BlockPos.of(visitedKey));
+                }
+            }
+
             return equalizedPositions;
         } finally {
             // Always remove from processing set when done
             processingPositions.remove(posKey);
+        }
+    }
+
+    private static void addEqualizationTarget(List<BlockPos> equalizedPositions, Set<Long> equalizedKeys, BlockPos pos) {
+        long key = pos.asLong();
+        if (equalizedKeys.add(key)) {
+            equalizedPositions.add(pos.immutable());
         }
     }
 
