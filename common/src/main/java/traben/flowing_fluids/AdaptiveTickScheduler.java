@@ -172,11 +172,28 @@ public class AdaptiveTickScheduler {
         ChunkPos chunkPos = new ChunkPos(pos);
         AreaType areaType = dimensionData.areaTypes.getOrDefault(chunkPos, AreaType.NORMAL);
 
-        return switch (areaType) {
+        int baseBudget = switch (areaType) {
             case HIGH_ACTIVITY -> BFS_BUDGET_HIGH_ACTIVITY;
             case OCEAN -> BFS_BUDGET_OCEAN;
             default -> BFS_BUDGET_NORMAL;
         };
+
+        // 長距離化による負荷を抑えるため、バニラ距離(4)を超える場合は探索予算を距離に反比例させる。
+        // 例: 距離6なら 4/6 ≒0.67 倍に縮小し、広域流路での1tick当たりの探索ノードを抑制。
+        float distanceMultiplier = getDistanceBudgetMultiplier();
+        return Math.max(500, Math.round(baseBudget * distanceMultiplier));
+    }
+
+    /**
+     * バニラ距離4を基準に、距離が伸びるほど探索予算を減少させる係数を返す。
+     * 4以下では1.0に固定し、短距離設定で過剰に予算が膨らまないようにする。
+     */
+    private static float getDistanceBudgetMultiplier() {
+        int distance = Math.max(FlowingFluids.config.waterFlowDistance, 1);
+        if (distance <= 4) {
+            return 1.0f;
+        }
+        return 4.0f / distance;
     }
 
     /**
