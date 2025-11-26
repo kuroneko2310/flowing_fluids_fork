@@ -49,9 +49,15 @@ public class AdaptiveTickScheduler {
         return DIMENSION_DATA.computeIfAbsent(DimensionKey.of(level), key -> new SchedulerDimensionData());
     }
 
-    // Sampled directions for faster equilibrium calculation (optimized)
-    private static final Direction[] SAMPLED_DIRECTIONS = new Direction[]{
-        Direction.DOWN, Direction.NORTH, Direction.EAST
+    // サンプリング方針: キャッシュ無効化は全6方向で漏れなく検知しつつ、
+    // 平均高さ計算は重力方向と水平面を中心に計測する。UP は最後に評価し、
+    // 上方向への流れが少ない場合でも極端な傾斜を見逃さないようにする。
+    private static final Direction[] NEIGHBOR_HASH_DIRECTIONS = new Direction[]{
+        Direction.UP, Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST
+    };
+
+    private static final Direction[] HEIGHT_SAMPLE_DIRECTIONS = new Direction[]{
+        Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
     };
 
     /**
@@ -59,7 +65,7 @@ public class AdaptiveTickScheduler {
      *
      * E = |height - avgNeighborHeight| + localGradientChange + flowChangeRate
      *
-     * OPTIMIZED: Samples only 3 directions instead of 6 for performance.
+     * OPTIMIZED: 6方向ハッシュ + 重み付けサンプリングでキャッシュを精度良く維持。
      * OPTIMIZED: Caches calculation result and only recalculates when neighbors change.
      *
      * @return Equilibrium index (0.0 = perfect equilibrium, higher = more unstable)
@@ -75,7 +81,7 @@ public class AdaptiveTickScheduler {
 
         // Calculate neighbor state hash for cache validation
         int neighborHash = 0;
-        for (Direction dir : SAMPLED_DIRECTIONS) {
+        for (Direction dir : NEIGHBOR_HASH_DIRECTIONS) {
             BlockPos neighborPos = pos.relative(dir);
             int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
             neighborHash = 31 * neighborHash + neighborAmount;
@@ -86,6 +92,10 @@ public class AdaptiveTickScheduler {
             Direction currentGradient = FluidSpatialGrid.getGradientDirection(level, pos);
             // Only recalculate if gradient changed
             if (data.lastGradient == currentGradient) {
+                if (FlowingFluids.LOG.isDebugEnabled()) {
+                    FlowingFluids.LOG.debug("[AdaptiveTickScheduler] Cache hit at {} (hash={}, gradient={}, eq={})",
+                        pos, neighborHash, currentGradient, data.lastEquilibriumIndex);
+                }
                 return data.lastEquilibriumIndex;
             }
         }
@@ -94,7 +104,7 @@ public class AdaptiveTickScheduler {
         float avgNeighborHeight = 0;
         int neighborCount = 0;
 
-        for (Direction dir : SAMPLED_DIRECTIONS) {
+        for (Direction dir : HEIGHT_SAMPLE_DIRECTIONS) {
             BlockPos neighborPos = pos.relative(dir);
             FluidState neighborFluid = level.getFluidState(neighborPos);
             if (!neighborFluid.isEmpty()) {
@@ -132,6 +142,11 @@ public class AdaptiveTickScheduler {
         // Combine components
         float equilibriumIndex = heightDiff + gradientChange + flowChangeRate;
 
+        if (FlowingFluids.LOG.isDebugEnabled()) {
+            FlowingFluids.LOG.debug("[AdaptiveTickScheduler] Recalculated E at {} -> diff={}, gradientChange={}, flowChange={}, eq={} (hash={})",
+                pos, heightDiff, gradientChange, flowChangeRate, equilibriumIndex, neighborHash);
+        }
+
         // Update stability data with cache
         if (data == null) {
             data = new FluidStabilityData(fluidAmount, 0, BASE_DELAY);
@@ -161,7 +176,19 @@ public class AdaptiveTickScheduler {
      */
     public static boolean shouldRunBFS(Level level, BlockPos pos, int fluidAmount) {
         float equilibriumIndex = calculateEquilibriumIndex(level, pos, fluidAmount);
-        return equilibriumIndex > EQUILIBRIUM_BFS_THRESHOLD;
+        if (equilibriumIndex <= EQUILIBRIUM_BFS_THRESHOLD) {
+            return false;
+        }
+
+        float distanceMultiplier = getDistanceBudgetMultiplier();
+        boolean throttled = distanceMultiplier < 0.5f && equilibriumIndex < (EQUILIBRIUM_BFS_THRESHOLD + 0.05f);
+
+        if (FlowingFluids.LOG.isDebugEnabled()) {
+            FlowingFluids.LOG.debug("[AdaptiveTickScheduler] BFS decision at {} -> eq={}, multiplier={}, throttled={}",
+                pos, equilibriumIndex, distanceMultiplier, throttled);
+        }
+
+        return !throttled;
     }
 
     /**
