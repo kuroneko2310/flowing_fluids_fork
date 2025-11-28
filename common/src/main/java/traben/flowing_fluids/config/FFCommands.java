@@ -434,6 +434,16 @@ public class FFCommands {
                                         "Sets the chance of any water losing a level during random ticks in the nether",
                                         a -> FlowingFluids.config.evaporationNetherChance = a,
                                         () -> FlowingFluids.config.evaporationNetherChance)
+                                ).then(intCommand("dry_biome_surface_cap_height_diff",
+                                        "Controls how many blocks above sea level water can stay at full level in dry biomes before being capped or removed. Higher values allow water terraces to hold their level for longer above sea level.",
+                                        "height_diff", 0, 64,
+                                        a -> FlowingFluids.config.dryBiomeSurfaceCapHeightDiff = a,
+                                        () -> FlowingFluids.config.dryBiomeSurfaceCapHeightDiff)
+                                ).then(floatCommand("dry_biome_evaporation_boost",
+                                        "Adds to the evaporation chance used above sea level in dry biomes. This value is added to water_puddle_evaporation_chance up to a maximum of 1.",
+                                        "chance", 0, 1,
+                                        a -> FlowingFluids.config.dryBiomeEvaporationBoost = a,
+                                        () -> FlowingFluids.config.dryBiomeEvaporationBoost)
                                 ).then(floatChanceCommand("water_rain_refill_chance",
                                         "Sets the chance of non-full water tiles increasing their level while its rains and they are open to the sky, during random ticks. This provides access to renewable water given enough time.\nNOTE: this will always be forcibly limited to 1/3rd of the current water_puddle_evaporation_chance setting otherwise water will endlessly fill the world during rain, this does effectively cap this value to 0.33",
                                         a -> FlowingFluids.config.rainRefillChance = a,
