@@ -71,12 +71,14 @@ public final class FlowingFluids {
                 FileReader fileReader = new FileReader(configFile);
                 config = gson.fromJson(fileReader, FFConfig.class);
                 fileReader.close();
+                config.ensureCollections();
                 //saveConfig();
             } catch (IOException e) {
                 // ETFUtils.logMessage("Config could not be loaded, using defaults", false);
             }
         } else {
             config = new FFConfig();
+            config.ensureCollections();
             // only time client side ever calls this
             saveConfig();
         }

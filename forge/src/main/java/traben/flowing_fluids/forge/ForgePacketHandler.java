@@ -21,7 +21,7 @@ import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
 
 public class ForgePacketHandler {
-    private static final int PROTOCOL_VERSION = 1;
+    private static final int PROTOCOL_VERSION = 2;
 
     public static final SimpleChannel INSTANCE =
         #if MC > MC_20_1

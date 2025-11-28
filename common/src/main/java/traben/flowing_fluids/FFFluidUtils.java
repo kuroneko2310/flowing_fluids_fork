@@ -8,7 +8,11 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.BiomeTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
@@ -27,7 +31,8 @@ import org.jetbrains.annotations.NotNull;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.ChunkLocalSlopeCache;
 import traben.flowing_fluids.FluidSpatialGrid;
-
+import java.util.Collection;
+import java.util.Locale;
 import java.util.function.Predicate;
 
 public class FFFluidUtils {
@@ -648,6 +653,63 @@ public class FFFluidUtils {
 
     public static boolean matchInfiniteBiomes(Holder<Biome> biome){
         return FlowingFluids.infiniteBiomeTags.stream().anyMatch(biome::is)
-                || FlowingFluids.infiniteBiomes.stream().anyMatch(biome::is);
+                || FlowingFluids.infiniteBiomes.stream().anyMatch(biome::is)
+                || isOceanBiome(biome)
+                || isRiverBiome(biome)
+                || isBeachBiome(biome);
+    }
+
+    public static boolean isOceanBiome(Holder<Biome> biome) {
+        return biome.is(BiomeTags.IS_OCEAN)
+                || matchesConfiguredBiome(biome, FlowingFluids.config.extraOceanBiomes)
+                || isAutoDetectedWaterBiome(biome, "ocean", "sea", "gulf", "bay");
+    }
+
+    public static boolean isRiverBiome(Holder<Biome> biome) {
+        return biome.is(BiomeTags.IS_RIVER)
+                || matchesConfiguredBiome(biome, FlowingFluids.config.extraRiverBiomes)
+                || isAutoDetectedWaterBiome(biome, "river", "stream", "creek", "delta");
+    }
+
+    public static boolean isBeachBiome(Holder<Biome> biome) {
+        return biome.is(BiomeTags.IS_BEACH)
+                || matchesConfiguredBiome(biome, FlowingFluids.config.extraBeachBiomes)
+                || isAutoDetectedWaterBiome(biome, "beach", "shore", "coast");
+    }
+
+    private static boolean matchesConfiguredBiome(Holder<Biome> biome, Collection<String> configuredBiomes) {
+        if (configuredBiomes == null || configuredBiomes.isEmpty()) return false;
+
+        for (String configured : configuredBiomes) {
+            if (configured == null || configured.isBlank()) continue;
+            String trimmed = configured.trim();
+            if (trimmed.startsWith("#")) {
+                var res = ResourceLocation.tryParse(trimmed.substring(1));
+                if (res != null && biome.is(TagKey.create(Registries.BIOME, res))) {
+                    return true;
+                }
+            } else {
+                var res = ResourceLocation.tryParse(trimmed);
+                if (res != null && biome.is(ResourceKey.create(Registries.BIOME, res))) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean isAutoDetectedWaterBiome(Holder<Biome> biome, String... keywords) {
+        if (!FlowingFluids.config.autoDetectWaterBiomes) return false;
+
+        return biome.unwrapKey().map(key -> {
+            String path = key.location().getPath().toLowerCase(Locale.ROOT);
+            for (String keyword : keywords) {
+                if (path.contains(keyword)) {
+                    return true;
+                }
+            }
+            return false;
+        }).orElse(false);
     }
 }

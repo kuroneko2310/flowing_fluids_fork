@@ -73,6 +73,10 @@ public class FFConfig {
     public boolean fastBiomeRefillAtSeaLevelOnly = false;
     public int playerBlockDistanceForFlowing = 0;
     public float concreteDrainsWaterChance = 0.5f;
+    public boolean autoDetectWaterBiomes = true;
+    public ObjectOpenHashSet<String> extraOceanBiomes = new ObjectOpenHashSet<>();
+    public ObjectOpenHashSet<String> extraRiverBiomes = new ObjectOpenHashSet<>();
+    public ObjectOpenHashSet<String> extraBeachBiomes = new ObjectOpenHashSet<>();
 
     // Adaptive scheduler settings
     public long adaptiveSchedulerChunkExpiryMs = 60_000; // 1 minute by default
@@ -202,6 +206,11 @@ public class FFConfig {
         playerBlockDistanceForFlowing = buffer.readVarInt();
         concreteDrainsWaterChance = buffer.readFloat();
 
+        autoDetectWaterBiomes = buffer.readBoolean();
+        extraOceanBiomes = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
+        extraRiverBiomes = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
+        extraBeachBiomes = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
+
         adaptiveSchedulerChunkExpiryMs = buffer.readVarLong();
         adaptiveSchedulerMaxEntries = buffer.readVarInt();
 
@@ -273,6 +282,11 @@ public class FFConfig {
         buffer.writeBoolean(fastBiomeRefillAtSeaLevelOnly);
         buffer.writeVarInt(playerBlockDistanceForFlowing);
         buffer.writeFloat(concreteDrainsWaterChance);
+
+        buffer.writeBoolean(autoDetectWaterBiomes);
+        buffer.writeCollection(extraOceanBiomes, FriendlyByteBuf::writeUtf);
+        buffer.writeCollection(extraRiverBiomes, FriendlyByteBuf::writeUtf);
+        buffer.writeCollection(extraBeachBiomes, FriendlyByteBuf::writeUtf);
 
         buffer.writeVarLong(adaptiveSchedulerChunkExpiryMs);
         buffer.writeVarInt(adaptiveSchedulerMaxEntries);
@@ -348,6 +362,13 @@ public class FFConfig {
             return this == ALWAYS || this == ALWAYS_OPPOSITE;
         }
 
+    }
+
+    public void ensureCollections() {
+        if (fluidBlacklist == null) fluidBlacklist = new ObjectOpenHashSet<>();
+        if (extraOceanBiomes == null) extraOceanBiomes = new ObjectOpenHashSet<>();
+        if (extraRiverBiomes == null) extraRiverBiomes = new ObjectOpenHashSet<>();
+        if (extraBeachBiomes == null) extraBeachBiomes = new ObjectOpenHashSet<>();
     }
 
 //    public enum LevelingStrength {
