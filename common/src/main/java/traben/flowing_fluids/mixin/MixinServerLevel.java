@@ -3,6 +3,8 @@ package traben.flowing_fluids.mixin;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FlowingFluid;
@@ -18,12 +20,14 @@ import traben.flowing_fluids.FlowingFluids;
 @Mixin(ServerLevel.class)
 public abstract class MixinServerLevel {
 
-    @Inject(method = "tickPrecipitation(Lnet/minecraft/core/BlockPos;)V", at = @At("TAIL"))
-    private void flowing_fluids$spawnRainWater(final BlockPos origin, final CallbackInfo ci) {
+    @Inject(method = "tickChunk(Lnet/minecraft/world/level/chunk/LevelChunk;I)V", at = @At("TAIL"))
+    private void flowing_fluids$spawnRainWater(final LevelChunk chunk, final int randomTickSpeed, final CallbackInfo ci) {
         if (!FlowingFluids.config.enableMod || FlowingFluids.config.rainSurfaceSpawnChance <= 0) return;
 
         ServerLevel level = (ServerLevel) (Object) this;
         if (!level.isRaining()) return;
+        ChunkPos chunkPos = chunk.getPos();
+        BlockPos origin = level.getBlockRandomPos(chunkPos.getMinBlockX(), 0, chunkPos.getMinBlockZ(), 15);
         int attempts = Mth.clamp(FlowingFluids.config.rainSurfaceSpawnTries, 1, 16);
         int maxSpawnLevel = Mth.clamp(FlowingFluids.config.rainSurfaceSpawnMaxLevel, 1, 8);
 
