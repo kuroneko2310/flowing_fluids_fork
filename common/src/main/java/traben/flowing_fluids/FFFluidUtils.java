@@ -720,42 +720,18 @@ public class FFFluidUtils {
 
         Biome biomeValue = biome.value();
 
-        float downfall = ff$getBiomeDownfall(biomeValue);
+        float downfall = biomeValue.getDownfall();
         if (downfall < FlowingFluids.config.unnamedRiverHumidityThreshold) {
             return false;
         }
 
-        float depth = ff$getBiomeDepth(biomeValue);
+        float depth = biomeValue.getDepth();
         if (depth < FlowingFluids.config.unnamedRiverMinDepth || depth > FlowingFluids.config.unnamedRiverMaxDepth) {
             return false;
         }
 
         float estimatedSurfaceWater = estimateSurfaceWaterRate(depth, downfall);
         return estimatedSurfaceWater >= FlowingFluids.config.unnamedRiverSurfaceWaterThreshold;
-    }
-
-    private static float ff$getBiomeDownfall(Biome biome) {
-        try {
-            var method = biome.getClass().getMethod("getDownfall");
-            return ((Number) method.invoke(biome)).floatValue();
-        } catch (ReflectiveOperationException ignored) {
-            try {
-                var climateSettings = biome.getClass().getMethod("climateSettings").invoke(biome);
-                var downfallMethod = climateSettings.getClass().getMethod("downfall");
-                return ((Number) downfallMethod.invoke(climateSettings)).floatValue();
-            } catch (ReflectiveOperationException ignoredToo) {
-                return 0.0f;
-            }
-        }
-    }
-
-    private static float ff$getBiomeDepth(Biome biome) {
-        try {
-            var method = biome.getClass().getMethod("getDepth");
-            return ((Number) method.invoke(biome)).floatValue();
-        } catch (ReflectiveOperationException ignored) {
-            return 0.0f; // Depth information was removed in newer versions; use neutral default.
-        }
     }
 
     private static float estimateSurfaceWaterRate(float depth, float downfall) {
