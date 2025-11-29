@@ -17,31 +17,34 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Equilibrium Index (E) calculation:
  * - E = |height - avgNeighborHeight| + localGradientChange + flowChangeRate
- * - E < 0.05: Fluid is stable → tick excluded
- * - E > 0.05: Fluid needs tick
- * - E > 0.2: Fluid needs BFS equalization
+ * - E < 0.08: Fluid is stable → tick excluded
+ * - E > 0.08: Fluid needs tick
+ * - E > 0.25: Fluid needs BFS equalization
  *
  * BFS Budget Control (max nodes per tick):
- * - Normal areas: 4,000 nodes
- * - Villages/canals: 8,000 nodes
- * - Oceans/large water: 1,000 nodes (prevents lag)
+ * - Normal areas: 3,000 nodes
+ * - Villages/canals: 6,000 nodes
+ * - Oceans/large water: 800 nodes (prevents lag)
  *
  * Performance improvement: 60-80% reduction in tick processing, no ocean lag.
  */
 public class AdaptiveTickScheduler {
 
     private static final int BASE_DELAY = 2; // Default waterTickDelay from config
-    private static final int MAX_DELAY = 100; // Maximum delay for very stable fluids
-    private static final int STABILITY_THRESHOLD = 5; // Ticks without change to increase delay
+    private static final int MAX_DELAY = 160; // Maximum delay for very stable fluids (extended)
+    private static final int STABILITY_THRESHOLD = 3; // Fewer stable ticks needed to increase delay
+    private static final int RAIN_STABILIZATION_DELAY_TICKS = 3; // Delay BFS/equalization for freshly spawned rain water
+    private static final int SURGE_RELAX_TICKS = 1; // Frames to ignore flow change spikes
+    private static final int SURGE_AMOUNT_THRESHOLD = 12; // Internal units considered a rapid increase
 
     // Equilibrium thresholds
-    private static final float EQUILIBRIUM_STABLE_THRESHOLD = 0.05f; // E < 0.05 → no tick
-    private static final float EQUILIBRIUM_BFS_THRESHOLD = 0.2f; // E > 0.2 → run BFS
+    private static final float EQUILIBRIUM_STABLE_THRESHOLD = 0.08f; // E < 0.08 → no tick
+    private static final float EQUILIBRIUM_BFS_THRESHOLD = 0.25f; // E > 0.25 → run BFS
 
     // BFS budget limits (nodes per tick)
-    private static final int BFS_BUDGET_NORMAL = 4000;
-    private static final int BFS_BUDGET_HIGH_ACTIVITY = 8000; // Villages, canals
-    private static final int BFS_BUDGET_OCEAN = 1000; // Large water bodies
+    private static final int BFS_BUDGET_NORMAL = 3000;
+    private static final int BFS_BUDGET_HIGH_ACTIVITY = 6000; // Villages, canals (reduced)
+    private static final int BFS_BUDGET_OCEAN = 800; // Large water bodies (reduced)
 
     private static final ConcurrentHashMap<DimensionKey, SchedulerDimensionData> DIMENSION_DATA = new ConcurrentHashMap<>();
 
@@ -78,6 +81,22 @@ public class AdaptiveTickScheduler {
 
         long posKey = pos.asLong();
         FluidStabilityData data = dimensionData.stabilityMap.get(posKey);
+
+        if (data == null) {
+            data = new FluidStabilityData(fluidAmount, 0, BASE_DELAY);
+            dimensionData.stabilityMap.put(posKey, data);
+        }
+
+        int amountChange = Math.abs(fluidAmount - data.lastAmount);
+        boolean rapidIncrease = fluidAmount > data.lastAmount && amountChange >= SURGE_AMOUNT_THRESHOLD;
+
+        boolean rainSpawnCandidate = level.isRaining() && level.canSeeSky(pos.above());
+        if (rainSpawnCandidate && fluidAmount > data.lastAmount) {
+            data.rainBornCooldown = Math.max(data.rainBornCooldown, RAIN_STABILIZATION_DELAY_TICKS);
+        }
+        if (data.rainBornCooldown > 0) {
+            data.rainBornCooldown--;
+        }
 
         // Calculate neighbor state hash for cache validation
         int neighborHash = 0;
@@ -135,8 +154,13 @@ public class AdaptiveTickScheduler {
         // Component 3: Flow change rate (from previous tick)
         float flowChangeRate = 0.0f;
         if (data != null) {
-            int amountChange = Math.abs(fluidAmount - data.lastAmount);
-            flowChangeRate = amountChange / 255.0f;
+            if (rapidIncrease || data.surgeRelaxTicks > 0) {
+                flowChangeRate = 0.0f; // Ignore spike-induced flow changes this tick
+                data.surgeRelaxTicks = Math.max(data.surgeRelaxTicks, SURGE_RELAX_TICKS);
+                data.surgeRelaxTicks--;
+            } else {
+                flowChangeRate = amountChange / 255.0f;
+            }
         }
 
         // Combine components
@@ -148,13 +172,10 @@ public class AdaptiveTickScheduler {
         }
 
         // Update stability data with cache
-        if (data == null) {
-            data = new FluidStabilityData(fluidAmount, 0, BASE_DELAY);
-            dimensionData.stabilityMap.put(posKey, data);
-        }
         data.lastGradient = currentGradient;
         data.lastEquilibriumIndex = equilibriumIndex;
         data.neighborHash = neighborHash;
+        data.lastAmount = fluidAmount;
 
         return equilibriumIndex;
     }
@@ -176,6 +197,11 @@ public class AdaptiveTickScheduler {
      */
     public static boolean shouldRunBFS(Level level, BlockPos pos, int fluidAmount) {
         float equilibriumIndex = calculateEquilibriumIndex(level, pos, fluidAmount);
+        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        if (data != null && data.rainBornCooldown > 0) {
+            return false; // Rain-spawned water waits a few ticks before heavy processing
+        }
+
         if (equilibriumIndex <= EQUILIBRIUM_BFS_THRESHOLD) {
             return false;
         }
@@ -450,6 +476,8 @@ public class AdaptiveTickScheduler {
         Direction lastGradient; // For gradient change detection
         float lastEquilibriumIndex; // Cached equilibrium index
         int neighborHash; // Hash of neighbor states for cache validation
+        int rainBornCooldown; // Ticks to skip BFS/equalization after rain generation
+        int surgeRelaxTicks; // Temporary relaxation when large inflow detected
 
         FluidStabilityData(int lastAmount, int stabilityCounter, int currentDelay) {
             this.lastAmount = lastAmount;
@@ -458,6 +486,8 @@ public class AdaptiveTickScheduler {
             this.lastGradient = null;
             this.lastEquilibriumIndex = 1.0f; // Start with high index (unstable)
             this.neighborHash = 0;
+            this.rainBornCooldown = 0;
+            this.surgeRelaxTicks = 0;
         }
     }
 
