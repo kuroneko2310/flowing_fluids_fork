@@ -74,6 +74,8 @@ public class FFConfig {
     public int rainBfsCooldownTicks = 5;
     public float rainSurfaceSpawnChance = 0.05f;
     public int rainSurfaceSpawnLevel = 1;
+    public int rainSurfaceSpawnMaxLevel = 4;
+    public int rainSurfaceSpawnTries = 1;
     public float rainLevelJumpChance = 0.05f;
     public int infiniteBiomeRainFillMaxLevel = 6;
     public int minLavaLevelForObsidian = 6;
@@ -213,6 +215,8 @@ public class FFConfig {
         rainBfsCooldownTicks = buffer.readVarInt();
         rainSurfaceSpawnChance = buffer.readFloat();
         rainSurfaceSpawnLevel = buffer.readVarInt();
+        rainSurfaceSpawnMaxLevel = buffer.readVarInt();
+        rainSurfaceSpawnTries = buffer.readVarInt();
         rainLevelJumpChance = buffer.readFloat();
         infiniteBiomeRainFillMaxLevel = buffer.readVarInt();
         minLavaLevelForObsidian = buffer.readVarInt();
@@ -297,6 +301,8 @@ public class FFConfig {
         buffer.writeVarInt(rainBfsCooldownTicks);
         buffer.writeFloat(rainSurfaceSpawnChance);
         buffer.writeVarInt(rainSurfaceSpawnLevel);
+        buffer.writeVarInt(rainSurfaceSpawnMaxLevel);
+        buffer.writeVarInt(rainSurfaceSpawnTries);
         buffer.writeFloat(rainLevelJumpChance);
         buffer.writeVarInt(infiniteBiomeRainFillMaxLevel);
         buffer.writeVarInt(minLavaLevelForObsidian);
