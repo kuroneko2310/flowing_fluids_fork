@@ -2,6 +2,7 @@ package traben.flowing_fluids.mixin;
 
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.FluidTags;
@@ -66,10 +67,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
         Biome biome = biomeHolder.value();
         isInfBiome = FFFluidUtils.matchInfiniteBiomes(biomeHolder);
 
-        boolean isDryBiome = biome.getPrecipitation() == Biome.Precipitation.NONE
-                || biomeHolder.is(BiomeTags.IS_BADLANDS)
-                || biomeHolder.is(BiomeTags.IS_DESERT)
-                || biomeHolder.is(BiomeTags.IS_SAVANNA);
+        boolean isDryBiome = ff$isDryBiome(biome, biomeHolder);
         int seaLevelDiff = blockPos.getY() - level.getSeaLevel();
 
         int amount = fluidState.getAmount();
@@ -201,6 +199,27 @@ public abstract class MixinWaterFluid extends FlowingFluid {
             }
         }
         return false;
+    }
+
+    @Unique
+    private boolean ff$isDryBiome(Biome biome, Holder<Biome> biomeHolder) {
+        boolean hasPrecipitation = true;
+        try {
+            var hasPrecipitationMethod = biome.getClass().getMethod("hasPrecipitation");
+            hasPrecipitation = (boolean) hasPrecipitationMethod.invoke(biome);
+        } catch (ReflectiveOperationException ignored) {
+            try {
+                var precipitationMethod = biome.getClass().getMethod("getPrecipitation");
+                Object precipitation = precipitationMethod.invoke(biome);
+                hasPrecipitation = precipitation != null && !"NONE".equals(precipitation.toString());
+            } catch (ReflectiveOperationException ignoredToo) {
+                hasPrecipitation = true;
+            }
+        }
+
+        return !hasPrecipitation
+                || biomeHolder.is(BiomeTags.IS_BADLANDS)
+                || biomeHolder.is(BiomeTags.IS_SAVANNA);
     }
 
 
