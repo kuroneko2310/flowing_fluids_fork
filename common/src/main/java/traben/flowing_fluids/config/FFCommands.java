@@ -469,37 +469,6 @@ public class FFCommands {
                                         "Controls if the infinite biome refilling only happens to water at exactly sea level.",
                                         a -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly = a, () -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly)
                                 )
-                        ).then(Commands.literal("biome_detection")
-                                .executes(cont -> message(cont, "Configure automatic detection of water-heavy biomes, including unnamed rivers."))
-                                .then(booleanCommand("auto_detect_water_biomes",
-                                        "Enables automatic keyword-based detection for oceans/rivers/beaches (default: on).",
-                                        a -> FlowingFluids.config.autoDetectWaterBiomes = a,
-                                        () -> FlowingFluids.config.autoDetectWaterBiomes)
-                                ).then(booleanCommand("auto_detect_unnamed_rivers",
-                                        "Estimate unnamed river-like biomes using humidity and shallow terrain (default: on).",
-                                        a -> FlowingFluids.config.autoDetectUnnamedRivers = a,
-                                        () -> FlowingFluids.config.autoDetectUnnamedRivers)
-                                ).then(floatCommand("unnamed_river_humidity_threshold",
-                                        "Minimum biome downfall (0-1) to consider it humid enough to host narrow waterways.",
-                                        "threshold", 0f, 1f,
-                                        a -> FlowingFluids.config.unnamedRiverHumidityThreshold = a,
-                                        () -> FlowingFluids.config.unnamedRiverHumidityThreshold)
-                                ).then(floatCommand("unnamed_river_surface_water_threshold",
-                                        "Estimated surface water ratio needed to classify an unnamed river biome.",
-                                        "ratio", 0f, 1f,
-                                        a -> FlowingFluids.config.unnamedRiverSurfaceWaterThreshold = a,
-                                        () -> FlowingFluids.config.unnamedRiverSurfaceWaterThreshold)
-                                ).then(floatCommand("unnamed_river_min_depth",
-                                        "Lower bound for biome depth used in unnamed river detection (negative = below sea level).",
-                                        "depth", -2f, 2f,
-                                        a -> FlowingFluids.config.unnamedRiverMinDepth = a,
-                                        () -> FlowingFluids.config.unnamedRiverMinDepth)
-                                ).then(floatCommand("unnamed_river_max_depth",
-                                        "Upper bound for biome depth when checking unnamed river-like biomes.",
-                                        "depth", -2f, 2f,
-                                        a -> FlowingFluids.config.unnamedRiverMaxDepth = a,
-                                        () -> FlowingFluids.config.unnamedRiverMaxDepth)
-                                )
                         )
                 ).then(Commands.literal("~debug").executes(cont -> message(cont, "Debug commands you probably don't need these."))
                         .then(booleanCommand("random_ticks_printing",

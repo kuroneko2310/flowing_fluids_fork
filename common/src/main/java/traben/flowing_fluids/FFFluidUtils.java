@@ -14,7 +14,6 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.util.RandomSource;
-import net.minecraft.util.Mth;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
@@ -669,8 +668,7 @@ public class FFFluidUtils {
     public static boolean isRiverBiome(Holder<Biome> biome) {
         return biome.is(BiomeTags.IS_RIVER)
                 || matchesConfiguredBiome(biome, FlowingFluids.config.extraRiverBiomes)
-                || isAutoDetectedWaterBiome(biome, "river", "stream", "creek", "delta")
-                || isUnnamedRiverBiome(biome);
+                || isAutoDetectedWaterBiome(biome, "river", "stream", "creek", "delta");
     }
 
     public static boolean isBeachBiome(Holder<Biome> biome) {
@@ -713,31 +711,5 @@ public class FFFluidUtils {
             }
             return false;
         }).orElse(false);
-    }
-
-    private static boolean isUnnamedRiverBiome(Holder<Biome> biome) {
-        if (!FlowingFluids.config.autoDetectUnnamedRivers) return false;
-
-        Biome biomeValue = biome.value();
-
-        float downfall = biomeValue.getDownfall();
-        if (downfall < FlowingFluids.config.unnamedRiverHumidityThreshold) {
-            return false;
-        }
-
-        float depth = biomeValue.getDepth();
-        if (depth < FlowingFluids.config.unnamedRiverMinDepth || depth > FlowingFluids.config.unnamedRiverMaxDepth) {
-            return false;
-        }
-
-        float estimatedSurfaceWater = estimateSurfaceWaterRate(depth, downfall);
-        return estimatedSurfaceWater >= FlowingFluids.config.unnamedRiverSurfaceWaterThreshold;
-    }
-
-    private static float estimateSurfaceWaterRate(float depth, float downfall) {
-        // 川は海ほど深くなく、適度な湿度と低い地形が組み合わさることが多いので、深さと降水量から水面割合を推定する。
-        float depthContribution = Mth.clamp(-depth, 0.0f, 1.0f);
-        float humidityContribution = Mth.clamp(downfall * 0.5f, 0.0f, 0.5f);
-        return Mth.clamp(depthContribution + humidityContribution, 0.0f, 1.0f);
     }
 }
