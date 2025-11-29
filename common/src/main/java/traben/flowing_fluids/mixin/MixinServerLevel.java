@@ -18,7 +18,7 @@ import traben.flowing_fluids.FlowingFluids;
 @Mixin(ServerLevel.class)
 public abstract class MixinServerLevel {
 
-    @Inject(method = "tickPrecipitation", at = @At("TAIL"))
+    @Inject(method = "tickPrecipitation(Lnet/minecraft/core/BlockPos;)V", at = @At("TAIL"))
     private void flowing_fluids$spawnRainWater(final BlockPos origin, final CallbackInfo ci) {
         if (!FlowingFluids.config.enableMod || FlowingFluids.config.rainSurfaceSpawnChance <= 0) return;
 
