@@ -1,6 +1,8 @@
 package traben.flowing_fluids;
 
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
@@ -11,7 +13,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -28,10 +34,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class EnhancedFluidBFS {
 
     // Depth configurations for different terrain types
-    private static final int DEPTH_GENTLE = 80;      // Gentle slopes
-    private static final int DEPTH_CANAL = 200;      // Artificial channels
-    private static final int DEPTH_RIVER = 300;      // Natural rivers
-    private static final int DEPTH_OCEAN = 64;       // Large water bodies (ultra-light)
+    private static final int DEPTH_GENTLE = 60;      // Gentle slopes (reduced for perf)
+    private static final int DEPTH_CANAL = 150;      // Artificial channels (reduced for perf)
+    private static final int DEPTH_RIVER = 225;      // Natural rivers (reduced for perf)
+    private static final int DEPTH_OCEAN = 48;       // Large water bodies (ultra-light, reduced)
 
     // Direction cache to avoid repeated sorting (optimization)
     private static final int MAX_DIRECTION_CACHE_SIZE = 1000; // Prevent unbounded growth
@@ -69,7 +75,7 @@ public class EnhancedFluidBFS {
      */
     public static List<BlockPos> performEqualization(Level level, BlockPos startPos, int maxDepth, int maxNodes) {
         List<BlockPos> equalizedPositions = new ArrayList<>();
-        Set<Long> equalizedKeys = new HashSet<>();
+        LongOpenHashSet equalizedKeys = new LongOpenHashSet();
 
         // Get starting fluid state
         FluidState startFluid = level.getFluidState(startPos);
@@ -99,11 +105,14 @@ public class EnhancedFluidBFS {
         try {
             // Initialize BFS
             LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
-            Set<Long> visited = new HashSet<>();
-            List<Long> visitedOrder = new ArrayList<>();
+            LongOpenHashSet visited = new LongOpenHashSet();
+            LongArrayList visitedOrder = new LongArrayList();
 
-            queue.enqueue(startPos.asLong());
-            visited.add(startPos.asLong());
+            BlockPos.MutableBlockPos reusablePos = new BlockPos.MutableBlockPos();
+
+            long startLong = startPos.asLong();
+            queue.enqueue(startLong);
+            visited.add(startLong);
             equalizedPositions.add(startPos.immutable());
 
             int nodesExplored = 0;
@@ -117,41 +126,52 @@ public class EnhancedFluidBFS {
 
             while (!queue.isEmpty() && nodesExplored < maxNodes + momentumBudget && visited.size() < maxDepth) {
                 long currentLong = queue.dequeueLong();
-                BlockPos currentPos = BlockPos.of(currentLong);
+                int currentX = BlockPos.getX(currentLong);
+                int currentY = BlockPos.getY(currentLong);
+                int currentZ = BlockPos.getZ(currentLong);
+                reusablePos.set(currentX, currentY, currentZ);
                 nodesExplored++;
 
-                // Get current fluid amount
-                FluidState currentFluid = level.getFluidState(currentPos);
-                int currentAmount = FluidSpatialGrid.getFluidAmount(level, currentPos);
+                // Get current fluid amount (cached per node)
+                int currentAmount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
 
                 // Explore neighbors with weighted priority
                 Direction[] directions = getWeightedDirections(gradientVector);
 
                 for (Direction dir : directions) {
-                    BlockPos neighborPos = currentPos.relative(dir);
-                    long neighborLong = neighborPos.asLong();
+                    int neighborX = currentX + dir.getStepX();
+                    int neighborY = currentY + dir.getStepY();
+                    int neighborZ = currentZ + dir.getStepZ();
+
+                    long neighborLong = BlockPos.asLong(neighborX, neighborY, neighborZ);
 
                     if (visited.contains(neighborLong)) {
                         continue;
                     }
 
+                    reusablePos.set(neighborX, neighborY, neighborZ);
+                    BlockState neighborState = level.getBlockState(reusablePos);
+                    FluidState neighborFluidState = neighborState.getFluidState();
+
                     // CRITICAL: Include air blocks and replaceable blocks!
-                    if (canIncludeInBFS(level, neighborPos, startFluid)) {
+                    if (canIncludeInBFS(neighborState, neighborFluidState, startFluid)) {
                         visited.add(neighborLong);
                         visitedOrder.add(neighborLong);
                         queue.enqueue(neighborLong);
 
                         // Add to equalization list if it needs balancing
-                        int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
-                        boolean isDrop = currentPos.getY() > neighborPos.getY();
+                        int neighborAmount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
+                        boolean isDrop = currentY > neighborY;
                         if (shouldEqualize(currentAmount, neighborAmount) || isDrop) {
                             dropEncountered = dropEncountered || isDrop;
-                            addEqualizationTarget(equalizedPositions, equalizedKeys, neighborPos);
-                            addEqualizationTarget(equalizedPositions, equalizedKeys, currentPos);
+                            addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
+                            reusablePos.set(currentX, currentY, currentZ);
+                            addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
+                            reusablePos.set(neighborX, neighborY, neighborZ);
                         }
 
                         // Grant additional budget when flowing downhill to mimic acceleration
-                        int drop = currentPos.getY() - neighborPos.getY();
+                        int drop = currentY - neighborY;
                         if (drop > 0) {
                             momentumBudget = Math.min(momentumCap, momentumBudget + drop);
                         }
@@ -164,7 +184,8 @@ public class EnhancedFluidBFS {
             // これにより段差の手前・奥に残った水をもう一段深く平均化し、取り残しを防ぐ。
             if (dropEncountered) {
                 for (long visitedKey : visitedOrder) {
-                    addEqualizationTarget(equalizedPositions, equalizedKeys, BlockPos.of(visitedKey));
+                    reusablePos.set(BlockPos.getX(visitedKey), BlockPos.getY(visitedKey), BlockPos.getZ(visitedKey));
+                    addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
                 }
             }
 
@@ -175,7 +196,7 @@ public class EnhancedFluidBFS {
         }
     }
 
-    private static void addEqualizationTarget(List<BlockPos> equalizedPositions, Set<Long> equalizedKeys, BlockPos pos) {
+    private static void addEqualizationTarget(List<BlockPos> equalizedPositions, LongOpenHashSet equalizedKeys, BlockPos pos) {
         long key = pos.asLong();
         if (equalizedKeys.add(key)) {
             equalizedPositions.add(pos.immutable());
@@ -186,10 +207,7 @@ public class EnhancedFluidBFS {
      * CRITICAL: Determines if a block should be included in BFS.
      * This includes AIR blocks, which fixes the "water doesn't flow to distant channels" bug!
      */
-    private static boolean canIncludeInBFS(BlockGetter level, BlockPos pos, FluidState sourceFluid) {
-        BlockState state = level.getBlockState(pos);
-        FluidState fluidState = level.getFluidState(pos);
-
+    private static boolean canIncludeInBFS(BlockState state, FluidState fluidState, FluidState sourceFluid) {
         // Include if:
         // 1. Has same fluid type
         if (!fluidState.isEmpty() && fluidState.getType() == sourceFluid.getType()) {
@@ -202,7 +220,7 @@ public class EnhancedFluidBFS {
         }
 
         // 3. Can accept fluid (waterloggable, etc.)
-        if (state.getFluidState().isEmpty() && !state.isSolid()) {
+        if (fluidState.isEmpty() && !state.isSolid()) {
             return true;
         }
 
@@ -321,9 +339,9 @@ public class EnhancedFluidBFS {
         ));
 
         // Infer area type from budget
-        if (budget <= 1000) {
+        if (budget <= 900) {
             return AdaptiveTickScheduler.AreaType.OCEAN;
-        } else if (budget >= 8000) {
+        } else if (budget >= 6000) {
             return AdaptiveTickScheduler.AreaType.HIGH_ACTIVITY;
         } else {
             return AdaptiveTickScheduler.AreaType.NORMAL;
