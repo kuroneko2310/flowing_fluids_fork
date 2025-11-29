@@ -66,6 +66,25 @@ public abstract class MixinFlowingFluid extends Fluid {
             ThreadLocal.withInitial(Short2BooleanOpenHashMap::new);
 
     @Unique
+    private static final class FlowDownResult {
+        private final int remainingAmount;
+        private final boolean retainedMinimum;
+
+        private FlowDownResult(int remainingAmount, boolean retainedMinimum) {
+            this.remainingAmount = remainingAmount;
+            this.retainedMinimum = retainedMinimum;
+        }
+
+        private int remainingAmount() {
+            return remainingAmount;
+        }
+
+        private boolean retainedMinimum() {
+            return retainedMinimum;
+        }
+    }
+
+    @Unique
     private static Short2ObjectOpenHashMap<Pair<BlockState, FluidState>> ff$getStateCache() {
         Short2ObjectOpenHashMap<Pair<BlockState, FluidState>> cache = ff$STATE_CACHE.get();
         cache.clear();
@@ -270,8 +289,10 @@ public abstract class MixinFlowingFluid extends Fluid {
 
                 BlockPos posDown = blockPos.below();
                 // check if we can flow down and if so how much fluid remains out of the 8 total possible
-                int remainingAmount = flowing_fluids$checkAndFlowDown(level, blockPos, fluidState, thisState, posDown,
+                FlowDownResult flowDownResult = flowing_fluids$checkAndFlowDown(level, blockPos, fluidState, thisState, posDown,
                         level.getBlockState(posDown), fluidState.getAmount());
+
+                int remainingAmount = flowDownResult.remainingAmount();
 
                 // if there is remaining amount still, the block below is full, or we couldn't flow down so also flow to the sides
                 if (remainingAmount <= 0) {
@@ -338,8 +359,11 @@ public abstract class MixinFlowingFluid extends Fluid {
                 // if there is still water left, flow to the sides only if it is above the drop-off amount
                 // the drop-off amount is the vanilla value determining how much each block of flow reduces the amount
                 // this ties in nicely with a sort of surface tension effect
-                if (remainingAmount > getDropOff(level)) {//drop off is 1 for water, 2 for lava in the overworld
-                    ff$flowToSides(level, blockPos, fluidState, remainingAmount, thisState);//, remainingAmount);
+                boolean retainedMinimumForDropOff = flowDownResult.retainedMinimum();
+
+                if (remainingAmount > getDropOff(level) || retainedMinimumForDropOff) {//drop off is 1 for water, 2 for lava in the overworld
+                    ff$flowToSides(level, blockPos, fluidState, remainingAmount, thisState,
+                            retainedMinimumForDropOff ? getDropOff(level) : 0);//, remainingAmount);
                 } else if (FlowingFluids.config.flowToEdges) {
                     // if the remaining amount is less than the drop-off amount, we can still flow to the sides but only if
                     // we find a nearby ledge to flow towards, as we want this water to settle when on flat ground
@@ -386,7 +410,7 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Unique
-    private void ff$flowToSides(final Level level, final BlockPos blockPos, final FluidState fluidState, int amount, final BlockState thisState) {
+    private void ff$flowToSides(final Level level, final BlockPos blockPos, final FluidState fluidState, int amount, final BlockState thisState, int minimumRetainedAmount) {
 
         // get a valid direction to move into or null if no spreadable block was found
         Direction dir = flowing_fluids$getLowestSpreadableLookingFor4BlockDrops(level, blockPos, fluidState, amount, false);
@@ -396,6 +420,9 @@ public abstract class MixinFlowingFluid extends Fluid {
 
         // this amount is already confirmed to be less than {amount}
         final int destFluidAmount = level.getFluidState(posDir).getAmount();
+
+        // If we retained a minimum (drop-off) amount for downward flow, allow leveling without draining below it.
+        int combinedTotal = amount + destFluidAmount;
 
         // must force total flow of fluid because of waterloggables
         if (ff$handleWaterLoggedFlowAndReturnIfHandled(level, blockPos, fluidState, amount, thisState, posDir, destFluidAmount, false))
@@ -419,6 +446,18 @@ public abstract class MixinFlowingFluid extends Fluid {
             toAmount = averageLevel;
         }
 
+        if (minimumRetainedAmount > 0) {
+            // keep at least the retained portion on the source to maintain drop-off support while still equalizing
+            int adjustedFrom = Math.max(fromAmount, minimumRetainedAmount);
+            int adjustedTo = combinedTotal - adjustedFrom;
+            if (adjustedTo < 0) {
+                adjustedTo = 0;
+                adjustedFrom = combinedTotal;
+            }
+            fromAmount = adjustedFrom;
+            toAmount = adjustedTo;
+        }
+
         FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, fluidState.getType(), fromAmount);
         FFFluidUtils.setFluidStateAtPosToNewAmount(level, posDir, fluidState.getType(), toAmount);
     }
@@ -426,7 +465,7 @@ public abstract class MixinFlowingFluid extends Fluid {
 
 
     @Unique
-    private int flowing_fluids$checkAndFlowDown(final Level level, final BlockPos blockPos, final FluidState fluidState, final BlockState thisState, final BlockPos posDown, final BlockState stateDown, int amount) {
+    private FlowDownResult flowing_fluids$checkAndFlowDown(final Level level, final BlockPos blockPos, final FluidState fluidState, final BlockState thisState, final BlockPos posDown, final BlockState stateDown, int amount) {
         var downFState = level.getFluidState(posDown);
         // check and then handle if we can flow down
         if (flowing_fluids$canSpreadTo(fluidState.getType(), fluidState.getAmount(), level, blockPos, thisState,
@@ -439,7 +478,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                 // example: lava flowing down onto water creates stone in this case
                 flowing_fluids$setOrRemoveWaterAmountAt(level, blockPos, amount - 1, thisState, Direction.DOWN);
                 flowing_fluids$spreadTo2(level, posDown, stateDown, Direction.DOWN, 1);
-                return amount - 1;
+                return new FlowDownResult(amount - 1, false);
             } else {
                 if (FlowingFluids.config.easyPistonPump && FlowingFluids.config.enablePistonPushing) {
                     // check if an upwards piston is present one block further below, and is still moving, and delay this tick
@@ -448,7 +487,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                         // delay this tick
                         level.scheduleTick(blockPos, this, 10);
                         FlowingFluids.pistonTick = true;
-                        return amount;
+                        return new FlowDownResult(amount, false);
                     }
                 }
 
@@ -456,9 +495,21 @@ public abstract class MixinFlowingFluid extends Fluid {
                 int fluidDownAmount = downFState.getAmount();
 
                 if (ff$handleWaterLoggedFlowAndReturnIfHandled(level, blockPos, fluidState, amount, thisState, posDown, fluidDownAmount, true))
-                    return level.getFluidState(blockPos).getAmount();
+                    return new FlowDownResult(level.getFluidState(blockPos).getAmount(), false);
 
                 int amountDestCanAccept = Math.min(8 - fluidDownAmount, amount);
+
+                boolean retainedMinimum = false;
+                // Avoid draining the entire source when falling into an empty air column.
+                // Leaving at least the drop-off amount in the source keeps lateral equalization active,
+                // preventing the upstream section of a canal from staying permanently overfilled.
+                if (fluidDownAmount == 0 && stateDown.isAir() && amountDestCanAccept == amount) {
+                    int retained = getDropOff(level);
+                    if (amount > retained) {
+                        amountDestCanAccept = amount - retained;
+                        retainedMinimum = true;
+                    }
+                }
                 // can fit some liquid
                 if (amountDestCanAccept > 0) {
                     int destNewAmount = fluidDownAmount + amountDestCanAccept;
@@ -466,12 +517,12 @@ public abstract class MixinFlowingFluid extends Fluid {
                     // set both amounts
                     flowing_fluids$setOrRemoveWaterAmountAt(level, blockPos, sourceNewAmount, thisState, Direction.DOWN);
                     flowing_fluids$spreadTo2(level, posDown, stateDown, Direction.DOWN, destNewAmount);
-                    return sourceNewAmount;
+                    return new FlowDownResult(sourceNewAmount, retainedMinimum);
                 }
             }
         }
         // return the remaining amount of the source liquid
-        return amount;
+        return new FlowDownResult(amount, false);
     }
 
     @Unique
