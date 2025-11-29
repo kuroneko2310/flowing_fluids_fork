@@ -74,11 +74,6 @@ public class FFConfig {
     public int playerBlockDistanceForFlowing = 0;
     public float concreteDrainsWaterChance = 0.5f;
     public boolean autoDetectWaterBiomes = true;
-    public boolean autoDetectUnnamedRivers = true;
-    public float unnamedRiverHumidityThreshold = 0.55f;
-    public float unnamedRiverSurfaceWaterThreshold = 0.35f;
-    public float unnamedRiverMinDepth = -0.6f;
-    public float unnamedRiverMaxDepth = 0.15f;
     public ObjectOpenHashSet<String> extraOceanBiomes = new ObjectOpenHashSet<>();
     public ObjectOpenHashSet<String> extraRiverBiomes = new ObjectOpenHashSet<>();
     public ObjectOpenHashSet<String> extraBeachBiomes = new ObjectOpenHashSet<>();
@@ -212,11 +207,6 @@ public class FFConfig {
         concreteDrainsWaterChance = buffer.readFloat();
 
         autoDetectWaterBiomes = buffer.readBoolean();
-        autoDetectUnnamedRivers = buffer.readBoolean();
-        unnamedRiverHumidityThreshold = buffer.readFloat();
-        unnamedRiverSurfaceWaterThreshold = buffer.readFloat();
-        unnamedRiverMinDepth = buffer.readFloat();
-        unnamedRiverMaxDepth = buffer.readFloat();
         extraOceanBiomes = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
         extraRiverBiomes = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
         extraBeachBiomes = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
@@ -294,11 +284,6 @@ public class FFConfig {
         buffer.writeFloat(concreteDrainsWaterChance);
 
         buffer.writeBoolean(autoDetectWaterBiomes);
-        buffer.writeBoolean(autoDetectUnnamedRivers);
-        buffer.writeFloat(unnamedRiverHumidityThreshold);
-        buffer.writeFloat(unnamedRiverSurfaceWaterThreshold);
-        buffer.writeFloat(unnamedRiverMinDepth);
-        buffer.writeFloat(unnamedRiverMaxDepth);
         buffer.writeCollection(extraOceanBiomes, FriendlyByteBuf::writeUtf);
         buffer.writeCollection(extraRiverBiomes, FriendlyByteBuf::writeUtf);
         buffer.writeCollection(extraBeachBiomes, FriendlyByteBuf::writeUtf);
