@@ -28,6 +28,8 @@ public class FFConfig {
     public float rainRefillChance = 0.3f;
     public float oceanRiverSwampRefillChance = 1f;
     public float evaporationChanceV2 = 1f;
+    public boolean evaporationDaytimeOnly = true;
+    public boolean evaporationRequiresSky = true;
     public float evaporationNetherChance = 1f;
     public boolean printRandomTicks = false;
     public boolean hideFlowingTexture = true;
@@ -69,6 +71,11 @@ public class FFConfig {
     public float infiniteWaterBiomeDrainSurfaceChance = 0.1f;
     public int minWaterLevelForIce = 4;
     public boolean rainFillsWaterHigherV2 = false;
+    public int rainBfsCooldownTicks = 5;
+    public float rainSurfaceSpawnChance = 0.05f;
+    public int rainSurfaceSpawnLevel = 1;
+    public float rainLevelJumpChance = 0.05f;
+    public int infiniteBiomeRainFillMaxLevel = 6;
     public int minLavaLevelForObsidian = 6;
     public boolean fastBiomeRefillAtSeaLevelOnly = false;
     public int playerBlockDistanceForFlowing = 0;
@@ -160,6 +167,8 @@ public class FFConfig {
         rainRefillChance = buffer.readFloat();
         oceanRiverSwampRefillChance = buffer.readFloat();
         evaporationChanceV2 = buffer.readFloat();
+        evaporationDaytimeOnly = buffer.readBoolean();
+        evaporationRequiresSky = buffer.readBoolean();
         evaporationNetherChance = buffer.readFloat();
         printRandomTicks = buffer.readBoolean();
         hideFlowingTexture = buffer.readBoolean();
@@ -201,6 +210,11 @@ public class FFConfig {
         infiniteWaterBiomeDrainSurfaceChance = buffer.readFloat();
         minWaterLevelForIce = buffer.readVarInt();
         rainFillsWaterHigherV2 = buffer.readBoolean();
+        rainBfsCooldownTicks = buffer.readVarInt();
+        rainSurfaceSpawnChance = buffer.readFloat();
+        rainSurfaceSpawnLevel = buffer.readVarInt();
+        rainLevelJumpChance = buffer.readFloat();
+        infiniteBiomeRainFillMaxLevel = buffer.readVarInt();
         minLavaLevelForObsidian = buffer.readVarInt();
         fastBiomeRefillAtSeaLevelOnly = buffer.readBoolean();
         playerBlockDistanceForFlowing = buffer.readVarInt();
@@ -237,6 +251,8 @@ public class FFConfig {
         buffer.writeFloat(rainRefillChance);
         buffer.writeFloat(oceanRiverSwampRefillChance);
         buffer.writeFloat(evaporationChanceV2);
+        buffer.writeBoolean(evaporationDaytimeOnly);
+        buffer.writeBoolean(evaporationRequiresSky);
         buffer.writeFloat(evaporationNetherChance);
         buffer.writeBoolean(printRandomTicks);
         buffer.writeBoolean(hideFlowingTexture);
@@ -278,6 +294,11 @@ public class FFConfig {
         buffer.writeFloat(infiniteWaterBiomeDrainSurfaceChance);
         buffer.writeVarInt(minWaterLevelForIce);
         buffer.writeBoolean(rainFillsWaterHigherV2);
+        buffer.writeVarInt(rainBfsCooldownTicks);
+        buffer.writeFloat(rainSurfaceSpawnChance);
+        buffer.writeVarInt(rainSurfaceSpawnLevel);
+        buffer.writeFloat(rainLevelJumpChance);
+        buffer.writeVarInt(infiniteBiomeRainFillMaxLevel);
         buffer.writeVarInt(minLavaLevelForObsidian);
         buffer.writeBoolean(fastBiomeRefillAtSeaLevelOnly);
         buffer.writeVarInt(playerBlockDistanceForFlowing);

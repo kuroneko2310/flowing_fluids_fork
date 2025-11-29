@@ -33,7 +33,7 @@ public class AdaptiveTickScheduler {
     private static final int BASE_DELAY = 2; // Default waterTickDelay from config
     private static final int MAX_DELAY = 160; // Maximum delay for very stable fluids (extended)
     private static final int STABILITY_THRESHOLD = 3; // Fewer stable ticks needed to increase delay
-    private static final int RAIN_STABILIZATION_DELAY_TICKS = 3; // Delay BFS/equalization for freshly spawned rain water
+    private static final int DEFAULT_RAIN_STABILIZATION_DELAY_TICKS = 3; // Delay BFS/equalization for freshly spawned rain water
     private static final int SURGE_RELAX_TICKS = 1; // Frames to ignore flow change spikes
     private static final int SURGE_AMOUNT_THRESHOLD = 12; // Internal units considered a rapid increase
 
@@ -92,7 +92,7 @@ public class AdaptiveTickScheduler {
 
         boolean rainSpawnCandidate = level.isRaining() && level.canSeeSky(pos.above());
         if (rainSpawnCandidate && fluidAmount > data.lastAmount) {
-            data.rainBornCooldown = Math.max(data.rainBornCooldown, RAIN_STABILIZATION_DELAY_TICKS);
+            data.rainBornCooldown = Math.max(data.rainBornCooldown, getConfiguredRainCooldown());
         }
         if (data.rainBornCooldown > 0) {
             data.rainBornCooldown--;
@@ -349,6 +349,22 @@ public class AdaptiveTickScheduler {
         // Update chunk modification time
         ChunkPos chunkPos = new ChunkPos(pos);
         dimensionData.chunkModificationTimes.put(chunkPos, System.currentTimeMillis());
+    }
+
+    /**
+     * Marks a position as freshly spawned by rain to temporarily deprioritize BFS/equalization.
+     */
+    public static void markRainBorn(LevelAccessor level, BlockPos pos) {
+        SchedulerDimensionData dimensionData = getData(level);
+        FluidStabilityData data = dimensionData.stabilityMap.computeIfAbsent(pos.asLong(),
+                k -> new FluidStabilityData(0, 0, BASE_DELAY));
+        data.rainBornCooldown = Math.max(data.rainBornCooldown, getConfiguredRainCooldown());
+    }
+
+    private static int getConfiguredRainCooldown() {
+        int configured = FlowingFluids.config == null ? DEFAULT_RAIN_STABILIZATION_DELAY_TICKS
+                : FlowingFluids.config.rainBfsCooldownTicks;
+        return Math.max(1, configured);
     }
 
     /**
