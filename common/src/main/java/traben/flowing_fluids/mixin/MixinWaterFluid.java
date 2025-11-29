@@ -163,6 +163,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
         if (chance < FlowingFluids.config.evaporationChanceV2) {
             if (FlowingFluids.config.evaporationDaytimeOnly && !level.isDay()) return false;
             if (FlowingFluids.config.evaporationRequiresSky && !level.canSeeSky(blockPos.above())) return false;
+            if (level.isRainingAt(blockPos.above())) return false;
             // evaporate over time if not raining
             if (amount <= getDropOff(level) && level.getFluidState(blockPos.below()).isEmpty()) {
                 level.setBlockAndUpdate(blockPos, Blocks.AIR.defaultBlockState());
