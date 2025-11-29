@@ -29,8 +29,6 @@ public class FFConfig {
     public float oceanRiverSwampRefillChance = 1f;
     public float evaporationChanceV2 = 1f;
     public float evaporationNetherChance = 1f;
-    public int dryBiomeSurfaceCapHeightDiff = 2;
-    public float dryBiomeEvaporationBoost = 0.25f;
     public boolean printRandomTicks = false;
     public boolean hideFlowingTexture = true;
     public LiquidHeight fullLiquidHeight = LiquidHeight.REGULAR;
@@ -168,8 +166,6 @@ public class FFConfig {
         oceanRiverSwampRefillChance = buffer.readFloat();
         evaporationChanceV2 = buffer.readFloat();
         evaporationNetherChance = buffer.readFloat();
-        dryBiomeSurfaceCapHeightDiff = buffer.readVarInt();
-        dryBiomeEvaporationBoost = buffer.readFloat();
         printRandomTicks = buffer.readBoolean();
         hideFlowingTexture = buffer.readBoolean();
         fullLiquidHeight = buffer.readEnum(LiquidHeight.class);
@@ -252,8 +248,6 @@ public class FFConfig {
         buffer.writeFloat(oceanRiverSwampRefillChance);
         buffer.writeFloat(evaporationChanceV2);
         buffer.writeFloat(evaporationNetherChance);
-        buffer.writeVarInt(dryBiomeSurfaceCapHeightDiff);
-        buffer.writeFloat(dryBiomeEvaporationBoost);
         buffer.writeBoolean(printRandomTicks);
         buffer.writeBoolean(hideFlowingTexture);
         buffer.writeEnum(fullLiquidHeight);
