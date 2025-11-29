@@ -430,6 +430,14 @@ public class FFCommands {
                                         "Sets the chance of small minimum level water tiles evaporating during random ticks",
                                         a -> FlowingFluids.config.evaporationChanceV2 = a,
                                         () -> FlowingFluids.config.evaporationChanceV2)
+                                ).then(booleanCommand("water_evaporation_daytime_only",
+                                        "When enabled, surface puddles only evaporate during daytime to let night-time pools persist.",
+                                        a -> FlowingFluids.config.evaporationDaytimeOnly = a,
+                                        () -> FlowingFluids.config.evaporationDaytimeOnly)
+                                ).then(booleanCommand("water_evaporation_requires_sky",
+                                        "When enabled, puddles without direct sky access will not evaporate.",
+                                        a -> FlowingFluids.config.evaporationRequiresSky = a,
+                                        () -> FlowingFluids.config.evaporationRequiresSky)
                                 ).then(floatChanceCommand("water_nether_evaporation_chance",
                                         "Sets the chance of any water losing a level during random ticks in the nether",
                                         a -> FlowingFluids.config.evaporationNetherChance = a,
@@ -438,6 +446,10 @@ public class FFCommands {
                                         "Sets the chance of non-full water tiles increasing their level while its rains and they are open to the sky, during random ticks. This provides access to renewable water given enough time.\nNOTE: this will always be forcibly limited to 1/3rd of the current water_puddle_evaporation_chance setting otherwise water will endlessly fill the world during rain, this does effectively cap this value to 0.33",
                                         a -> FlowingFluids.config.rainRefillChance = a,
                                         () -> FlowingFluids.config.rainRefillChance)
+                                ).then(floatChanceCommand("rain_surface_spawn_chance",
+                                        "Chance for rain to spawn shallow flowing water on nearby ground tiles (puddles).",
+                                        a -> FlowingFluids.config.rainSurfaceSpawnChance = a,
+                                        () -> FlowingFluids.config.rainSurfaceSpawnChance)
                                 ).then(floatChanceCommand("water_infinite_biome_refill_chance",
                                         "Sets the chance of non-full water tiles increasing their level within: Oceans, Rivers, and Swamps, during random ticks. Additionally they must have a sky light level higher than 0, and be between y=0 and sea level. This provides time limited access to infinite water within these biomes, granted they are big enough and not drained too quickly",
                                         a -> FlowingFluids.config.oceanRiverSwampRefillChance = a,
@@ -465,6 +477,31 @@ public class FFCommands {
                                 ).then(booleanCommand("rain_fills_block_above",
                                         "Controls if rain will place new layers of water higher than the previous block of water was.",
                                         a -> FlowingFluids.config.rainFillsWaterHigherV2 = a, () -> FlowingFluids.config.rainFillsWaterHigherV2)
+                                ).then(Commands.literal("rain_surface_spawn_level")
+                                        .then(Commands.argument("level", IntegerArgumentType.integer(1, 8))
+                                                .executes(cont -> {
+                                                    FlowingFluids.config.rainSurfaceSpawnLevel = cont.getArgument("level", Integer.class);
+                                                    return messageAndSaveConfig(cont, "Rain surface spawn level set to " + FlowingFluids.config.rainSurfaceSpawnLevel);
+                                                })
+                                        )
+                                ).then(floatChanceCommand("rain_level_jump_chance",
+                                        "Chance for rain to give an additional small water level boost after a refill tick.",
+                                        a -> FlowingFluids.config.rainLevelJumpChance = a,
+                                        () -> FlowingFluids.config.rainLevelJumpChance)
+                                ).then(Commands.literal("rain_bfs_cooldown_ticks")
+                                        .then(Commands.argument("ticks", IntegerArgumentType.integer(1, 40))
+                                                .executes(cont -> {
+                                                    FlowingFluids.config.rainBfsCooldownTicks = cont.getArgument("ticks", Integer.class);
+                                                    return messageAndSaveConfig(cont, "Rain-spawned water BFS cooldown set to " + FlowingFluids.config.rainBfsCooldownTicks + " ticks.");
+                                                })
+                                        )
+                                ).then(Commands.literal("infinite_biome_rain_fill_max_level")
+                                        .then(Commands.argument("level", IntegerArgumentType.integer(1, 8))
+                                                .executes(cont -> {
+                                                    FlowingFluids.config.infiniteBiomeRainFillMaxLevel = cont.getArgument("level", Integer.class);
+                                                    return messageAndSaveConfig(cont, "Infinite biome rain fill cap set to " + FlowingFluids.config.infiniteBiomeRainFillMaxLevel);
+                                                })
+                                        )
                                 ).then(booleanCommand("only_infinite_biomes_at_sea_level",
                                         "Controls if the infinite biome refilling only happens to water at exactly sea level.",
                                         a -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly = a, () -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly)

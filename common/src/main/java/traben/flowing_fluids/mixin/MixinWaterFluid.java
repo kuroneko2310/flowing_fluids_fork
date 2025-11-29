@@ -2,6 +2,7 @@ package traben.flowing_fluids.mixin;
 
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.FluidTags;
@@ -21,6 +22,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 
@@ -64,6 +66,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
         isInfBiome = FFFluidUtils.matchInfiniteBiomes(level.getBiome(blockPos));
 
         int amount = fluidState.getAmount();
+        ff$trySpawnSurfaceWater(level, blockPos, randomSource);
         if (amount < 8) {
             if (ff$tryBiomeFillOrDrain(level, blockPos, amount, level.random.nextFloat())) {
                 if (FlowingFluids.config.printRandomTicks)
@@ -99,10 +102,14 @@ public abstract class MixinWaterFluid extends FlowingFluid {
     @Unique
     private boolean ff$tryRainFill(final Level level, final BlockPos blockPos, float chance) {
         //this evaporation limit is critical!!!! otherwise the water fills endlessly
+        int currentAmount = level.getFluidState(blockPos).getAmount();
+        boolean blockedByInfiniteBiome = isInfBiome && isWithinInfBiomeHeights
+                && currentAmount >= FlowingFluids.config.infiniteBiomeRainFillMaxLevel;
+
         if (chance < Math.min(FlowingFluids.config.rainRefillChance, FlowingFluids.config.evaporationChanceV2 / 3)
                 && level.isRaining()
                 && level.canSeeSky(blockPos.above())
-                && !(isInfBiome && isWithinInfBiomeHeights) // very important with fill up behaviour
+                && !blockedByInfiniteBiome // very important with fill up behaviour
                 && !level.getBiome(blockPos).is(BiomeTags.HAS_VILLAGE_DESERT)
         ) {
             int amount = level.isThundering() ? 2 : 1;
@@ -110,6 +117,8 @@ public abstract class MixinWaterFluid extends FlowingFluid {
                         level, blockPos, amount, this, 40, FlowingFluids.config.rainFillsWaterHigherV2, false);
             if (result.first() != amount) {
                 result.second().run();
+                AdaptiveTickScheduler.markRainBorn(level, blockPos);
+                ff$maybeApplyRainJump(level, blockPos);
                 return true;
             }
         }
@@ -152,6 +161,8 @@ public abstract class MixinWaterFluid extends FlowingFluid {
     @Unique
     private boolean ff$tryEvaporate(final Level level, final BlockPos blockPos, int amount, float chance) {
         if (chance < FlowingFluids.config.evaporationChanceV2) {
+            if (FlowingFluids.config.evaporationDaytimeOnly && !level.isDay()) return false;
+            if (FlowingFluids.config.evaporationRequiresSky && !level.canSeeSky(blockPos.above())) return false;
             // evaporate over time if not raining
             if (amount <= getDropOff(level) && level.getFluidState(blockPos.below()).isEmpty()) {
                 level.setBlockAndUpdate(blockPos, Blocks.AIR.defaultBlockState());
@@ -159,6 +170,44 @@ public abstract class MixinWaterFluid extends FlowingFluid {
             }
         }
         return false;
+    }
+
+    @Unique
+    private void ff$maybeApplyRainJump(Level level, BlockPos blockPos) {
+        if (FlowingFluids.config.rainLevelJumpChance <= 0) return;
+        if (level.random.nextFloat() >= FlowingFluids.config.rainLevelJumpChance) return;
+        int extra = Math.max(1, FlowingFluids.config.rainSurfaceSpawnLevel);
+        var jump = FFFluidUtils.placeConnectedFluidAmountAndPlaceAction(level, blockPos, extra, this, 40,
+                FlowingFluids.config.rainFillsWaterHigherV2, false);
+        if (jump.second() != null && jump.first() != extra) {
+            jump.second().run();
+            AdaptiveTickScheduler.markRainBorn(level, blockPos);
+        }
+    }
+
+    @Unique
+    private void ff$trySpawnSurfaceWater(Level level, BlockPos origin, RandomSource randomSource) {
+        if (!level.isRaining() || FlowingFluids.config.rainSurfaceSpawnChance <= 0) return;
+        if (!level.canSeeSky(origin.above())) return;
+        if (randomSource.nextFloat() >= FlowingFluids.config.rainSurfaceSpawnChance) return;
+
+        Direction[] shuffled = FFFluidUtils.getCardinalsShuffle(randomSource);
+        for (Direction direction : shuffled) {
+            BlockPos candidate = origin.relative(direction);
+            if (!level.canSeeSky(candidate.above())) continue;
+            var candidateFluid = level.getFluidState(candidate);
+            if (!candidateFluid.isEmpty()) continue;
+            var candidateState = level.getBlockState(candidate);
+            if (!candidateState.isAir() && !candidateState.canBeReplaced(this)) continue;
+            var belowState = level.getBlockState(candidate.below());
+            if (belowState.isAir()) continue;
+
+            int spawnAmount = Mth.clamp(FlowingFluids.config.rainSurfaceSpawnLevel, 1, 4);
+            if (FFFluidUtils.setFluidStateAtPosToNewAmount(level, candidate, this, spawnAmount)) {
+                AdaptiveTickScheduler.markRainBorn(level, candidate);
+                return;
+            }
+        }
     }
 
 
