@@ -17,7 +17,6 @@
     "MixinDispenserBlock",
     "MixinEntityBreeding",
     "MixinFarmBlock",
-    "MixinFlowingFluidBlock",
     "MixinFlowingFluid",
     "MixinIceCreationCondition",
     "MixinKelpPlantBlock",
@@ -26,6 +25,7 @@
     "MixinPlayerConnect",
     "MixinSeaGrassBlock",
     "MixinTallSeaGrassBlock",
+    "MixinFlowingFluidBlock",
     "MixinWaterFluid",
     "sodium.MixinFluidRenderer2"
   ],
