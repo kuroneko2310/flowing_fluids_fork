@@ -190,23 +190,28 @@ public abstract class MixinWaterFluid extends FlowingFluid {
     private void ff$trySpawnSurfaceWater(Level level, BlockPos origin, RandomSource randomSource) {
         if (!level.isRaining() || FlowingFluids.config.rainSurfaceSpawnChance <= 0) return;
         if (!level.canSeeSky(origin.above())) return;
-        if (randomSource.nextFloat() >= FlowingFluids.config.rainSurfaceSpawnChance) return;
+        int maxSpawnLevel = Mth.clamp(FlowingFluids.config.rainSurfaceSpawnMaxLevel, 1, 8);
+        int attempts = Mth.clamp(FlowingFluids.config.rainSurfaceSpawnTries, 1, 16);
 
-        Direction[] shuffled = FFFluidUtils.getCardinalsShuffle(randomSource);
-        for (Direction direction : shuffled) {
-            BlockPos candidate = origin.relative(direction);
-            if (!level.canSeeSky(candidate.above())) continue;
-            var candidateFluid = level.getFluidState(candidate);
-            if (!candidateFluid.isEmpty()) continue;
-            var candidateState = level.getBlockState(candidate);
-            if (!candidateState.isAir() && !candidateState.canBeReplaced(this)) continue;
-            var belowState = level.getBlockState(candidate.below());
-            if (belowState.isAir()) continue;
+        for (int attempt = 0; attempt < attempts; attempt++) {
+            if (randomSource.nextFloat() >= FlowingFluids.config.rainSurfaceSpawnChance) continue;
 
-            int spawnAmount = Mth.clamp(FlowingFluids.config.rainSurfaceSpawnLevel, 1, 4);
-            if (FFFluidUtils.setFluidStateAtPosToNewAmount(level, candidate, this, spawnAmount)) {
-                AdaptiveTickScheduler.markRainBorn(level, candidate);
-                return;
+            Direction[] shuffled = FFFluidUtils.getCardinalsShuffle(randomSource);
+            for (Direction direction : shuffled) {
+                BlockPos candidate = origin.relative(direction);
+                if (!level.canSeeSky(candidate.above())) continue;
+                var candidateFluid = level.getFluidState(candidate);
+                if (!candidateFluid.isEmpty()) continue;
+                var candidateState = level.getBlockState(candidate);
+                if (!candidateState.isAir() && !candidateState.canBeReplaced(this)) continue;
+                var belowState = level.getBlockState(candidate.below());
+                if (belowState.isAir()) continue;
+
+                int spawnAmount = Mth.clamp(FlowingFluids.config.rainSurfaceSpawnLevel, 1, maxSpawnLevel);
+                if (FFFluidUtils.setFluidStateAtPosToNewAmount(level, candidate, this, spawnAmount)) {
+                    AdaptiveTickScheduler.markRainBorn(level, candidate);
+                    return;
+                }
             }
         }
     }

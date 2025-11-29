@@ -484,6 +484,20 @@ public class FFCommands {
                                                     return messageAndSaveConfig(cont, "Rain surface spawn level set to " + FlowingFluids.config.rainSurfaceSpawnLevel);
                                                 })
                                         )
+                                ).then(Commands.literal("rain_surface_spawn_max_level")
+                                        .then(Commands.argument("level", IntegerArgumentType.integer(1, 8))
+                                                .executes(cont -> {
+                                                    FlowingFluids.config.rainSurfaceSpawnMaxLevel = cont.getArgument("level", Integer.class);
+                                                    return messageAndSaveConfig(cont, "Rain surface spawn maximum level set to " + FlowingFluids.config.rainSurfaceSpawnMaxLevel);
+                                                })
+                                        )
+                                ).then(Commands.literal("rain_surface_spawn_tries")
+                                        .then(Commands.argument("tries", IntegerArgumentType.integer(1, 16))
+                                                .executes(cont -> {
+                                                    FlowingFluids.config.rainSurfaceSpawnTries = cont.getArgument("tries", Integer.class);
+                                                    return messageAndSaveConfig(cont, "Rain surface spawn attempts per tick set to " + FlowingFluids.config.rainSurfaceSpawnTries);
+                                                })
+                                        )
                                 ).then(floatChanceCommand("rain_level_jump_chance",
                                         "Chance for rain to give an additional small water level boost after a refill tick.",
                                         a -> FlowingFluids.config.rainLevelJumpChance = a,
