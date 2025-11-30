@@ -232,7 +232,9 @@ public abstract class MixinWaterFluid extends FlowingFluid {
     @Inject(method = "getSlopeFindDistance", at = @At(value = "RETURN"), cancellable = true)
     private void ff$modifySlopeDistance(final LevelReader level, final CallbackInfoReturnable<Integer> cir) {
         if (FlowingFluids.config.enableMod && FlowingFluids.config.isFluidAllowed(this)) {
-            cir.setReturnValue(Mth.clamp(FlowingFluids.config.waterFlowDistance, 1, 8));
+            int configured = FlowingFluids.config.waterFlowDistance;
+            int maxDistance = Math.max(1, FlowingFluids.config.maxWaterFlowDistance);
+            cir.setReturnValue(Mth.clamp(configured, 1, maxDistance));
         }
     }
 

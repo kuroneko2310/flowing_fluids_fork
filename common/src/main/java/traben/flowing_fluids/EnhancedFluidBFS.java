@@ -192,20 +192,41 @@ public class EnhancedFluidBFS {
                 }
             }
 
+            int clampedDistance = Math.max(1, Math.min(FlowingFluids.config.waterFlowDistance,
+                Math.max(FlowingFluids.config.maxWaterFlowDistance, FlowingFluids.config.waterFlowDistance)));
+            float horizontalScale = clampedDistance <= 4 ? 1.0f : clampedDistance / 4.0f;
+            int scaledSupplement = Math.min(
+                FlowingFluids.config.horizontalSupplementExtraNodes * 3,
+                Math.round(FlowingFluids.config.horizontalSupplementExtraNodes * horizontalScale)
+            );
+
             int horizontalBudget = Math.min(
-                FlowingFluids.config.horizontalSupplementExtraNodes,
-                Math.max(0, effectiveMaxNodes + FlowingFluids.config.horizontalSupplementExtraNodes - nodesExplored)
+                scaledSupplement,
+                Math.max(0, effectiveMaxNodes + scaledSupplement - nodesExplored)
             );
             if (horizontalBudget > 0) {
                 nodesExplored += runHorizontalSupplement(level, startFluid, visited, visitedOrder, equalizedPositions,
                     equalizedKeys, reusablePos, horizontalBudget, FlowingFluids.config.horizontalSupplementDepth);
             }
 
-            // 追加の掃き出し: 雨など一時的な落下で流入が途絶えた場合でも、
-            // 一度でも段差を踏んだ探索では訪問済みセル全体を均衡候補に加える。
-            // これにより段差の手前・奥に残った水をもう一段深く平均化し、取り残しを防ぐ。
-            if (dropEncountered) {
-                for (long visitedKey : visitedOrder) {
+            int minVisitedAmount = startAmount;
+            int maxVisitedAmount = startAmount;
+            for (int i = 0; i < visitedOrder.size(); i++) {
+                long visitedKey = visitedOrder.getLong(i);
+                reusablePos.set(BlockPos.getX(visitedKey), BlockPos.getY(visitedKey), BlockPos.getZ(visitedKey));
+                int amount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
+                minVisitedAmount = Math.min(minVisitedAmount, amount);
+                maxVisitedAmount = Math.max(maxVisitedAmount, amount);
+            }
+
+            boolean hasWideVariance = maxVisitedAmount - minVisitedAmount >= 2;
+
+            // 追加の掃き出し: 段差を踏んだ探索や水位差が広がった経路では、
+            // 訪問済みセルを一括で均衡候補に追加し、離れた水塊同士の高さを早めに平均化する。
+            // これにより水平な長距離水路でも流れが止まりにくくなる。
+            if (dropEncountered || hasWideVariance) {
+                for (int i = 0; i < visitedOrder.size(); i++) {
+                    long visitedKey = visitedOrder.getLong(i);
                     reusablePos.set(BlockPos.getX(visitedKey), BlockPos.getY(visitedKey), BlockPos.getZ(visitedKey));
                     addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
                 }
@@ -261,8 +282,10 @@ public class EnhancedFluidBFS {
      * Determines if two positions should equalize their fluid amounts.
      */
     private static boolean shouldEqualize(int amount1, int amount2) {
-        // Equalize if difference is significant (> 2 internal units)
-        return Math.abs(amount1 - amount2) > 2;
+        // Equalize if difference is meaningful (>= 2 internal units)
+        // This widens leveling to cover typical canal heights (e.g., 3 vs 1),
+        // preventing distant segments from staying overfilled after long flows.
+        return Math.abs(amount1 - amount2) >= 2;
     }
 
     /**
@@ -297,11 +320,13 @@ public class EnhancedFluidBFS {
      * 例: 距離6では 4/6 ≒0.67 倍に抑制し、長距離設定での追加探索コストを抑える。
      */
     private static int getDistanceScaledMomentumCap() {
-        int distance = Math.max(FlowingFluids.config.waterFlowDistance, 1);
+        int configured = Math.max(FlowingFluids.config.waterFlowDistance, 1);
+        int distance = Math.min(configured, Math.max(FlowingFluids.config.maxWaterFlowDistance, configured));
         if (distance <= 4) {
             return MAX_MOMENTUM_BONUS;
         }
-        int scaled = Math.round(MAX_MOMENTUM_BONUS * (4.0f / distance));
+        float scale = Math.max(0.5f, 4.0f / distance);
+        int scaled = Math.round(MAX_MOMENTUM_BONUS * scale);
         return Math.max(32, scaled);
     }
 

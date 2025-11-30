@@ -286,11 +286,13 @@ public class AdaptiveTickScheduler {
      * 4以下では1.0に固定し、短距離設定で過剰に予算が膨らまないようにする。
      */
     private static float getDistanceBudgetMultiplier() {
-        int distance = Math.max(FlowingFluids.config.waterFlowDistance, 1);
+        int configured = Math.max(FlowingFluids.config.waterFlowDistance, 1);
+        int distance = Math.min(configured, Math.max(FlowingFluids.config.maxWaterFlowDistance, configured));
         if (distance <= 4) {
             return 1.0f;
         }
-        return 4.0f / distance;
+        // Keep a 50% floor so long canals are not starved of BFS budget even at extended distances.
+        return Math.max(0.5f, 4.0f / distance);
     }
 
     /**

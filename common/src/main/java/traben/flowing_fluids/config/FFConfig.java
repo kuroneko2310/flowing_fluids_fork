@@ -46,8 +46,8 @@ public class FFConfig {
     public int randomTickLevelingDistance = 32;
 
     // Advanced water flow distance settings
-    public int maxWaterFlowDistance = 8; // Maximum horizontal flow distance (can be higher than base flow distance)
-    public int bfsMaxSearchDistance = 16; // Maximum BFS search distance for equalization
+    public int maxWaterFlowDistance = 16; // Maximum horizontal flow distance (can be higher than base flow distance)
+    public int bfsMaxSearchDistance = 20; // Maximum BFS search distance for equalization
     public float slopeFindDistanceMultiplier = 1.0f; // Multiplier for slope finding distance (1.0 = default, higher = farther search)
     public boolean enableAdaptiveFlowDistance = true; // Adjust flow distance based on terrain type
     public int riverFlowDistance = 64; // Flow distance in river biomes

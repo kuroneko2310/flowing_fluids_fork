@@ -11,7 +11,7 @@
 
 ### 基本設定
 
-#### `maxWaterFlowDistance` (デフォルト: 8)
+#### `maxWaterFlowDistance` (デフォルト: 16)
 - **説明**: 水が水平方向に流れることができる最大距離（ブロック単位）
 - **範囲**: 1-256
 - **影響**: 大きいほど水が遠くまで流れますが、パフォーマンスに影響
@@ -20,7 +20,7 @@
   /flowing_fluids settings behaviour advanced_flow_distances max_water_flow_distance 16
   ```
 
-#### `bfsMaxSearchDistance` (デフォルト: 16)
+#### `bfsMaxSearchDistance` (デフォルト: 20)
 - **説明**: BFS（幅優先探索）アルゴリズムが水の平衡化を探索する最大距離
 - **範囲**: 4-128
 - **影響**: 大きいほど複雑な水流パターンを正確に処理しますが、CPU使用率が上昇
@@ -28,6 +28,10 @@
   ```
   /flowing_fluids settings behaviour advanced_flow_distances bfs_max_search_distance 32
   ```
+
+**長距離向け最適化のポイント**:
+- `maxWaterFlowDistance` を伸ばしても、探索予算は 50% までしか絞られないため、湖や長い運河の排水が途中で止まりにくくなります。
+- BFS の水平補助探索は流動距離に応じて自動で拡張され、遠方の水位も平均化に巻き込みやすくなりました。
 
 #### `slopeFindDistanceMultiplier` (デフォルト: 1.0)
 - **説明**: 傾斜を見つけるための探索距離の倍率
@@ -106,11 +110,23 @@
   ```
 
 #### `enableDistanceBasedOptimization` (デフォルト: true)
-- **説明**: 距離に基づく階層的最適化を有効化
-- **効果**:
-  - 遠距離の水流は低頻度で更新
-  - 50-70%のtick削減（64ブロック以上の距離で）
-  - 視覚的な影響は最小限
+- **説明**: 流れ元からの推定距離に応じて水流の更新頻度を段階的に下げる階層的最適化。近くは毎tick、遠くほど間引きます。
+- **動作仕様**:
+  - 距離別の更新間隔（flowDistance は流路上のブロック距離を指します）:
+    - 0–4 ブロック: 毎tick
+    - 5–16 ブロック: 2tick に 1 回
+    - 17–32 ブロック: 4tick に 1 回
+    - 33–64 ブロック: 8tick に 1 回
+    - 65 ブロック以上: 10tick に 1 回
+  - いずれの距離でも、プレイヤーが 32 ブロック以内にいる場合は常に毎tick更新に昇格。
+  - 更新タイミングは座標ハッシュで散らし、同じ距離帯の水流が同時に大量更新しないよう負荷を平準化。
+  - `bfsMaxSearchDistance` や `riverFlowDistance` など距離拡張系の設定と組み合わせても安全にスケールさせることを目的としています。
+- **メリット**:
+  - 64 ブロックを超える長距離水路で 50–70% の tick 削減を実現しつつ、近景の見た目や操作感は維持。
+  - プレイヤー接近時は即座に通常頻度に戻るため、探索や建築時の遅延を抑制。
+- **使いどころと注意**:
+  - 運河・排水路など長距離で流れを維持したい場合はオン推奨。`canalFlowDistance` や `bfs_max_search_distance` を伸ばす際の前提設定として想定されています。
+  - 水量変化をフレーム単位で厳密に観測したい検証用途ではオフにすると全距離毎tick更新になります（負荷増に注意）。
 - **例**:
   ```
   /flowing_fluids settings behaviour advanced_flow_distances enable_distance_based_optimization on
@@ -303,7 +319,7 @@ BFS訪問ノード数: 234,521 (平均: 61.0 ノード/操作)
 ```
 /flowing_fluids settings behaviour advanced_flow_distances enable_adaptive_flow_distance on
 /flowing_fluids settings behaviour advanced_flow_distances river_flow_distance 64
-/flowing_fluids settings behaviour advanced_flow_distances bfs_max_search_distance 24
+/flowing_fluids settings behaviour advanced_flow_distances bfs_max_search_distance 20
 ```
 
 ---
@@ -410,7 +426,7 @@ BFS訪問ノード数: 234,521 (平均: 61.0 ノード/操作)
 {
   "waterFlowDistance": 4,
   "maxWaterFlowDistance": 16,
-  "bfsMaxSearchDistance": 24,
+  "bfsMaxSearchDistance": 20,
   "slopeFindDistanceMultiplier": 1.0,
   "enableAdaptiveFlowDistance": true,
   "riverFlowDistance": 64,
