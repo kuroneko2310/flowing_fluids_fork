@@ -53,6 +53,14 @@ public class FFConfig {
     public int riverFlowDistance = 64; // Flow distance in river biomes
     public int oceanFlowDistance = 128; // Flow distance in ocean biomes
     public int canalFlowDistance = 32; // Flow distance for artificial canals (flat terrain)
+    public int forcedEqualizationStableTicks = 200; // Stable ticks before a forced lightweight recheck is scheduled
+    public int forcedEqualizationCooldownTicks = 100; // Cooldown between forced rechecks per column
+    public float forcedEqualizationBudgetFactor = 0.35f; // Budget multiplier when running forced lightweight checks
+    public int horizontalSupplementDepth = 12; // Depth for horizontal-only exploration sweeps
+    public int horizontalSupplementExtraNodes = 256; // Additional nodes budget for horizontal sweeps
+    public int clusterDiffusionHeightThreshold = 6; // Minimum height delta to trigger cluster diffusion
+    public int clusterDiffusionMaxCluster = 96; // Maximum positions to include in a cluster diffusion pass
+    public float clusterDiffusionBudgetPortion = 0.5f; // Portion of remaining BFS budget usable for diffusion
 
     // Performance monitoring settings
     public boolean enablePerformanceMonitoring = false; // Enable detailed performance tracking

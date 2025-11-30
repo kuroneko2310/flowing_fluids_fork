@@ -1,5 +1,6 @@
 package traben.flowing_fluids;
 
+import it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -55,6 +56,9 @@ public class EnhancedFluidBFS {
     private static final Direction[] DEFAULT_DIRECTIONS = new Direction[]{
         Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
     };
+    private static final Direction[] HORIZONTAL_DIRECTIONS = new Direction[]{
+        Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST
+    };
 
     // Downhill acceleration bonus (simulates momentum gained from drops)
     private static final int MAX_MOMENTUM_BONUS = 256;
@@ -83,10 +87,19 @@ public class EnhancedFluidBFS {
             return equalizedPositions; // No fluid to equalize
         }
 
-        // Check equilibrium index - skip if stable
         int startAmount = FluidSpatialGrid.getFluidAmount(level, startPos);
-        if (!AdaptiveTickScheduler.shouldRunBFS(level, startPos, startAmount)) {
+        boolean forcedRecheck = AdaptiveTickScheduler.consumeForcedRecheck(level, startPos);
+        boolean shouldRunBfs = AdaptiveTickScheduler.shouldRunBFS(level, startPos, startAmount);
+        if (!shouldRunBfs && !forcedRecheck) {
             return equalizedPositions; // Too stable, skip BFS
+        }
+
+        int effectiveMaxDepth = maxDepth;
+        int effectiveMaxNodes = maxNodes;
+        if (forcedRecheck && !shouldRunBfs) {
+            float budgetFactor = Math.max(0.1f, FlowingFluids.config.forcedEqualizationBudgetFactor);
+            effectiveMaxDepth = Math.max(8, Math.round(maxDepth * budgetFactor));
+            effectiveMaxNodes = Math.max(128, Math.round(maxNodes * budgetFactor));
         }
 
         // OPTIMIZATION: Check if this position is already being processed
@@ -124,7 +137,7 @@ public class EnhancedFluidBFS {
             // Get or estimate gradient vector for weighted search
             Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(level, chunkPos, startPos);
 
-            while (!queue.isEmpty() && nodesExplored < maxNodes + momentumBudget && visited.size() < maxDepth) {
+            while (!queue.isEmpty() && nodesExplored < effectiveMaxNodes + momentumBudget && visited.size() < effectiveMaxDepth) {
                 long currentLong = queue.dequeueLong();
                 int currentX = BlockPos.getX(currentLong);
                 int currentY = BlockPos.getY(currentLong);
@@ -179,6 +192,15 @@ public class EnhancedFluidBFS {
                 }
             }
 
+            int horizontalBudget = Math.min(
+                FlowingFluids.config.horizontalSupplementExtraNodes,
+                Math.max(0, effectiveMaxNodes + FlowingFluids.config.horizontalSupplementExtraNodes - nodesExplored)
+            );
+            if (horizontalBudget > 0) {
+                nodesExplored += runHorizontalSupplement(level, startFluid, visited, visitedOrder, equalizedPositions,
+                    equalizedKeys, reusablePos, horizontalBudget, FlowingFluids.config.horizontalSupplementDepth);
+            }
+
             // 追加の掃き出し: 雨など一時的な落下で流入が途絶えた場合でも、
             // 一度でも段差を踏んだ探索では訪問済みセル全体を均衡候補に加える。
             // これにより段差の手前・奥に残った水をもう一段深く平均化し、取り残しを防ぐ。
@@ -187,6 +209,14 @@ public class EnhancedFluidBFS {
                     reusablePos.set(BlockPos.getX(visitedKey), BlockPos.getY(visitedKey), BlockPos.getZ(visitedKey));
                     addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
                 }
+            }
+
+            int diffusionBudget = Math.max(0, (int) Math.round(
+                (effectiveMaxNodes - nodesExplored) * FlowingFluids.config.clusterDiffusionBudgetPortion));
+            if (diffusionBudget > 0) {
+                applyClusterDiffusion(level, startFluid, equalizedPositions, diffusionBudget,
+                    FlowingFluids.config.clusterDiffusionHeightThreshold,
+                    FlowingFluids.config.clusterDiffusionMaxCluster);
             }
 
             return equalizedPositions;
@@ -416,6 +446,188 @@ public class EnhancedFluidBFS {
     private static boolean canAcceptFluid(BlockGetter level, BlockPos pos) {
         BlockState state = level.getBlockState(pos);
         return state.isAir() || state.canBeReplaced() || !level.getFluidState(pos).isEmpty();
+    }
+
+    private static int runHorizontalSupplement(Level level, FluidState startFluid, LongOpenHashSet visited,
+                                               LongArrayList visitedOrder, List<BlockPos> equalizedPositions,
+                                               LongOpenHashSet equalizedKeys, BlockPos.MutableBlockPos reusablePos,
+                                               int nodeBudget, int depthLimit) {
+        if (nodeBudget <= 0 || depthLimit <= 0) {
+            return 0;
+        }
+
+        LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+        IntArrayFIFOQueue depthQueue = new IntArrayFIFOQueue();
+
+        for (BlockPos seed : equalizedPositions) {
+            queue.enqueue(seed.asLong());
+            depthQueue.enqueue(0);
+        }
+
+        int addedNodes = 0;
+        while (!queue.isEmpty() && addedNodes < nodeBudget) {
+            long current = queue.dequeueLong();
+            int depth = depthQueue.dequeueInt();
+            int currentX = BlockPos.getX(current);
+            int currentY = BlockPos.getY(current);
+            int currentZ = BlockPos.getZ(current);
+            reusablePos.set(currentX, currentY, currentZ);
+            int currentAmount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
+
+            for (Direction dir : HORIZONTAL_DIRECTIONS) {
+                if (depth >= depthLimit) {
+                    break;
+                }
+
+                int neighborX = currentX + dir.getStepX();
+                int neighborZ = currentZ + dir.getStepZ();
+                long neighborLong = BlockPos.asLong(neighborX, currentY, neighborZ);
+
+                if (visited.contains(neighborLong)) {
+                    continue;
+                }
+
+                reusablePos.set(neighborX, currentY, neighborZ);
+                BlockState neighborState = level.getBlockState(reusablePos);
+                FluidState neighborFluidState = neighborState.getFluidState();
+
+                if (canIncludeInBFS(neighborState, neighborFluidState, startFluid)) {
+                    visited.add(neighborLong);
+                    visitedOrder.add(neighborLong);
+                    queue.enqueue(neighborLong);
+                    depthQueue.enqueue(depth + 1);
+                    addedNodes++;
+
+                    int neighborAmount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
+                    if (shouldEqualize(currentAmount, neighborAmount)) {
+                        addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
+                        reusablePos.set(currentX, currentY, currentZ);
+                        addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
+                        reusablePos.set(neighborX, currentY, neighborZ);
+                    }
+
+                    if (addedNodes >= nodeBudget) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return addedNodes;
+    }
+
+    private static void applyClusterDiffusion(Level level, FluidState sourceFluid, List<BlockPos> equalizedPositions,
+                                              int budget, int heightThreshold, int maxClusterSize) {
+        if (budget <= 0 || heightThreshold <= 0 || maxClusterSize <= 1) {
+            return;
+        }
+
+        LongOpenHashSet seen = new LongOpenHashSet();
+
+        for (BlockPos pos : equalizedPositions) {
+            long startKey = pos.asLong();
+            if (seen.contains(startKey)) {
+                continue;
+            }
+
+            FluidState originState = level.getFluidState(pos);
+            if (originState.isEmpty() || originState.getType() != sourceFluid.getType()) {
+                continue;
+            }
+
+            List<BlockPos> cluster = new ArrayList<>();
+            LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+            queue.enqueue(startKey);
+
+            while (!queue.isEmpty() && cluster.size() < maxClusterSize) {
+                long current = queue.dequeueLong();
+                BlockPos currentPos = new BlockPos(BlockPos.getX(current), BlockPos.getY(current), BlockPos.getZ(current));
+                if (!seen.add(current)) {
+                    continue;
+                }
+                FluidState fluidState = level.getFluidState(currentPos);
+                if (fluidState.isEmpty() || fluidState.getType() != sourceFluid.getType()) {
+                    continue;
+                }
+
+                cluster.add(currentPos);
+
+                for (Direction dir : Direction.values()) {
+                    BlockPos neighbor = currentPos.relative(dir);
+                    long neighborKey = neighbor.asLong();
+                    if (seen.contains(neighborKey)) {
+                        continue;
+                    }
+                    FluidState neighborState = level.getFluidState(neighbor);
+                    if (!neighborState.isEmpty() && neighborState.getType() == sourceFluid.getType()) {
+                        queue.enqueue(neighborKey);
+                    }
+                }
+            }
+
+            if (cluster.size() < 2) {
+                continue;
+            }
+
+            int minAmount = Integer.MAX_VALUE;
+            int maxAmount = Integer.MIN_VALUE;
+            int total = 0;
+            for (BlockPos clusterPos : cluster) {
+                int amount = FluidSpatialGrid.getFluidAmount(level, clusterPos);
+                minAmount = Math.min(minAmount, amount);
+                maxAmount = Math.max(maxAmount, amount);
+                total += amount;
+            }
+
+            if (maxAmount - minAmount < heightThreshold) {
+                continue;
+            }
+
+            int average = total / cluster.size();
+            int totalExcess = 0;
+            for (BlockPos clusterPos : cluster) {
+                int amount = FluidSpatialGrid.getFluidAmount(level, clusterPos);
+                int delta = amount - average;
+                if (delta > 0) {
+                    totalExcess += delta;
+                }
+            }
+
+            if (totalExcess == 0) {
+                continue;
+            }
+
+            int allowedTransfer = Math.min(budget, totalExcess);
+            float ratio = allowedTransfer / (float) totalExcess;
+
+            int[] newAmounts = new int[cluster.size()];
+            int newTotal = 0;
+
+            for (int i = 0; i < cluster.size(); i++) {
+                BlockPos clusterPos = cluster.get(i);
+                int amount = FluidSpatialGrid.getFluidAmount(level, clusterPos);
+                int delta = amount - average;
+                int adjustment = Math.round(Math.abs(delta) * ratio);
+                int newAmount = delta >= 0 ? amount - adjustment : amount + adjustment;
+                newAmounts[i] = Math.max(0, newAmount);
+                newTotal += newAmounts[i];
+            }
+
+            int correction = total - newTotal;
+            if (correction != 0 && !cluster.isEmpty()) {
+                newAmounts[0] = Math.max(0, newAmounts[0] + correction);
+            }
+
+            for (int i = 0; i < cluster.size(); i++) {
+                BlockPos clusterPos = cluster.get(i);
+                FluidTickBuffer.bufferFluidChange(level, clusterPos, newAmounts[i], newAmounts[i] > 0, sourceFluid.getType());
+            }
+
+            budget -= allowedTransfer;
+            if (budget <= 0) {
+                break;
+            }
+        }
     }
 
     /**
