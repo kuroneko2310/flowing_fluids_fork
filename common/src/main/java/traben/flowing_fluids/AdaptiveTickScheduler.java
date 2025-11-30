@@ -36,6 +36,7 @@ public class AdaptiveTickScheduler {
     private static final int DEFAULT_RAIN_STABILIZATION_DELAY_TICKS = 3; // Delay BFS/equalization for freshly spawned rain water
     private static final int SURGE_RELAX_TICKS = 1; // Frames to ignore flow change spikes
     private static final int SURGE_AMOUNT_THRESHOLD = 12; // Internal units considered a rapid increase
+    private static final int MIN_FORCED_RECHECK_STABLE_TICKS = 40; // Safety lower bound
 
     // Equilibrium thresholds
     private static final float EQUILIBRIUM_STABLE_THRESHOLD = 0.08f; // E < 0.08 → no tick
@@ -166,6 +167,12 @@ public class AdaptiveTickScheduler {
         // Combine components
         float equilibriumIndex = heightDiff + gradientChange + flowChangeRate;
 
+        if (data != null) {
+            data.stableTicks = equilibriumIndex <= EQUILIBRIUM_BFS_THRESHOLD
+                ? data.stableTicks + 1
+                : 0;
+        }
+
         if (FlowingFluids.LOG.isDebugEnabled()) {
             FlowingFluids.LOG.debug("[AdaptiveTickScheduler] Recalculated E at {} -> diff={}, gradientChange={}, flowChange={}, eq={} (hash={})",
                 pos, heightDiff, gradientChange, flowChangeRate, equilibriumIndex, neighborHash);
@@ -203,7 +210,24 @@ public class AdaptiveTickScheduler {
         }
 
         if (equilibriumIndex <= EQUILIBRIUM_BFS_THRESHOLD) {
+            if (data != null) {
+                int stableTicks = data.stableTicks;
+                int threshold = Math.max(MIN_FORCED_RECHECK_STABLE_TICKS,
+                    FlowingFluids.config.forcedEqualizationStableTicks);
+                long cooldownTicks = Math.max(FlowingFluids.config.forcedEqualizationCooldownTicks, threshold / 2);
+                long gameTime = level.getGameTime();
+                boolean cooledDown = gameTime - data.lastForcedRecheckTick >= cooldownTicks;
+                if (stableTicks >= threshold && cooledDown) {
+                    data.pendingForcedRecheck = true;
+                    data.lastForcedRecheckTick = gameTime;
+                    data.stableTicks = 0;
+                }
+            }
             return false;
+        }
+
+        if (data != null) {
+            data.pendingForcedRecheck = false;
         }
 
         float distanceMultiplier = getDistanceBudgetMultiplier();
@@ -215,6 +239,26 @@ public class AdaptiveTickScheduler {
         }
 
         return !throttled;
+    }
+
+    /**
+     * Consumes a pending forced recheck flag for long-stable fluids.
+     */
+    public static boolean consumeForcedRecheck(LevelAccessor level, BlockPos pos) {
+        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        if (data == null || !data.pendingForcedRecheck) {
+            return false;
+        }
+        data.pendingForcedRecheck = false;
+        return true;
+    }
+
+    /**
+     * Returns the last calculated equilibrium index, or -1 if unknown.
+     */
+    public static float getLastEquilibriumIndex(LevelAccessor level, BlockPos pos) {
+        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        return data == null ? -1f : data.lastEquilibriumIndex;
     }
 
     /**
@@ -494,6 +538,9 @@ public class AdaptiveTickScheduler {
         int neighborHash; // Hash of neighbor states for cache validation
         int rainBornCooldown; // Ticks to skip BFS/equalization after rain generation
         int surgeRelaxTicks; // Temporary relaxation when large inflow detected
+        int stableTicks; // Consecutive stable evaluations
+        boolean pendingForcedRecheck; // Flag to re-run BFS even when stable
+        long lastForcedRecheckTick; // Game time of last forced check
 
         FluidStabilityData(int lastAmount, int stabilityCounter, int currentDelay) {
             this.lastAmount = lastAmount;
@@ -504,6 +551,9 @@ public class AdaptiveTickScheduler {
             this.neighborHash = 0;
             this.rainBornCooldown = 0;
             this.surgeRelaxTicks = 0;
+            this.stableTicks = 0;
+            this.pendingForcedRecheck = false;
+            this.lastForcedRecheckTick = 0;
         }
     }
 
