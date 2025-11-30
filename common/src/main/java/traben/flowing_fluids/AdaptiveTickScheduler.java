@@ -1,5 +1,7 @@
 package traben.flowing_fluids;
 
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.ChunkPos;
@@ -8,6 +10,8 @@ import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.material.FluidState;
 import traben.flowing_fluids.util.DimensionKey;
 
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -402,6 +406,55 @@ public class AdaptiveTickScheduler {
         // Update chunk modification time
         ChunkPos chunkPos = new ChunkPos(pos);
         dimensionData.chunkModificationTimes.put(chunkPos, System.currentTimeMillis());
+    }
+
+    /**
+     * Bulk variant of {@link #notifyFluidChange(LevelAccessor, BlockPos)} that batches neighbor resets
+     * and chunk touch updates per tick. This reduces repeated map lookups when large bodies of water
+     * are updated together (e.g., clustered rain or synchronized equalization passes).
+     */
+    public static void notifyFluidChangesBulk(LevelAccessor level, Collection<BlockPos> positions) {
+        if (positions == null || positions.isEmpty()) {
+            return;
+        }
+
+        SchedulerDimensionData dimensionData = getData(level);
+        LongOpenHashSet uniquePositions = new LongOpenHashSet();
+        LongOpenHashSet neighbors = new LongOpenHashSet();
+        HashSet<ChunkPos> touchedChunks = new HashSet<>();
+        final long now = System.currentTimeMillis();
+
+        for (BlockPos pos : positions) {
+            if (pos == null) continue;
+            long posKey = pos.asLong();
+            if (!uniquePositions.add(posKey)) continue;
+
+            dimensionData.stabilityMap.remove(posKey);
+            touchedChunks.add(new ChunkPos(pos));
+
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        if (dx == 0 && dy == 0 && dz == 0) continue;
+                        neighbors.add(pos.offset(dx, dy, dz).asLong());
+                    }
+                }
+            }
+        }
+
+        for (LongIterator it = neighbors.iterator(); it.hasNext(); ) {
+            long neighborKey = it.nextLong();
+            if (uniquePositions.contains(neighborKey)) continue;
+            FluidStabilityData neighborData = dimensionData.stabilityMap.get(neighborKey);
+            if (neighborData != null) {
+                neighborData.currentDelay = BASE_DELAY;
+                neighborData.stabilityCounter = 0;
+            }
+        }
+
+        for (ChunkPos chunkPos : touchedChunks) {
+            dimensionData.chunkModificationTimes.put(chunkPos, now);
+        }
     }
 
     /**

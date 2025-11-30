@@ -132,16 +132,18 @@ public class FluidTickBuffer {
         }
 
         // 1. Apply fluid changes to spatial grid
+        List<BlockPos> changedPositions = new ArrayList<>(allFluidChanges.size());
         for (Map.Entry<BlockPos, FluidChange> entry : allFluidChanges.entrySet()) {
             BlockPos pos = entry.getKey();
             FluidChange change = entry.getValue();
 
             // Update spatial grid with precise amount
             FluidSpatialGrid.setFluidAt(level, pos, change.hasFluid, change.amount);
-
-            // Notify adaptive scheduler (batch notification is more efficient)
-            AdaptiveTickScheduler.notifyFluidChange(level, pos);
+            changedPositions.add(pos);
         }
+
+        // Notify adaptive scheduler in bulk to reset neighbor delays per chunk
+        AdaptiveTickScheduler.notifyFluidChangesBulk(level, changedPositions);
 
         // 2. Apply gradient changes
         for (Map.Entry<BlockPos, Direction> entry : allGradientChanges.entrySet()) {
