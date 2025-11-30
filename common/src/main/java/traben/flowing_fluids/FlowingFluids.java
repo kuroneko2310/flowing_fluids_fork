@@ -16,6 +16,7 @@ import net.minecraft.world.level.material.Fluids;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import traben.flowing_fluids.config.FFConfig;
+import traben.flowing_fluids.rain.RainWaterSystem;
 
 import java.io.File;
 import java.io.FileReader;
@@ -72,6 +73,7 @@ public final class FlowingFluids {
                 config = gson.fromJson(fileReader, FFConfig.class);
                 fileReader.close();
                 config.ensureCollections();
+                RainWaterSystem.reloadConfig();
                 //saveConfig();
             } catch (IOException e) {
                 // ETFUtils.logMessage("Config could not be loaded, using defaults", false);
@@ -79,6 +81,7 @@ public final class FlowingFluids {
         } else {
             config = new FFConfig();
             config.ensureCollections();
+            RainWaterSystem.reloadConfig();
             // only time client side ever calls this
             saveConfig();
         }

@@ -106,6 +106,34 @@ public class FFConfig {
     public long adaptiveSchedulerChunkExpiryMs = 60_000; // 1 minute by default
     public int adaptiveSchedulerMaxEntries = 10_000; // Max cached stability entries
 
+    // Rain system settings
+    public boolean enableRainSystem = true;
+    public int rainChunkRadius = 3;
+    public int rainGenerateIntervalTicks = 20;
+    public int rainAttemptsPerChunk = 20;
+    public float rainBaseGenerateChance = 0.05f;
+    public int rainBaseWaterAmount = 2;
+    public int rainMaxChunksPerTick = 128;
+    public boolean rainEnableBiomeFiltering = true;
+    public boolean rainSkipInfiniteWaterBiomes = true;
+    public boolean rainEnableChunkCaching = true;
+    public long rainCacheDurationTicks = 20L * 60L * 5L;
+    public int rainMaxSurfaceSearchDepth = 4;
+    public int rainMaxWaterStackHeight = 3;
+    public boolean rainEnableMultithreading = true;
+    public int rainMultithreadThreshold = 10;
+    public int rainMaxThreads = 0;
+    public int rainMultithreadTimeoutMs = 50;
+    public int rainPlacementQueueSize = 1024;
+
+    public float rainPrecipJungle = 1.5f;
+    public float rainPrecipSwamp = 1.25f;
+    public float rainPrecipDesert = 0.15f;
+    public float rainPrecipSavanna = 0.6f;
+    public float rainPrecipPlains = 1.0f;
+    public float rainPrecipForest = 1.0f;
+    public float rainPrecipTaiga = 0.8f;
+
 
     // create mod options
     public CreateWaterWheelMode create_waterWheelMode = CreateWaterWheelMode.REQUIRE_FLOW_OR_RIVER;
@@ -267,6 +295,33 @@ public class FFConfig {
 
         //blacklist
         fluidBlacklist = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
+
+        enableRainSystem = buffer.readBoolean();
+        rainChunkRadius = buffer.readVarInt();
+        rainGenerateIntervalTicks = buffer.readVarInt();
+        rainAttemptsPerChunk = buffer.readVarInt();
+        rainBaseGenerateChance = buffer.readFloat();
+        rainBaseWaterAmount = buffer.readVarInt();
+        rainMaxChunksPerTick = buffer.readVarInt();
+        rainEnableBiomeFiltering = buffer.readBoolean();
+        rainSkipInfiniteWaterBiomes = buffer.readBoolean();
+        rainEnableChunkCaching = buffer.readBoolean();
+        rainCacheDurationTicks = buffer.readVarLong();
+        rainMaxSurfaceSearchDepth = buffer.readVarInt();
+        rainMaxWaterStackHeight = buffer.readVarInt();
+        rainEnableMultithreading = buffer.readBoolean();
+        rainMultithreadThreshold = buffer.readVarInt();
+        rainMaxThreads = buffer.readVarInt();
+        rainMultithreadTimeoutMs = buffer.readVarInt();
+        rainPlacementQueueSize = buffer.readVarInt();
+
+        rainPrecipJungle = buffer.readFloat();
+        rainPrecipSwamp = buffer.readFloat();
+        rainPrecipDesert = buffer.readFloat();
+        rainPrecipSavanna = buffer.readFloat();
+        rainPrecipPlains = buffer.readFloat();
+        rainPrecipForest = buffer.readFloat();
+        rainPrecipTaiga = buffer.readFloat();
         ///////////////////////////////////////////////
     }
 
@@ -365,6 +420,33 @@ public class FFConfig {
 
         //blacklist
         buffer.writeCollection(fluidBlacklist, FriendlyByteBuf::writeUtf);
+
+        buffer.writeBoolean(enableRainSystem);
+        buffer.writeVarInt(rainChunkRadius);
+        buffer.writeVarInt(rainGenerateIntervalTicks);
+        buffer.writeVarInt(rainAttemptsPerChunk);
+        buffer.writeFloat(rainBaseGenerateChance);
+        buffer.writeVarInt(rainBaseWaterAmount);
+        buffer.writeVarInt(rainMaxChunksPerTick);
+        buffer.writeBoolean(rainEnableBiomeFiltering);
+        buffer.writeBoolean(rainSkipInfiniteWaterBiomes);
+        buffer.writeBoolean(rainEnableChunkCaching);
+        buffer.writeVarLong(rainCacheDurationTicks);
+        buffer.writeVarInt(rainMaxSurfaceSearchDepth);
+        buffer.writeVarInt(rainMaxWaterStackHeight);
+        buffer.writeBoolean(rainEnableMultithreading);
+        buffer.writeVarInt(rainMultithreadThreshold);
+        buffer.writeVarInt(rainMaxThreads);
+        buffer.writeVarInt(rainMultithreadTimeoutMs);
+        buffer.writeVarInt(rainPlacementQueueSize);
+
+        buffer.writeFloat(rainPrecipJungle);
+        buffer.writeFloat(rainPrecipSwamp);
+        buffer.writeFloat(rainPrecipDesert);
+        buffer.writeFloat(rainPrecipSavanna);
+        buffer.writeFloat(rainPrecipPlains);
+        buffer.writeFloat(rainPrecipForest);
+        buffer.writeFloat(rainPrecipTaiga);
         ///////////////////////////////////////////////
     }
 
