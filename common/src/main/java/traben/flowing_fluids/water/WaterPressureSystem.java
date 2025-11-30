@@ -21,13 +21,13 @@ import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.util.RandomSource;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Random;
 
 /**
  * Basic water pressure system used to stress wooden barriers when surrounded by water.
@@ -155,7 +155,7 @@ public final class WaterPressureSystem {
 
     private static void scanForTargets(ServerLevel level, LevelState state, int currentTick) {
         FFConfig config = FlowingFluids.config;
-        Random random = level.random;
+        RandomSource random = level.random;
         int radius = Math.max(0, Math.min(4, config.waterPressureChunkRadius));
         int attempts = Math.max(1, config.waterPressureScanAttempts);
 
