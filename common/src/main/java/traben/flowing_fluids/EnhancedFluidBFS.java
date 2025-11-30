@@ -261,8 +261,10 @@ public class EnhancedFluidBFS {
      * Determines if two positions should equalize their fluid amounts.
      */
     private static boolean shouldEqualize(int amount1, int amount2) {
-        // Equalize if difference is significant (> 2 internal units)
-        return Math.abs(amount1 - amount2) > 2;
+        // Equalize if difference is meaningful (>= 2 internal units)
+        // This widens leveling to cover typical canal heights (e.g., 3 vs 1),
+        // preventing distant segments from staying overfilled after long flows.
+        return Math.abs(amount1 - amount2) >= 2;
     }
 
     /**
