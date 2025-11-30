@@ -84,7 +84,7 @@ public final class RainWaterSystem {
 
         final RandomSource random = level.getRandom();
 
-        final int chunkRadius = FlowingFluids.config.rainChunkRadius;
+        final int chunkRadius = getEffectiveChunkRadius(level, FlowingFluids.config.rainChunkRadius);
         final int maxChunksPerTick = FlowingFluids.config.rainMaxChunksPerTick;
 
         final LongOpenHashSet uniqueChunks = new LongOpenHashSet();
@@ -278,6 +278,15 @@ public final class RainWaterSystem {
 
     private static void executeWaterPlacement(RainPlacementTask task) {
         RAIN_API.addRainWater(task.level, task.pos, task.amount);
+    }
+
+    private static int getEffectiveChunkRadius(ServerLevel level, int configuredRadius) {
+        final int clampedConfigured = Math.max(0, configuredRadius);
+        final int simulationDistance = level.getServer().getPlayerList().getSimulationDistance();
+        if (simulationDistance > 0) {
+            return Math.min(clampedConfigured, simulationDistance);
+        }
+        return clampedConfigured;
     }
 
     private static void updateBiomeMultipliers() {

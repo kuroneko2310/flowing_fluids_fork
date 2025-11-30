@@ -2,6 +2,7 @@ package traben.flowing_fluids.rain;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.api.FlowingFluidsAPI;
@@ -15,6 +16,10 @@ public class RainWaterApiImpl implements RainWaterApi {
 
     @Override
     public void addRainWater(ServerLevel level, BlockPos pos, int amount) {
+        BlockState state = level.getBlockState(pos);
+        if (!state.getFluidState().isSource() && (state.isAir() || state.canBeReplaced())) {
+            level.setBlockAndUpdate(pos, Fluids.WATER.defaultFluidState().createLegacyBlock());
+        }
         api.placeFluidAmountFromPos(level, pos, Fluids.WATER, amount, false, true);
     }
 }
