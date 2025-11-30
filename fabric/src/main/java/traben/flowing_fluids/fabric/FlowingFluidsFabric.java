@@ -9,6 +9,7 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.PlugWaterFeature;
 import traben.flowing_fluids.config.FFCommands;
+import traben.flowing_fluids.fabric.WaterPressureFabricEvents;
 
 public final class FlowingFluidsFabric implements ModInitializer {
     @Override
@@ -23,6 +24,7 @@ public final class FlowingFluidsFabric implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(FFConfigDataFabric.type, FFConfigDataFabric.CODEC);
         #endif
         FlowingFluids.init();
+        WaterPressureFabricEvents.register();
 
     }
 }
