@@ -25,6 +25,7 @@ public final class FlowingFluidsFabric implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(FFConfigDataFabric.type, FFConfigDataFabric.CODEC);
         #endif
         FlowingFluids.init();
+        WaterPressureFabricEvents.register();
 
         #if MC > MC_20_1
         ServerTickEvents.END_WORLD_TICK.register(RainWaterSystem::onLevelTick);
