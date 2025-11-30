@@ -291,8 +291,15 @@ public class AdaptiveTickScheduler {
         if (distance <= 4) {
             return 1.0f;
         }
-        // Keep a 50% floor so long canals are not starved of BFS budget even at extended distances.
-        return Math.max(0.5f, 4.0f / distance);
+
+        // 長距離設定では探索コストが指数的に膨らまないよう、距離に反比例する係数と
+        // 平方根スムージングを組み合わせ、負荷を抑えつつ最低限の進行を確保する。
+        float inverseScale = 4.0f / distance;
+        float smoothed = (float) (1.0 / Math.sqrt(distance / 4.0f));
+        float combined = Math.min(inverseScale, smoothed);
+
+        // 35% を下限にして、広域水路でも探索予算が枯渇せず徐々に処理が進むようにする。
+        return Math.max(0.35f, combined);
     }
 
     /**

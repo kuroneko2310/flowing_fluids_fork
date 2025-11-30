@@ -133,6 +133,7 @@ public class EnhancedFluidBFS {
             int momentumCap = getDistanceScaledMomentumCap();
             boolean dropEncountered = false;
             ChunkPos chunkPos = new ChunkPos(startPos);
+            Direction inletGradient = FluidSpatialGrid.getGradientDirection(level, startPos);
 
             // Get or estimate gradient vector for weighted search
             Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(level, chunkPos, startPos);
@@ -194,9 +195,18 @@ public class EnhancedFluidBFS {
 
             int clampedDistance = Math.max(1, Math.min(FlowingFluids.config.waterFlowDistance,
                 Math.max(FlowingFluids.config.maxWaterFlowDistance, FlowingFluids.config.waterFlowDistance)));
-            float horizontalScale = clampedDistance <= 4 ? 1.0f : clampedDistance / 4.0f;
+
+            // 直線水路の入口で流入が止まらないよう、勾配方向へ細い探査を入れる。
+            // 探査は軽量で、遮蔽物で打ち切る。
+            if (FlowingFluids.config.inletProbeMaxSteps > 0) {
+                nodesExplored += runInletProbe(level, startFluid, startPos, inletGradient, visited, visitedOrder,
+                    equalizedPositions, equalizedKeys, reusablePos);
+            }
+
+            float normalizedDistance = clampedDistance <= 4 ? 1.0f : (clampedDistance / 4.0f);
+            float horizontalScale = clampedDistance <= 4 ? 1.0f : (float) Math.sqrt(normalizedDistance);
             int scaledSupplement = Math.min(
-                FlowingFluids.config.horizontalSupplementExtraNodes * 3,
+                FlowingFluids.config.horizontalSupplementExtraNodes * 2,
                 Math.round(FlowingFluids.config.horizontalSupplementExtraNodes * horizontalScale)
             );
 
@@ -539,6 +549,59 @@ public class EnhancedFluidBFS {
         }
 
         return addedNodes;
+    }
+
+    /**
+     * 勾配方向に沿って軽量な直線探索を行い、細い水路の入口が3ブロック程度で止まらないようにする。
+     * 探査は遮蔽物で即終了し、既訪問セルには入らない。
+     */
+    private static int runInletProbe(Level level, FluidState startFluid, BlockPos startPos, Direction gradient,
+                                     LongOpenHashSet visited, LongArrayList visitedOrder,
+                                     List<BlockPos> equalizedPositions, LongOpenHashSet equalizedKeys,
+                                     BlockPos.MutableBlockPos reusablePos) {
+        if (gradient == null || gradient.getAxis() == Direction.Axis.Y) {
+            return 0; // 上下のみの勾配では入口延伸の効果が薄い
+        }
+
+        int steps = Math.min(FlowingFluids.config.inletProbeMaxSteps, 32);
+        if (steps <= 0) {
+            return 0;
+        }
+
+        reusablePos.set(startPos);
+        int lastAmount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
+        int added = 0;
+
+        for (int i = 0; i < steps; i++) {
+            reusablePos.move(gradient);
+            long key = reusablePos.asLong();
+
+            if (visited.contains(key)) {
+                continue;
+            }
+            if (!level.isLoaded(reusablePos)) {
+                break;
+            }
+
+            BlockState state = level.getBlockState(reusablePos);
+            FluidState fluidState = state.getFluidState();
+            if (!canIncludeInBFS(state, fluidState, startFluid)) {
+                break; // 遮蔽物や異種流体で停止
+            }
+
+            visited.add(key);
+            visitedOrder.add(key);
+            added++;
+
+            int amount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
+            if (shouldEqualize(lastAmount, amount) || i == 0) {
+                addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
+                addEqualizationTarget(equalizedPositions, equalizedKeys, startPos);
+            }
+            lastAmount = amount;
+        }
+
+        return added;
     }
 
     private static void applyClusterDiffusion(Level level, FluidState sourceFluid, List<BlockPos> equalizedPositions,

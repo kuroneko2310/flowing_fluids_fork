@@ -58,6 +58,7 @@ public class FFConfig {
     public float forcedEqualizationBudgetFactor = 0.35f; // Budget multiplier when running forced lightweight checks
     public int horizontalSupplementDepth = 12; // Depth for horizontal-only exploration sweeps
     public int horizontalSupplementExtraNodes = 256; // Additional nodes budget for horizontal sweeps
+    public int inletProbeMaxSteps = 8; // Straight-line inlet probe to prevent 3-block stalls on narrow drains
     public int clusterDiffusionHeightThreshold = 6; // Minimum height delta to trigger cluster diffusion
     public int clusterDiffusionMaxCluster = 96; // Maximum positions to include in a cluster diffusion pass
     public float clusterDiffusionBudgetPortion = 0.5f; // Portion of remaining BFS budget usable for diffusion
