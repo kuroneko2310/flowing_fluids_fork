@@ -134,6 +134,10 @@ public class FFConfig {
     public int rainMaxThreads = 0;
     public int rainMultithreadTimeoutMs = 50;
     public int rainPlacementQueueSize = 1024;
+    public float rainQueueSoftCapRatio = 0.65f;
+    public float rainQueueMinChanceMultiplier = 0.35f;
+    public int rainPlacementAggregationDistance = 1;
+    public int rainPlacementMaxCombinedAmount = 16;
 
     public float rainPrecipJungle = 1.5f;
     public float rainPrecipSwamp = 1.25f;
@@ -323,6 +327,10 @@ public class FFConfig {
         rainMaxThreads = buffer.readVarInt();
         rainMultithreadTimeoutMs = buffer.readVarInt();
         rainPlacementQueueSize = buffer.readVarInt();
+        rainQueueSoftCapRatio = buffer.readFloat();
+        rainQueueMinChanceMultiplier = buffer.readFloat();
+        rainPlacementAggregationDistance = buffer.readVarInt();
+        rainPlacementMaxCombinedAmount = buffer.readVarInt();
 
         rainPrecipJungle = buffer.readFloat();
         rainPrecipSwamp = buffer.readFloat();
@@ -448,6 +456,10 @@ public class FFConfig {
         buffer.writeVarInt(rainMaxThreads);
         buffer.writeVarInt(rainMultithreadTimeoutMs);
         buffer.writeVarInt(rainPlacementQueueSize);
+        buffer.writeFloat(rainQueueSoftCapRatio);
+        buffer.writeFloat(rainQueueMinChanceMultiplier);
+        buffer.writeVarInt(rainPlacementAggregationDistance);
+        buffer.writeVarInt(rainPlacementMaxCombinedAmount);
 
         buffer.writeFloat(rainPrecipJungle);
         buffer.writeFloat(rainPrecipSwamp);

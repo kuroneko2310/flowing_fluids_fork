@@ -23,7 +23,9 @@ import traben.flowing_fluids.api.FlowingFluidsAPI;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -31,6 +33,7 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * Server-side rain driver that decides where rainfall should add water and delegates placement to {@link RainWaterApi}.
@@ -208,9 +211,15 @@ public final class RainWaterSystem {
         final int baseWaterAmount = Math.max(1, Math.min(8, FlowingFluids.config.rainBaseWaterAmount));
 
         final int maxQueueSize = FlowingFluids.config.rainPlacementQueueSize;
+        final float congestionMultiplier = calculateQueueCongestionMultiplier(maxQueueSize);
+        if (congestionMultiplier <= 0.0f) {
+            return;
+        }
+
+        final float effectiveChance = baseChance * congestionMultiplier;
 
         for (int i = 0; i < attempts; i++) {
-            if (random.nextFloat() > baseChance) continue;
+            if (random.nextFloat() > effectiveChance) continue;
 
             final int x = (chunkX << 4) + random.nextInt(16);
             final int z = (chunkZ << 4) + random.nextInt(16);
@@ -236,7 +245,8 @@ public final class RainWaterSystem {
     }
 
     private static void submitRainPlacement(ServerLevel level, BlockPos pos, int amount, int maxQueueSize) {
-        if (!tryEnqueuePlacementTask(new RainPlacementTask(level, pos, amount), maxQueueSize)) {
+        BlockPos immutablePos = pos.immutable();
+        if (!tryEnqueuePlacementTask(new RainPlacementTask(level, immutablePos, amount), maxQueueSize)) {
             LOGGER.debug("[{}] Rain placement queue full, skipping {}", FlowingFluids.MOD_ID, pos);
         }
     }
@@ -260,10 +270,31 @@ public final class RainWaterSystem {
         }
     }
 
+    private static float calculateQueueCongestionMultiplier(int maxQueueSize) {
+        if (maxQueueSize <= 0) {
+            return 1.0f;
+        }
+
+        final int currentSize = placementQueueSize.get();
+        final float fillRatio = currentSize / (float) maxQueueSize;
+        final float softCap = Math.max(0.0f, Math.min(1.0f, FlowingFluids.config.rainQueueSoftCapRatio));
+        final float minimumMultiplier = Math.max(0.0f, Math.min(1.0f, FlowingFluids.config.rainQueueMinChanceMultiplier));
+
+        if (fillRatio <= softCap) {
+            return 1.0f;
+        }
+
+        final float overfill = Math.min(1.0f, (fillRatio - softCap) / Math.max(0.0001f, 1.0f - softCap));
+        final float scaled = 1.0f - overfill * (1.0f - minimumMultiplier);
+        return Math.max(minimumMultiplier, scaled);
+    }
+
     private static void processPlacementQueue() {
         final int configuredLimit = FlowingFluids.config.rainPlacementQueueSize;
         final int maxProcessPerTick = configuredLimit <= 0 ? Integer.MAX_VALUE : configuredLimit;
         int processed = 0;
+
+        final Map<ResourceKey<Level>, PlacementAggregation> aggregated = new HashMap<>();
 
         while (processed < maxProcessPerTick) {
             RainPlacementTask task = placementQueue.poll();
@@ -271,13 +302,37 @@ public final class RainWaterSystem {
                 break;
             }
             placementQueueSize.decrementAndGet();
-            executeWaterPlacement(task);
+            mergePlacementTask(aggregated, task);
             processed++;
+        }
+
+        for (PlacementAggregation perLevel : aggregated.values()) {
+            perLevel.forEach(placement -> executeWaterPlacement(placement.level(), placement.pos(), placement.amount()));
         }
     }
 
-    private static void executeWaterPlacement(RainPlacementTask task) {
-        RAIN_API.addRainWater(task.level, task.pos, task.amount);
+    private static void mergePlacementTask(Map<ResourceKey<Level>, PlacementAggregation> aggregated,
+                                          RainPlacementTask task) {
+        final int maxCombinedAmount = Math.max(1, FlowingFluids.config.rainPlacementMaxCombinedAmount);
+        final int mergeDistance = Math.max(0, FlowingFluids.config.rainPlacementAggregationDistance);
+
+        final ResourceKey<Level> levelKey = task.level().dimension();
+        PlacementAggregation perLevel = aggregated.computeIfAbsent(levelKey, key -> new PlacementAggregation());
+        perLevel.merge(task, mergeDistance, maxCombinedAmount);
+    }
+
+    private static boolean isWithinAggregationDistance(BlockPos a, BlockPos b, int distance) {
+        if (distance <= 0) {
+            return a.equals(b);
+        }
+
+        return Math.abs(a.getX() - b.getX()) <= distance
+                && Math.abs(a.getZ() - b.getZ()) <= distance
+                && Math.abs(a.getY() - b.getY()) <= 1;
+    }
+
+    private static void executeWaterPlacement(ServerLevel level, BlockPos pos, int amount) {
+        RAIN_API.addRainWater(level, pos, amount);
     }
 
     private static void updateBiomeMultipliers() {
@@ -478,6 +533,72 @@ public final class RainWaterSystem {
 
     private record ChunkBiomeCache(ResourceKey<Biome> biomeKey, float precipMul,
                                    boolean hasPrecipitation, boolean isInfiniteWaterBiome, long cachedTime) {
+    }
+
+    private static final class AggregatedPlacement {
+        private final ServerLevel level;
+        private final BlockPos pos;
+        private int amount;
+
+        private AggregatedPlacement(ServerLevel level, BlockPos pos, int amount) {
+            this.level = level;
+            this.pos = pos;
+            this.amount = amount;
+        }
+
+        private void addAmount(int delta, int maxAmount) {
+            amount = Math.min(maxAmount, amount + delta);
+        }
+
+        private ServerLevel level() {
+            return level;
+        }
+
+        private BlockPos pos() {
+            return pos;
+        }
+
+        private int amount() {
+            return amount;
+        }
+    }
+
+    private static final class PlacementAggregation {
+        private final Map<Long, List<AggregatedPlacement>> buckets = new HashMap<>();
+
+        private void merge(RainPlacementTask task, int mergeDistance, int maxCombinedAmount) {
+            final BlockPos pos = task.pos();
+            final int chunkX = pos.getX() >> 4;
+            final int chunkZ = pos.getZ() >> 4;
+            final int chunkRadius = mergeDistance <= 0 ? 0 : (mergeDistance + 15) >> 4;
+
+            for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
+                for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
+                    final long key = ChunkPos.asLong(chunkX + dx, chunkZ + dz);
+                    final List<AggregatedPlacement> bucket = buckets.get(key);
+                    if (bucket == null) continue;
+
+                    for (AggregatedPlacement placement : bucket) {
+                        if (isWithinAggregationDistance(placement.pos(), pos, mergeDistance)) {
+                            placement.addAmount(task.amount(), maxCombinedAmount);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            final long selfKey = ChunkPos.asLong(chunkX, chunkZ);
+            buckets.computeIfAbsent(selfKey, k -> new ArrayList<>())
+                    .add(new AggregatedPlacement(task.level(), pos, Math.min(task.amount(), maxCombinedAmount)));
+        }
+
+        private void forEach(Consumer<AggregatedPlacement> consumer) {
+            for (List<AggregatedPlacement> bucket : buckets.values()) {
+                for (AggregatedPlacement placement : bucket) {
+                    consumer.accept(placement);
+                }
+            }
+        }
     }
 
     private record RainPlacementTask(ServerLevel level, BlockPos pos, int amount) {
