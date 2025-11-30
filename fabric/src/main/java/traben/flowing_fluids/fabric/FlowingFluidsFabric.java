@@ -3,12 +3,14 @@ package traben.flowing_fluids.fabric;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 #if MC > MC_20_1
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 #endif
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.PlugWaterFeature;
 import traben.flowing_fluids.config.FFCommands;
+import traben.flowing_fluids.rain.RainWaterSystem;
 
 public final class FlowingFluidsFabric implements ModInitializer {
     @Override
@@ -23,6 +25,11 @@ public final class FlowingFluidsFabric implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(FFConfigDataFabric.type, FFConfigDataFabric.CODEC);
         #endif
         FlowingFluids.init();
+
+        #if MC > MC_20_1
+        ServerTickEvents.END_WORLD_TICK.register(RainWaterSystem::onLevelTick);
+        ServerWorldEvents.UNLOAD.register((server, world) -> RainWaterSystem.onLevelUnload(world));
+        #endif
 
     }
 }
