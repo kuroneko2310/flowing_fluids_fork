@@ -5,11 +5,14 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.level.LevelEvent;
+import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFCommands;
 import traben.flowing_fluids.config.FFConfigData;
+import traben.flowing_fluids.rain.RainWaterSystem;
 
 @Mod(FlowingFluids.MOD_ID)
 public final class FlowingFluidsNeoForge {
@@ -24,6 +27,20 @@ public final class FlowingFluidsNeoForge {
     public static void onRegisterCommandEvent(RegisterCommandsEvent event) {
         FlowingFluids.info("commands registered");
         FFCommands.registerCommands(event.getDispatcher(), event.getBuildContext(), event.getCommandSelection());
+    }
+
+    @SubscribeEvent
+    public static void onLevelTick(LevelTickEvent event) {
+        if (event.phase == LevelTickEvent.Phase.END && event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            RainWaterSystem.onLevelTick(level);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onLevelUnload(LevelEvent.Unload event) {
+        if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            RainWaterSystem.onLevelUnload(level);
+        }
     }
 }
 

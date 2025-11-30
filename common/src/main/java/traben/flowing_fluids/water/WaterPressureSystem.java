@@ -6,13 +6,11 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.FluidTags;
-import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.Block;
@@ -23,11 +21,13 @@ import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.material.FluidState;
+import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 
 /**
  * Basic water pressure system used to stress wooden barriers when surrounded by water.
@@ -155,7 +155,7 @@ public final class WaterPressureSystem {
 
     private static void scanForTargets(ServerLevel level, LevelState state, int currentTick) {
         FFConfig config = FlowingFluids.config;
-        RandomSource random = level.getRandom();
+        Random random = level.random;
         int radius = Math.max(0, Math.min(4, config.waterPressureChunkRadius));
         int attempts = Math.max(1, config.waterPressureScanAttempts);
 
@@ -324,7 +324,7 @@ public final class WaterPressureSystem {
 
     private static float getBreakThreshold(BlockState state, Block block, FFConfig config) {
         float base = config.waterPressureBreakThreshold;
-        String blockId = BuiltInRegistries.BLOCK.getKey(block).toString();
+        String blockId = FFFluidUtils.getId(block).toString();
         if (block instanceof DoorBlock || block instanceof TrapDoorBlock) {
             if (blockId.contains("iron")) {
                 base *= config.waterPressureMetalResistance;
