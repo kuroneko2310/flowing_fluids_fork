@@ -46,8 +46,8 @@ public class FFConfig {
     public int randomTickLevelingDistance = 32;
 
     // Advanced water flow distance settings
-    public int maxWaterFlowDistance = 8; // Maximum horizontal flow distance (can be higher than base flow distance)
-    public int bfsMaxSearchDistance = 16; // Maximum BFS search distance for equalization
+    public int maxWaterFlowDistance = 16; // Maximum horizontal flow distance (can be higher than base flow distance)
+    public int bfsMaxSearchDistance = 20; // Maximum BFS search distance for equalization
     public float slopeFindDistanceMultiplier = 1.0f; // Multiplier for slope finding distance (1.0 = default, higher = farther search)
     public boolean enableAdaptiveFlowDistance = true; // Adjust flow distance based on terrain type
     public int riverFlowDistance = 64; // Flow distance in river biomes
@@ -58,6 +58,7 @@ public class FFConfig {
     public float forcedEqualizationBudgetFactor = 0.35f; // Budget multiplier when running forced lightweight checks
     public int horizontalSupplementDepth = 12; // Depth for horizontal-only exploration sweeps
     public int horizontalSupplementExtraNodes = 256; // Additional nodes budget for horizontal sweeps
+    public int inletProbeMaxSteps = 8; // Straight-line inlet probe to prevent 3-block stalls on narrow drains
     public int clusterDiffusionHeightThreshold = 6; // Minimum height delta to trigger cluster diffusion
     public int clusterDiffusionMaxCluster = 96; // Maximum positions to include in a cluster diffusion pass
     public float clusterDiffusionBudgetPortion = 0.5f; // Portion of remaining BFS budget usable for diffusion

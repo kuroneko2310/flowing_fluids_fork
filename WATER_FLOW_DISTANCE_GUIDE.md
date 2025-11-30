@@ -11,7 +11,7 @@
 
 ### 基本設定
 
-#### `maxWaterFlowDistance` (デフォルト: 8)
+#### `maxWaterFlowDistance` (デフォルト: 16)
 - **説明**: 水が水平方向に流れることができる最大距離（ブロック単位）
 - **範囲**: 1-256
 - **影響**: 大きいほど水が遠くまで流れますが、パフォーマンスに影響
@@ -20,7 +20,7 @@
   /flowing_fluids settings behaviour advanced_flow_distances max_water_flow_distance 16
   ```
 
-#### `bfsMaxSearchDistance` (デフォルト: 16)
+#### `bfsMaxSearchDistance` (デフォルト: 20)
 - **説明**: BFS（幅優先探索）アルゴリズムが水の平衡化を探索する最大距離
 - **範囲**: 4-128
 - **影響**: 大きいほど複雑な水流パターンを正確に処理しますが、CPU使用率が上昇
@@ -28,6 +28,11 @@
   ```
   /flowing_fluids settings behaviour advanced_flow_distances bfs_max_search_distance 32
   ```
+
+**長距離向け最適化のポイント**:
+- `maxWaterFlowDistance` を伸ばしても、探索予算は 50% までしか絞られないため、湖や長い運河の排水が途中で止まりにくくなります。
+- BFS の水平補助探索は流動距離に応じて自動で拡張され、遠方の水位も平均化に巻き込みやすくなりました。
+- 入口が狭い排水路では `inlet_probe_max_steps` を 6–12 にすると、勾配方向に軽量な直線探査を挟み、3ブロック程度で詰まる挙動を軽減できます。
 
 #### `slopeFindDistanceMultiplier` (デフォルト: 1.0)
 - **説明**: 傾斜を見つけるための探索距離の倍率
@@ -315,7 +320,7 @@ BFS訪問ノード数: 234,521 (平均: 61.0 ノード/操作)
 ```
 /flowing_fluids settings behaviour advanced_flow_distances enable_adaptive_flow_distance on
 /flowing_fluids settings behaviour advanced_flow_distances river_flow_distance 64
-/flowing_fluids settings behaviour advanced_flow_distances bfs_max_search_distance 24
+/flowing_fluids settings behaviour advanced_flow_distances bfs_max_search_distance 20
 ```
 
 ---
@@ -422,7 +427,7 @@ BFS訪問ノード数: 234,521 (平均: 61.0 ノード/操作)
 {
   "waterFlowDistance": 4,
   "maxWaterFlowDistance": 16,
-  "bfsMaxSearchDistance": 24,
+  "bfsMaxSearchDistance": 20,
   "slopeFindDistanceMultiplier": 1.0,
   "enableAdaptiveFlowDistance": true,
   "riverFlowDistance": 64,
