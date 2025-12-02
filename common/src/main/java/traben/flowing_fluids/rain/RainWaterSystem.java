@@ -74,6 +74,7 @@ public final class RainWaterSystem {
         if (FlowingFluids.config.rainBaseGenerateChance <= 0.0f) return;
         if (FlowingFluids.config.rainAttemptsPerChunk <= 0) return;
         if (FlowingFluids.config.rainBaseWaterAmount <= 0) return;
+        if (FlowingFluids.config.isDimensionExcluded(level)) return;
         if (!level.dimensionType().hasSkyLight()) return;
 
         final long now = level.getGameTime();
