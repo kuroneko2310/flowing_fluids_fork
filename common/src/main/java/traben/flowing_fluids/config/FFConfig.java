@@ -154,6 +154,8 @@ public class FFConfig {
 
     // fluid blacklist
     public ObjectOpenHashSet<String> fluidBlacklist = new ObjectOpenHashSet<>();
+    // dimension blacklist
+    public ObjectOpenHashSet<String> excludedDimensions = new ObjectOpenHashSet<>();
 
     public boolean isFluidAllowed(Fluid fluid){
         if (fluid == null) return false;
@@ -167,6 +169,14 @@ public class FFConfig {
 
     public boolean isWaterAllowed(){
         return isFluidAllowed(Fluids.WATER);
+    }
+
+    public boolean isDimensionExcluded(LevelAccessor level) {
+        if (excludedDimensions == null || excludedDimensions.isEmpty()) return false;
+        if (level instanceof net.minecraft.world.level.Level lvl) {
+            return excludedDimensions.contains(lvl.dimension().location().toString());
+        }
+        return false;
     }
 
     public boolean dontTickAtLocation(BlockPos pos, LevelAccessor level) {
@@ -309,6 +319,9 @@ public class FFConfig {
         //blacklist
         fluidBlacklist = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
 
+        // dimension blacklist
+        excludedDimensions = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
+
         enableRainSystem = buffer.readBoolean();
         rainChunkRadius = buffer.readVarInt();
         rainGenerateIntervalTicks = buffer.readVarInt();
@@ -438,6 +451,9 @@ public class FFConfig {
         //blacklist
         buffer.writeCollection(fluidBlacklist, FriendlyByteBuf::writeUtf);
 
+        // dimension blacklist
+        buffer.writeCollection(excludedDimensions, FriendlyByteBuf::writeUtf);
+
         buffer.writeBoolean(enableRainSystem);
         buffer.writeVarInt(rainChunkRadius);
         buffer.writeVarInt(rainGenerateIntervalTicks);
@@ -537,6 +553,7 @@ public class FFConfig {
 
     public void ensureCollections() {
         if (fluidBlacklist == null) fluidBlacklist = new ObjectOpenHashSet<>();
+        if (excludedDimensions == null) excludedDimensions = new ObjectOpenHashSet<>();
         if (extraOceanBiomes == null) extraOceanBiomes = new ObjectOpenHashSet<>();
         if (extraRiverBiomes == null) extraRiverBiomes = new ObjectOpenHashSet<>();
         if (extraBeachBiomes == null) extraBeachBiomes = new ObjectOpenHashSet<>();

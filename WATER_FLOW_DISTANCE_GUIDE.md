@@ -421,10 +421,14 @@ BFS訪問ノード数: 234,521 (平均: 61.0 ノード/操作)
 
 ### 設定ファイルの直接編集
 
-設定ファイル `config/flowing_fluids.json` を直接編集することもできます:
+設定ファイル `config/flowing_fluids.json` を直接編集することもできます。下記の例は主要な項目を見やすく並べ替え、セクションごとに `_comment` を添えてあります（Gson は未知のキーを無視するため、この形のままでも読み込めます）。
 
 ```json
 {
+  "_comment": "基本挙動と性能関連",
+  "enableMod": true,
+  "enableDisplacement": true,
+  "enablePistonPushing": true,
   "waterFlowDistance": 4,
   "maxWaterFlowDistance": 16,
   "bfsMaxSearchDistance": 20,
@@ -435,11 +439,32 @@ BFS訪問ノード数: 234,521 (平均: 61.0 ノード/操作)
   "canalFlowDistance": 32,
   "enablePerformanceMonitoring": false,
   "performanceLogInterval": 200,
-  "enableDistanceBasedOptimization": true
+  "enableDistanceBasedOptimization": true,
+
+  "_comment_rain": "降雨による水追加を制御",
+  "enableRainSystem": true,
+  "rainGenerateIntervalTicks": 20,
+  "rainAttemptsPerChunk": 20,
+  "rainBaseGenerateChance": 0.05,
+  "rainMaxChunksPerTick": 16,
+
+  "_comment_pressure": "水圧システム（木製ドアやフェンスゲートへの圧力）",
+  "enableWaterPressure": false,
+  "waterPressureScanInterval": 20,
+  "waterPressureBreakThreshold": 12.0,
+
+  "_comment_limits": "除外設定（ここに列挙したディメンションでは機能を無効化）",
+  "excludedDimensions": [
+    "minecraft:the_nether",
+    "minecraft:the_end"
+  ],
+  "fluidBlacklist": [
+    "minecraft:flowing_water"
+  ]
 }
 ```
 
-編集後、サーバーまたはゲームを再起動してください。
+編集後、サーバーまたはゲームを再起動してください。詳細な項目説明とフルサンプルは `docs/CONFIG_FILE_GUIDE_JA.md` も参照してください。
 
 ---
 

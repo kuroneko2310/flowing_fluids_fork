@@ -55,6 +55,9 @@ public final class WaterPressureSystem {
         if (!config.enableMod || !config.enableWaterPressure) {
             return;
         }
+        if (config.isDimensionExcluded(level)) {
+            return;
+        }
 
         int currentTick = level.getServer().getTickCount();
         LevelState state = getState(level);
@@ -84,6 +87,9 @@ public final class WaterPressureSystem {
 
         FFConfig config = FlowingFluids.config;
         if (!config.enableMod || !config.enableWaterPressure) {
+            return;
+        }
+        if (config.isDimensionExcluded(level)) {
             return;
         }
 
