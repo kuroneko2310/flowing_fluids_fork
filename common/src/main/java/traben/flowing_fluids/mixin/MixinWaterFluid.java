@@ -203,7 +203,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
             var belowState = level.getBlockState(candidate.below());
             if (belowState.isAir()) continue;
 
-            int spawnAmount = Mth.clamp(FlowingFluids.config.rainSurfaceSpawnLevel, 1, 4);
+            int spawnAmount = Mth.clamp(FlowingFluids.config.rainSurfaceSpawnLevel, 1, 8);
             if (FFFluidUtils.setFluidStateAtPosToNewAmount(level, candidate, this, spawnAmount)) {
                 AdaptiveTickScheduler.markRainBorn(level, candidate);
                 return;

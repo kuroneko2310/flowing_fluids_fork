@@ -71,6 +71,9 @@ public final class RainWaterSystem {
 
     public static void onLevelTick(ServerLevel level) {
         if (!FlowingFluids.config.enableRainSystem) return;
+        if (FlowingFluids.config.rainBaseGenerateChance <= 0.0f) return;
+        if (FlowingFluids.config.rainAttemptsPerChunk <= 0) return;
+        if (FlowingFluids.config.rainBaseWaterAmount <= 0) return;
         if (!level.dimensionType().hasSkyLight()) return;
 
         final long now = level.getGameTime();
@@ -208,7 +211,8 @@ public final class RainWaterSystem {
                                               int minBuildY) {
 
         final float baseChance = FlowingFluids.config.rainBaseGenerateChance * rainMul;
-        final int baseWaterAmount = Math.max(1, Math.min(8, FlowingFluids.config.rainBaseWaterAmount));
+        final int baseWaterAmount = Math.max(1, Math.min(FlowingFluids.config.rainPlacementMaxCombinedAmount,
+                FlowingFluids.config.rainBaseWaterAmount));
 
         final int maxQueueSize = FlowingFluids.config.rainPlacementQueueSize;
         final float congestionMultiplier = calculateQueueCongestionMultiplier(maxQueueSize);
@@ -217,6 +221,9 @@ public final class RainWaterSystem {
         }
 
         final float effectiveChance = baseChance * congestionMultiplier;
+        if (effectiveChance <= 0.0f) {
+            return;
+        }
 
         for (int i = 0; i < attempts; i++) {
             if (random.nextFloat() > effectiveChance) continue;
