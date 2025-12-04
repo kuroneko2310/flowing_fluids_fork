@@ -52,6 +52,8 @@ public final class RainWaterSystem {
     private static final ConcurrentLinkedQueue<RainPlacementTask> placementQueue = new ConcurrentLinkedQueue<>();
     private static final AtomicInteger placementQueueSize = new AtomicInteger(0);
 
+    private static final LongOpenHashSet reusableChunkCollector = new LongOpenHashSet();
+
     private static ForkJoinPool executorService = null;
     private static final long FALLBACK_CACHE_RESYNC_TICKS = 20L * 60L * 5L; // 5 minutes
 
@@ -67,6 +69,11 @@ public final class RainWaterSystem {
         initializeExecutorService();
         placementQueue.clear();
         placementQueueSize.set(0);
+
+        if (!FlowingFluids.config.rainEnableChunkCaching) {
+            chunkCache.clear();
+            lastCacheMaintenanceTick.clear();
+        }
     }
 
     public static void onLevelTick(ServerLevel level) {
@@ -94,19 +101,19 @@ public final class RainWaterSystem {
         final int chunkRadius = getEffectiveChunkRadius(level, FlowingFluids.config.rainChunkRadius);
         final int maxChunksPerTick = FlowingFluids.config.rainMaxChunksPerTick;
 
-        final LongOpenHashSet uniqueChunks = new LongOpenHashSet();
+        reusableChunkCollector.clear();
         for (ServerPlayer p : level.getPlayers(__ -> true)) {
             final int pcx = p.chunkPosition().x;
             final int pcz = p.chunkPosition().z;
             for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
                 for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
-                    uniqueChunks.add(ChunkPos.asLong(pcx + dx, pcz + dz));
+                    reusableChunkCollector.add(ChunkPos.asLong(pcx + dx, pcz + dz));
                 }
             }
         }
-        if (uniqueChunks.isEmpty()) return;
+        if (reusableChunkCollector.isEmpty()) return;
 
-        long[] chunkArray = uniqueChunks.toLongArray();
+        long[] chunkArray = reusableChunkCollector.toLongArray();
         if (maxChunksPerTick > 0 && chunkArray.length > maxChunksPerTick) {
             chunkArray = Arrays.copyOf(chunkArray, maxChunksPerTick);
         }
@@ -201,6 +208,22 @@ public final class RainWaterSystem {
         lastRunTick.remove(levelKey);
         lastCacheMaintenanceTick.remove(levelKey);
         chunkCache.keySet().removeIf(key -> key.level.equals(levelKey));
+        purgeQueuedPlacements(levelKey);
+    }
+
+    private static void purgeQueuedPlacements(ResourceKey<Level> levelKey) {
+        AtomicInteger removed = new AtomicInteger();
+        placementQueue.removeIf(task -> {
+            boolean matchesLevel = task.level().dimension().equals(levelKey);
+            if (matchesLevel) {
+                removed.incrementAndGet();
+            }
+            return matchesLevel;
+        });
+
+        if (removed.get() > 0) {
+            placementQueueSize.updateAndGet(current -> Math.max(0, current - removed.get()));
+        }
     }
 
     private static void spawnRainWaterInChunk(ServerLevel level, RandomSource random,
@@ -298,6 +321,10 @@ public final class RainWaterSystem {
     }
 
     private static void processPlacementQueue() {
+        if (placementQueue.isEmpty()) {
+            return;
+        }
+
         final int configuredLimit = FlowingFluids.config.rainPlacementQueueSize;
         final int maxProcessPerTick = configuredLimit <= 0 ? Integer.MAX_VALUE : configuredLimit;
         int processed = 0;
@@ -366,6 +393,11 @@ public final class RainWaterSystem {
     private static void initializeExecutorService() {
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
+            executorService = null;
+        }
+
+        if (!FlowingFluids.config.rainEnableMultithreading) {
+            return;
         }
 
         int threadCount = FlowingFluids.config.rainMaxThreads;
