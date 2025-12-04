@@ -137,7 +137,8 @@ public class AdaptiveTickScheduler {
             }
         }
 
-        // Average neighbor height already calculated above
+        // Calculate average neighbor height from accumulated values
+        float avgNeighborHeight = neighborCount > 0 ? totalNeighborHeight / neighborCount : fluidAmount;
 
         // Component 1: Height difference from neighbors
         float heightDiff = Math.abs(fluidAmount - avgNeighborHeight) / 255.0f;
