@@ -201,6 +201,22 @@ public final class RainWaterSystem {
         lastRunTick.remove(levelKey);
         lastCacheMaintenanceTick.remove(levelKey);
         chunkCache.keySet().removeIf(key -> key.level.equals(levelKey));
+        purgeQueuedPlacements(levelKey);
+    }
+
+    private static void purgeQueuedPlacements(ResourceKey<Level> levelKey) {
+        AtomicInteger removed = new AtomicInteger();
+        placementQueue.removeIf(task -> {
+            boolean matchesLevel = task.level().dimension().equals(levelKey);
+            if (matchesLevel) {
+                removed.incrementAndGet();
+            }
+            return matchesLevel;
+        });
+
+        if (removed.get() > 0) {
+            placementQueueSize.updateAndGet(current -> Math.max(0, current - removed.get()));
+        }
     }
 
     private static void spawnRainWaterInChunk(ServerLevel level, RandomSource random,
