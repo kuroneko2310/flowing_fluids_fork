@@ -209,6 +209,13 @@ public final class RainWaterSystem {
         lastCacheMaintenanceTick.remove(levelKey);
         chunkCache.keySet().removeIf(key -> key.level.equals(levelKey));
         purgeQueuedPlacements(levelKey);
+
+        // OPTIMIZATION: Clear all cached data for this dimension to prevent memory leaks
+        traben.flowing_fluids.AdaptiveTickScheduler.clearDimension(level);
+        traben.flowing_fluids.FluidSpatialGrid.clearDimension(level);
+        traben.flowing_fluids.ChunkLocalSlopeCache.clearDimension(level);
+        traben.flowing_fluids.FluidTickBuffer.clearDimension(level);
+        traben.flowing_fluids.water.WaterPressureSystem.onLevelUnload(level);
     }
 
     private static void purgeQueuedPlacements(ResourceKey<Level> levelKey) {

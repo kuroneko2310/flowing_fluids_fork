@@ -6,10 +6,12 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.ParallelFluidTickManager;
 import traben.flowing_fluids.config.FFCommands;
 import traben.flowing_fluids.config.FFConfigData;
 import traben.flowing_fluids.rain.RainWaterSystem;
@@ -41,6 +43,17 @@ public final class FlowingFluidsNeoForge {
         if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
             RainWaterSystem.onLevelUnload(level);
         }
+    }
+
+    @SubscribeEvent
+    public static void onServerStopping(ServerStoppingEvent event) {
+        FlowingFluids.info("Server stopping - cleaning up fluid system caches...");
+        ParallelFluidTickManager.shutdown();
+        traben.flowing_fluids.EnhancedFluidBFS.shutdown();
+        traben.flowing_fluids.AdaptiveTickScheduler.clearAll();
+        traben.flowing_fluids.FluidSpatialGrid.clearAll();
+        traben.flowing_fluids.ChunkLocalSlopeCache.clearAll();
+        traben.flowing_fluids.FluidTickBuffer.clearBuffer();
     }
 }
 

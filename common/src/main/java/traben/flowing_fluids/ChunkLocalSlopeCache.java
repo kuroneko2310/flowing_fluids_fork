@@ -181,6 +181,21 @@ public class ChunkLocalSlopeCache {
     }
 
     /**
+     * Clears the cache for a specific dimension.
+     * Call this when a dimension/level is unloaded to prevent memory leaks.
+     */
+    public static void clearDimension(LevelAccessor level) {
+        if (level == null) return;
+        DimensionKey key = DimensionKey.of(level);
+        DimensionCache removed = DIMENSION_CACHES.remove(key);
+        if (removed != null) {
+            removed.chunkCaches.clear();
+            removed.gradientCaches.clear();
+            removed.chunkLocks.clear();
+        }
+    }
+
+    /**
      * Clears all caches (useful for testing or memory management).
      */
     public static void clearAll() {

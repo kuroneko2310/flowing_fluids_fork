@@ -181,6 +181,18 @@ public class FluidTickBuffer {
     }
 
     /**
+     * Clears buffers for a specific dimension when it's unloaded.
+     * Call this to prevent memory leaks from stale dimension references.
+     */
+    public static void clearDimension(LevelAccessor level) {
+        if (level == null) return;
+        DimensionKey key = DimensionKey.of(level);
+        for (ThreadBufferEntry entry : threadBuffers.values()) {
+            entry.buffer.clearDimension(key);
+        }
+    }
+
+    /**
      * Gets the total number of buffered fluid changes across all threads (for monitoring).
      */
     public static int getBufferedChangeCount() {
