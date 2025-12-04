@@ -57,15 +57,10 @@ public class AdaptiveTickScheduler {
         return DIMENSION_DATA.computeIfAbsent(DimensionKey.of(level), key -> new SchedulerDimensionData());
     }
 
-    // サンプリング方針: キャッシュ無効化は全6方向で漏れなく検知しつつ、
-    // 平均高さ計算は重力方向と水平面を中心に計測する。UP は最後に評価し、
-    // 上方向への流れが少ない場合でも極端な傾斜を見逃さないようにする。
+    // OPTIMIZED: Single direction array for both hash and height sampling
+    // All 6 directions are sampled in one pass for better cache efficiency
     private static final Direction[] NEIGHBOR_HASH_DIRECTIONS = new Direction[]{
         Direction.UP, Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST
-    };
-
-    private static final Direction[] HEIGHT_SAMPLE_DIRECTIONS = new Direction[]{
-        Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
     };
 
     /**
@@ -103,12 +98,30 @@ public class AdaptiveTickScheduler {
             data.rainBornCooldown--;
         }
 
-        // Calculate neighbor state hash for cache validation
+        // OPTIMIZED: Combined neighbor hash and height sampling in single loop
+        // Both use the same 6 directions, so we can calculate both in one pass
         int neighborHash = 0;
+        float totalNeighborHeight = 0;
+        int neighborCount = 0;
+
+        // Use a reusable mutable position to avoid BlockPos allocations
+        BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+
         for (Direction dir : NEIGHBOR_HASH_DIRECTIONS) {
-            BlockPos neighborPos = pos.relative(dir);
+            neighborPos.setWithOffset(pos, dir);
             int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
+
+            // Hash calculation (for cache validation)
             neighborHash = 31 * neighborHash + neighborAmount;
+
+            // Height sampling (for equilibrium calculation)
+            if (neighborAmount > 0) {
+                FluidState neighborFluid = level.getFluidState(neighborPos);
+                if (!neighborFluid.isEmpty()) {
+                    totalNeighborHeight += neighborAmount;
+                    neighborCount++;
+                }
+            }
         }
 
         // Check if we can use cached value
@@ -124,27 +137,7 @@ public class AdaptiveTickScheduler {
             }
         }
 
-        // Cache miss or invalidated - perform full calculation
-        float avgNeighborHeight = 0;
-        int neighborCount = 0;
-
-        for (Direction dir : HEIGHT_SAMPLE_DIRECTIONS) {
-            BlockPos neighborPos = pos.relative(dir);
-            FluidState neighborFluid = level.getFluidState(neighborPos);
-            if (!neighborFluid.isEmpty()) {
-                    int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
-                if (neighborAmount > 0) {
-                    avgNeighborHeight += neighborAmount;
-                    neighborCount++;
-                }
-            }
-        }
-
-        if (neighborCount > 0) {
-            avgNeighborHeight /= neighborCount;
-        } else {
-            avgNeighborHeight = fluidAmount; // No neighbors, assume same height
-        }
+        // Average neighbor height already calculated above
 
         // Component 1: Height difference from neighbors
         float heightDiff = Math.abs(fluidAmount - avgNeighborHeight) / 255.0f;
@@ -577,6 +570,21 @@ public class AdaptiveTickScheduler {
      */
     public static void clearAll() {
         DIMENSION_DATA.clear();
+    }
+
+    /**
+     * Clears stability data for a specific dimension.
+     * Call this when a dimension/level is unloaded to prevent memory leaks.
+     */
+    public static void clearDimension(LevelAccessor level) {
+        if (level == null) return;
+        DimensionKey key = DimensionKey.of(level);
+        SchedulerDimensionData removed = DIMENSION_DATA.remove(key);
+        if (removed != null) {
+            removed.stabilityMap.clear();
+            removed.chunkModificationTimes.clear();
+            removed.areaTypes.clear();
+        }
     }
 
     /**

@@ -26,8 +26,8 @@ import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Basic water pressure system used to stress wooden barriers when surrounded by water.
@@ -38,13 +38,26 @@ import java.util.Map;
 public final class WaterPressureSystem {
     private static final float WARNING_RATIO = 0.75f;
     private static final int WATER_DEPTH_SAMPLE = 10;
-    private static final Map<ResourceKey<Level>, LevelState> LEVEL_STATE = new HashMap<>();
+    // FIXED: Use ConcurrentHashMap for thread safety
+    private static final Map<ResourceKey<Level>, LevelState> LEVEL_STATE = new ConcurrentHashMap<>();
 
     private WaterPressureSystem() {
     }
 
     private static LevelState getState(ServerLevel level) {
         return LEVEL_STATE.computeIfAbsent(level.dimension(), key -> new LevelState());
+    }
+
+    /**
+     * Clears state data for a level when it's unloaded to prevent memory leaks.
+     */
+    public static void onLevelUnload(ServerLevel level) {
+        if (level == null) return;
+        LevelState removed = LEVEL_STATE.remove(level.dimension());
+        if (removed != null) {
+            removed.data.clear();
+            removed.positions.clear();
+        }
     }
 
     /**

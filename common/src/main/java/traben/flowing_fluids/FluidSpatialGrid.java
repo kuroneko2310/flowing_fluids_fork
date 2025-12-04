@@ -283,6 +283,20 @@ public class FluidSpatialGrid {
     }
 
     /**
+     * Clears the grid for a specific dimension.
+     * Call this when a dimension/level is unloaded to prevent memory leaks.
+     */
+    public static void clearDimension(LevelAccessor level) {
+        if (level == null) return;
+        DimensionKey key = DimensionKey.of(level);
+        DimensionStorage removed = DIMENSION_STORES.remove(key);
+        if (removed != null) {
+            removed.chunkGrids.clear();
+            removed.chunkAccessTimes.clear();
+        }
+    }
+
+    /**
      * Performs maintenance to prevent unbounded memory growth.
      * FIXED: Implements proper LRU eviction instead of random removal.
      */
@@ -354,8 +368,9 @@ public class FluidSpatialGrid {
         private final BitSet fluidPresence = new BitSet(GRID_SIZE);
         private final byte[] fluidAmounts = new byte[GRID_SIZE]; // 0-255, stored as signed bytes
 
-        // Layer 3: Connected component IDs
-        private final int[] componentIds = new int[GRID_SIZE];
+        // Layer 3: Connected component IDs - LAZILY INITIALIZED to save ~400KB per chunk
+        // Most chunks never need component tracking, so we only allocate when first accessed
+        private int[] componentIds = null;
 
         // FIXED: Track number of differential updates per macro cell for accuracy maintenance
         private final int[] macroUpdateCounts = new int[MACRO_GRID_SIZE];
@@ -427,11 +442,21 @@ public class FluidSpatialGrid {
         }
 
         public int getComponentId(BlockPos pos) {
+            if (componentIds == null) {
+                return 0; // No component tracking yet
+            }
             int index = posToIndex(pos);
             return componentIds[index];
         }
 
         public void setComponentId(BlockPos pos, int componentId) {
+            // Lazy initialization - only allocate when needed
+            if (componentIds == null) {
+                if (componentId == 0) {
+                    return; // Don't allocate just to set zero
+                }
+                componentIds = new int[GRID_SIZE];
+            }
             int index = posToIndex(pos);
             componentIds[index] = componentId;
         }
@@ -453,11 +478,10 @@ public class FluidSpatialGrid {
 
         /**
          * Invalidates all component IDs, forcing BFS recalculation.
+         * OPTIMIZED: Simply nullify the array instead of iterating - GC will clean up
          */
         public void invalidateComponents() {
-            for (int i = 0; i < componentIds.length; i++) {
-                componentIds[i] = 0;
-            }
+            componentIds = null; // Clear for GC, will be lazily re-allocated if needed
         }
 
         /**
@@ -514,34 +538,29 @@ public class FluidSpatialGrid {
         /**
          * Updates macro cell statistics with full scan (fallback for edge cases).
          * Recalculates average level and updates fluid presence flag.
+         * OPTIMIZED: Uses direct index calculation instead of creating BlockPos objects
          */
         private void updateMacroCellFull(BlockPos pos) {
             int macroIndex = posToMacroIndex(pos);
-            int macroX = (pos.getX() & 15) / MACRO_CELL_SIZE;
             int macroY = (pos.getY() - MIN_HEIGHT) / MACRO_CELL_SIZE;
-            int macroZ = (pos.getZ() & 15) / MACRO_CELL_SIZE;
 
             // Count fluids and sum amounts in this macro cell
             int fluidCount = 0;
             int totalAmount = 0;
 
-            int startX = macroX * MACRO_CELL_SIZE;
-            int startY = macroY * MACRO_CELL_SIZE + MIN_HEIGHT;
-            int startZ = macroZ * MACRO_CELL_SIZE;
+            // Calculate the Y range for this macro cell
+            int startYRelative = macroY * MACRO_CELL_SIZE;
+            int endYRelative = Math.min(startYRelative + MACRO_CELL_SIZE, TOTAL_HEIGHT);
 
-            for (int dx = 0; dx < MACRO_CELL_SIZE; dx++) {
-                for (int dy = 0; dy < MACRO_CELL_SIZE; dy++) {
-                    for (int dz = 0; dz < MACRO_CELL_SIZE; dz++) {
-                        int y = startY + dy;
-                        if (y < MIN_HEIGHT || y >= MAX_HEIGHT) continue;
-
-                        BlockPos checkPos = new BlockPos(
-                            (pos.getX() & ~15) + startX + dx,
-                            y,
-                            (pos.getZ() & ~15) + startZ + dz
-                        );
-
-                        int idx = posToIndex(checkPos);
+            // OPTIMIZED: Direct index calculation without BlockPos allocation
+            // Index formula: (y * CHUNK_SIZE * CHUNK_SIZE) + (z * CHUNK_SIZE) + x
+            // Since macro cells span full X/Z range (0-15), we iterate all x,z in chunk
+            for (int y = startYRelative; y < endYRelative; y++) {
+                int yOffset = y * CHUNK_SIZE * CHUNK_SIZE;
+                for (int z = 0; z < CHUNK_SIZE; z++) {
+                    int zOffset = z * CHUNK_SIZE;
+                    for (int x = 0; x < CHUNK_SIZE; x++) {
+                        int idx = yOffset + zOffset + x;
                         if (fluidPresence.get(idx)) {
                             fluidCount++;
                             totalAmount += (fluidAmounts[idx] & 0xFF);

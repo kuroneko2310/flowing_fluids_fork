@@ -604,6 +604,10 @@ public class EnhancedFluidBFS {
         return added;
     }
 
+    /**
+     * OPTIMIZED: Uses primitive arrays and reusable mutable positions to minimize allocations.
+     * Uses long-encoded positions instead of BlockPos objects throughout.
+     */
     private static void applyClusterDiffusion(Level level, FluidState sourceFluid, List<BlockPos> equalizedPositions,
                                               int budget, int heightThreshold, int maxClusterSize) {
         if (budget <= 0 || heightThreshold <= 0 || maxClusterSize <= 1) {
@@ -611,6 +615,14 @@ public class EnhancedFluidBFS {
         }
 
         LongOpenHashSet seen = new LongOpenHashSet();
+
+        // Reusable mutable position to avoid allocations
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+
+        // Reusable primitive arrays for cluster data (sized to maxClusterSize)
+        long[] clusterPositions = new long[maxClusterSize];
+        int[] clusterAmounts = new int[maxClusterSize];
 
         for (BlockPos pos : equalizedPositions) {
             long startKey = pos.asLong();
@@ -623,45 +635,53 @@ public class EnhancedFluidBFS {
                 continue;
             }
 
-            List<BlockPos> cluster = new ArrayList<>();
+            // Build cluster using primitive array instead of ArrayList<BlockPos>
+            int clusterSize = 0;
             LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
             queue.enqueue(startKey);
 
-            while (!queue.isEmpty() && cluster.size() < maxClusterSize) {
+            while (!queue.isEmpty() && clusterSize < maxClusterSize) {
                 long current = queue.dequeueLong();
-                BlockPos currentPos = new BlockPos(BlockPos.getX(current), BlockPos.getY(current), BlockPos.getZ(current));
                 if (!seen.add(current)) {
                     continue;
                 }
-                FluidState fluidState = level.getFluidState(currentPos);
+
+                mutablePos.set(BlockPos.getX(current), BlockPos.getY(current), BlockPos.getZ(current));
+                FluidState fluidState = level.getFluidState(mutablePos);
                 if (fluidState.isEmpty() || fluidState.getType() != sourceFluid.getType()) {
                     continue;
                 }
 
-                cluster.add(currentPos);
+                // Store position and amount
+                int amount = FluidSpatialGrid.getFluidAmount(level, mutablePos);
+                clusterPositions[clusterSize] = current;
+                clusterAmounts[clusterSize] = amount;
+                clusterSize++;
 
+                // Explore neighbors using direction step values directly
                 for (Direction dir : Direction.values()) {
-                    BlockPos neighbor = currentPos.relative(dir);
-                    long neighborKey = neighbor.asLong();
+                    neighborPos.setWithOffset(mutablePos, dir);
+                    long neighborKey = neighborPos.asLong();
                     if (seen.contains(neighborKey)) {
                         continue;
                     }
-                    FluidState neighborState = level.getFluidState(neighbor);
+                    FluidState neighborState = level.getFluidState(neighborPos);
                     if (!neighborState.isEmpty() && neighborState.getType() == sourceFluid.getType()) {
                         queue.enqueue(neighborKey);
                     }
                 }
             }
 
-            if (cluster.size() < 2) {
+            if (clusterSize < 2) {
                 continue;
             }
 
-            int minAmount = Integer.MAX_VALUE;
-            int maxAmount = Integer.MIN_VALUE;
-            int total = 0;
-            for (BlockPos clusterPos : cluster) {
-                int amount = FluidSpatialGrid.getFluidAmount(level, clusterPos);
+            // Calculate min/max/total in single pass using stored amounts
+            int minAmount = clusterAmounts[0];
+            int maxAmount = clusterAmounts[0];
+            int total = clusterAmounts[0];
+            for (int i = 1; i < clusterSize; i++) {
+                int amount = clusterAmounts[i];
                 minAmount = Math.min(minAmount, amount);
                 maxAmount = Math.max(maxAmount, amount);
                 total += amount;
@@ -671,11 +691,10 @@ public class EnhancedFluidBFS {
                 continue;
             }
 
-            int average = total / cluster.size();
+            int average = total / clusterSize;
             int totalExcess = 0;
-            for (BlockPos clusterPos : cluster) {
-                int amount = FluidSpatialGrid.getFluidAmount(level, clusterPos);
-                int delta = amount - average;
+            for (int i = 0; i < clusterSize; i++) {
+                int delta = clusterAmounts[i] - average;
                 if (delta > 0) {
                     totalExcess += delta;
                 }
@@ -688,27 +707,28 @@ public class EnhancedFluidBFS {
             int allowedTransfer = Math.min(budget, totalExcess);
             float ratio = allowedTransfer / (float) totalExcess;
 
-            int[] newAmounts = new int[cluster.size()];
+            // Calculate new amounts in-place using clusterAmounts array
             int newTotal = 0;
-
-            for (int i = 0; i < cluster.size(); i++) {
-                BlockPos clusterPos = cluster.get(i);
-                int amount = FluidSpatialGrid.getFluidAmount(level, clusterPos);
+            for (int i = 0; i < clusterSize; i++) {
+                int amount = clusterAmounts[i];
                 int delta = amount - average;
                 int adjustment = Math.round(Math.abs(delta) * ratio);
                 int newAmount = delta >= 0 ? amount - adjustment : amount + adjustment;
-                newAmounts[i] = Math.max(0, newAmount);
-                newTotal += newAmounts[i];
+                clusterAmounts[i] = Math.max(0, newAmount);
+                newTotal += clusterAmounts[i];
             }
 
+            // Apply correction to maintain total
             int correction = total - newTotal;
-            if (correction != 0 && !cluster.isEmpty()) {
-                newAmounts[0] = Math.max(0, newAmounts[0] + correction);
+            if (correction != 0) {
+                clusterAmounts[0] = Math.max(0, clusterAmounts[0] + correction);
             }
 
-            for (int i = 0; i < cluster.size(); i++) {
-                BlockPos clusterPos = cluster.get(i);
-                FluidTickBuffer.bufferFluidChange(level, clusterPos, newAmounts[i], newAmounts[i] > 0, sourceFluid.getType());
+            // Buffer all changes
+            for (int i = 0; i < clusterSize; i++) {
+                long posKey = clusterPositions[i];
+                mutablePos.set(BlockPos.getX(posKey), BlockPos.getY(posKey), BlockPos.getZ(posKey));
+                FluidTickBuffer.bufferFluidChange(level, mutablePos, clusterAmounts[i], clusterAmounts[i] > 0, sourceFluid.getType());
             }
 
             budget -= allowedTransfer;
