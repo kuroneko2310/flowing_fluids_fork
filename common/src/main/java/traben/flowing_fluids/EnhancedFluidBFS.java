@@ -131,6 +131,8 @@ public class EnhancedFluidBFS {
             LongOpenHashSet visited = new LongOpenHashSet();
             LongArrayList visitedOrder = new LongArrayList();
 
+            EqualizationContext equalizationContext = new EqualizationContext(effectiveMaxNodes);
+
             BlockPos.MutableBlockPos reusablePos = new BlockPos.MutableBlockPos();
 
             long startLong = startPos.asLong();
@@ -199,7 +201,7 @@ public class EnhancedFluidBFS {
                         maxVisitedAmount = Math.max(maxVisitedAmount, neighborAmount);
 
                         boolean isDrop = currentY > neighborY;
-                        if (shouldEqualize(currentAmount, neighborAmount) || isDrop) {
+                        if (shouldEqualize(currentAmount, neighborAmount, equalizationContext) || isDrop) {
                             dropEncountered = dropEncountered || isDrop;
                             addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
                             reusablePos.set(currentX, currentY, currentZ);
@@ -223,7 +225,7 @@ public class EnhancedFluidBFS {
             // 探査は軽量で、遮蔽物で打ち切る。
             if (FlowingFluids.config.inletProbeMaxSteps > 0) {
                 nodesExplored += runInletProbe(level, startFluid, startPos, inletGradient, visited, visitedOrder,
-                    equalizedPositions, equalizedKeys, reusablePos);
+                    equalizedPositions, equalizedKeys, reusablePos, equalizationContext);
             }
 
             float normalizedDistance = clampedDistance <= 4 ? 1.0f : (clampedDistance / 4.0f);
@@ -239,7 +241,8 @@ public class EnhancedFluidBFS {
             );
             if (horizontalBudget > 0) {
                 nodesExplored += runHorizontalSupplement(level, startFluid, visited, visitedOrder, equalizedPositions,
-                    equalizedKeys, reusablePos, horizontalBudget, FlowingFluids.config.horizontalSupplementDepth);
+                    equalizedKeys, reusablePos, horizontalBudget, FlowingFluids.config.horizontalSupplementDepth,
+                    equalizationContext);
             }
 
             // OPTIMIZED: min/max now tracked during BFS loop above - no separate O(n) pass needed
@@ -304,12 +307,44 @@ public class EnhancedFluidBFS {
 
     /**
      * Determines if two positions should equalize their fluid amounts.
+     *
+     * A relaxed budget lets us react to 1-level differences (to smooth out flat surfaces)
+     * without triggering endless churn on every slight variation.
      */
-    private static boolean shouldEqualize(int amount1, int amount2) {
-        // Equalize if difference is meaningful (>= 2 internal units)
-        // This widens leveling to cover typical canal heights (e.g., 3 vs 1),
-        // preventing distant segments from staying overfilled after long flows.
-        return Math.abs(amount1 - amount2) >= 2;
+    private static boolean shouldEqualize(int amount1, int amount2, EqualizationContext context) {
+        int diff = Math.abs(amount1 - amount2);
+        if (diff >= 2) {
+            return true;
+        }
+
+        if (diff == 1 && context != null && context.allowRelaxedEqualization()) {
+            // Avoid jitter when both sides are empty; otherwise allow gentle smoothing.
+            return amount1 > 0 || amount2 > 0;
+        }
+
+        return false;
+    }
+
+    private static class EqualizationContext {
+        private static final int MIN_RELAXED_ALLOWANCE = 8;
+        private static final int MAX_RELAXED_ALLOWANCE = 64;
+
+        private final int relaxedEqualizationAllowance;
+        private int relaxedEqualizationsUsed = 0;
+
+        EqualizationContext(int nodeBudget) {
+            int scaled = nodeBudget / 32;
+            this.relaxedEqualizationAllowance = Math.min(MAX_RELAXED_ALLOWANCE,
+                Math.max(MIN_RELAXED_ALLOWANCE, scaled));
+        }
+
+        boolean allowRelaxedEqualization() {
+            if (relaxedEqualizationsUsed >= relaxedEqualizationAllowance) {
+                return false;
+            }
+            relaxedEqualizationsUsed++;
+            return true;
+        }
     }
 
     /**
@@ -459,12 +494,14 @@ public class EnhancedFluidBFS {
         // Calculate total fluid amount and collect valid positions
         int totalAmount = 0;
         List<BlockPos> validPos = new ArrayList<>();
+        List<Integer> validAmounts = new ArrayList<>();
 
         for (BlockPos pos : positions) {
             int amount = FluidSpatialGrid.getFluidAmount(level, pos);
             if (amount > 0 || canAcceptFluid(level, pos)) {
                 totalAmount += amount;
                 validPos.add(pos);
+                validAmounts.add(amount);
             }
         }
 
@@ -476,12 +513,25 @@ public class EnhancedFluidBFS {
         int averageAmount = totalAmount / validPos.size();
         int remainder = totalAmount % validPos.size();
 
-        // Distribute fluid evenly to valid positions only
+        List<Integer> distributionOrder = new ArrayList<>(validPos.size());
         for (int i = 0; i < validPos.size(); i++) {
-            BlockPos pos = validPos.get(i);
+            distributionOrder.add(i);
+        }
+        distributionOrder.sort((a, b) -> {
+            int cmp = Integer.compare(validAmounts.get(a), validAmounts.get(b));
+            if (cmp != 0) {
+                return cmp;
+            }
+            return Long.compare(validPos.get(a).asLong(), validPos.get(b).asLong());
+        });
 
-            // Give remainder to first few positions
-            int newAmount = averageAmount + (i < remainder ? 1 : 0);
+        // Distribute fluid evenly to valid positions only
+        for (int rank = 0; rank < distributionOrder.size(); rank++) {
+            int index = distributionOrder.get(rank);
+            BlockPos pos = validPos.get(index);
+
+            // Give remainder to lowest water levels first
+            int newAmount = averageAmount + (rank < remainder ? 1 : 0);
 
             // Buffer the change with null safety
             FluidState fluidState = level.getFluidState(pos);
@@ -514,7 +564,7 @@ public class EnhancedFluidBFS {
     private static int runHorizontalSupplement(Level level, FluidState startFluid, LongOpenHashSet visited,
                                                LongArrayList visitedOrder, List<BlockPos> equalizedPositions,
                                                LongOpenHashSet equalizedKeys, BlockPos.MutableBlockPos reusablePos,
-                                               int nodeBudget, int depthLimit) {
+                                               int nodeBudget, int depthLimit, EqualizationContext equalizationContext) {
         if (nodeBudget <= 0 || depthLimit <= 0) {
             return 0;
         }
@@ -562,7 +612,7 @@ public class EnhancedFluidBFS {
                     addedNodes++;
 
                     int neighborAmount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
-                    if (shouldEqualize(currentAmount, neighborAmount)) {
+                    if (shouldEqualize(currentAmount, neighborAmount, equalizationContext)) {
                         addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
                         reusablePos.set(currentX, currentY, currentZ);
                         addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
@@ -586,7 +636,7 @@ public class EnhancedFluidBFS {
     private static int runInletProbe(Level level, FluidState startFluid, BlockPos startPos, Direction gradient,
                                      LongOpenHashSet visited, LongArrayList visitedOrder,
                                      List<BlockPos> equalizedPositions, LongOpenHashSet equalizedKeys,
-                                     BlockPos.MutableBlockPos reusablePos) {
+                                     BlockPos.MutableBlockPos reusablePos, EqualizationContext equalizationContext) {
         if (gradient == null || gradient.getAxis() == Direction.Axis.Y) {
             return 0; // 上下のみの勾配では入口延伸の効果が薄い
         }
@@ -622,7 +672,7 @@ public class EnhancedFluidBFS {
             added++;
 
             int amount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
-            if (shouldEqualize(lastAmount, amount) || i == 0) {
+            if (shouldEqualize(lastAmount, amount, equalizationContext) || i == 0) {
                 addEqualizationTarget(equalizedPositions, equalizedKeys, reusablePos);
                 addEqualizationTarget(equalizedPositions, equalizedKeys, startPos);
             }
