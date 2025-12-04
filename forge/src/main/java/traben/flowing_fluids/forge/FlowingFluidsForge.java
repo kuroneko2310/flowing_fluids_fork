@@ -46,6 +46,7 @@ public final class FlowingFluidsForge {
     public static void onServerStopping(ServerStoppingEvent event) {
         FlowingFluids.info("Server stopping - cleaning up fluid system caches...");
         ParallelFluidTickManager.shutdown();
+        traben.flowing_fluids.EnhancedFluidBFS.shutdown();
         traben.flowing_fluids.AdaptiveTickScheduler.clearAll();
         traben.flowing_fluids.FluidSpatialGrid.clearAll();
         traben.flowing_fluids.ChunkLocalSlopeCache.clearAll();

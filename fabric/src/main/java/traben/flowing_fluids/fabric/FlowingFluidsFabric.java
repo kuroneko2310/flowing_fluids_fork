@@ -37,6 +37,7 @@ public final class FlowingFluidsFabric implements ModInitializer {
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             FlowingFluids.info("Server stopping - cleaning up fluid system caches...");
             ParallelFluidTickManager.shutdown();
+            traben.flowing_fluids.EnhancedFluidBFS.shutdown();
             traben.flowing_fluids.AdaptiveTickScheduler.clearAll();
             traben.flowing_fluids.FluidSpatialGrid.clearAll();
             traben.flowing_fluids.ChunkLocalSlopeCache.clearAll();
