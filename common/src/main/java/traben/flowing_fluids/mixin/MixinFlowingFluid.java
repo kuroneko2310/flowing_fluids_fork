@@ -514,6 +514,15 @@ public abstract class MixinFlowingFluid extends Fluid {
                 if (amountDestCanAccept > 0) {
                     int destNewAmount = fluidDownAmount + amountDestCanAccept;
                     int sourceNewAmount = amount - amountDestCanAccept;
+                    // Keep a tiny column when cascading fast so the stream doesn't visually break.
+                    if (sourceNewAmount == 0 && amount > 0) {
+                        var aboveState = level.getFluidState(blockPos.above());
+                        if (aboveState.getType().isSame(fluidState.getType()) && aboveState.getAmount() > 0) {
+                            int reserve = Math.min(getDropOff(level), amount);
+                            sourceNewAmount = reserve;
+                            destNewAmount = Math.max(0, destNewAmount - reserve);
+                        }
+                    }
                     // set both amounts
                     flowing_fluids$setOrRemoveWaterAmountAt(level, blockPos, sourceNewAmount, thisState, Direction.DOWN);
                     flowing_fluids$spreadTo2(level, posDown, stateDown, Direction.DOWN, destNewAmount);

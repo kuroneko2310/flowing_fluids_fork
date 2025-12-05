@@ -33,6 +33,7 @@ import org.jetbrains.annotations.NotNull;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.ChunkLocalSlopeCache;
 import traben.flowing_fluids.FluidSpatialGrid;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Locale;
 import java.util.function.Predicate;
@@ -346,7 +347,7 @@ public class FFFluidUtils {
             BlockPos.MutableBlockPos currentPos = new BlockPos.MutableBlockPos();
             BlockPos.MutableBlockPos neighbourPos = new BlockPos.MutableBlockPos();
 
-            int amountLeftToPlace = amountToPlace;
+            int totalCapacity = 0;
 
             while (!queue.isEmpty()) {
                 if (visited.size() > depth) {
@@ -364,17 +365,9 @@ public class FFFluidUtils {
                     int currentAmountAtPos = isSameFluid ? state.getAmount() : 0;
                     int space = 8 - currentAmountAtPos;
                     if (space > 0) {
-                        if (space >= amountLeftToPlace) {
-                            int newAmount = currentAmountAtPos + amountLeftToPlace;
-                            positionBuffer.add(currentKey);
-                            levelBuffer.add(newAmount);
-                            amountLeftToPlace = 0;
-                            break; // Early exit: found enough space
-                        } else {
-                            positionBuffer.add(currentKey);
-                            levelBuffer.add(8); // Fill to maximum
-                            amountLeftToPlace -= space;
-                        }
+                        positionBuffer.add(currentKey);
+                        levelBuffer.add(currentAmountAtPos);
+                        totalCapacity += space;
                     }
 
                     // Optimized direction priority: down first (gravity), then sides, then up
@@ -408,33 +401,72 @@ public class FFFluidUtils {
                     }
                 }
 
-                // Early exit check after exploring neighbors
-                if (amountLeftToPlace == 0) {
-                    break;
-                }
             }
 
             queue.clear();
             visited.clear();
 
-            if (amountLeftToPlace == amountToPlace) {
+            if (totalCapacity <= 0 || positionBuffer.isEmpty()) {
                 positionBuffer.clear();
                 levelBuffer.clear();
                 return Pair.of(amountToPlace, null);
             }
 
-            final long[] positions = positionBuffer.toLongArray();
-            final int[] levels = levelBuffer.toIntArray();
+            int placeable = Math.min(amountToPlace, totalCapacity);
+            int[] currentLevels = levelBuffer.toIntArray();
+            long[] positions = positionBuffer.toLongArray();
+            int count = currentLevels.length;
+
+            int[] finalLevels = Arrays.copyOf(currentLevels, count);
+            Integer[] order = new Integer[count];
+            for (int i = 0; i < count; i++) {
+                order[i] = i;
+            }
+            Arrays.sort(order, (a, b) -> Integer.compare(finalLevels[a], finalLevels[b]));
+
+            int remaining = placeable;
+            // Evenly raise the lowest reachable cells first so added fluid does not pile up at the entry.
+            for (int tier = 0; tier < count && remaining > 0; tier++) {
+                int currentLevel = finalLevels[order[tier]];
+                int nextLevel = tier == count - 1 ? 8 : finalLevels[order[tier + 1]];
+                int span = Math.max(0, nextLevel - currentLevel);
+                if (span == 0) {
+                    continue;
+                }
+
+                int needed = span * (tier + 1);
+                if (remaining >= needed) {
+                    for (int i = 0; i <= tier; i++) {
+                        finalLevels[order[i]] += span;
+                    }
+                    remaining -= needed;
+                } else {
+                    int share = remaining / (tier + 1);
+                    int extra = remaining % (tier + 1);
+                    for (int i = 0; i <= tier; i++) {
+                        finalLevels[order[i]] += share + (i < extra ? 1 : 0);
+                    }
+                    remaining = 0;
+                    break;
+                }
+            }
+
+            int placed = placeable - remaining;
+            int unplaced = amountToPlace - placed;
 
             positionBuffer.clear();
             levelBuffer.clear();
 
-            return Pair.of(amountLeftToPlace, () -> {
+            if (placed <= 0) {
+                return Pair.of(amountToPlace, null);
+            }
+
+            return Pair.of(unplaced, () -> {
                 BlockPos.MutableBlockPos applyPos = new BlockPos.MutableBlockPos();
-                for (int i = 0; i < positions.length; i++) {
+                for (int i = 0; i < count; i++) {
                     long key = positions[i];
                     applyPos.set(BlockPos.getX(key), BlockPos.getY(key), BlockPos.getZ(key));
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, applyPos, fluid, levels[i]);
+                    FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, applyPos, fluid, finalLevels[i]);
                 }
             });
         }

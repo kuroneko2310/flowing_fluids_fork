@@ -511,15 +511,21 @@ public final class RainWaterSystem {
         outPos.set(x, surfaceY, z);
         BlockState s = level.getBlockState(outPos);
 
+        final int maxSearchDepth = FlowingFluids.config.rainMaxSurfaceSearchDepth;
+
+        if (s.is(BlockTags.LEAVES)) {
+            int steps = 0;
+            while (outPos.getY() >= minBuildY && s.is(BlockTags.LEAVES) && steps++ < maxSearchDepth + 2) {
+                outPos.move(0, -1, 0);
+                s = level.getBlockState(outPos);
+            }
+            if (outPos.getY() < minBuildY || s.is(BlockTags.LEAVES)) {
+                return false;
+            }
+        }
+
         if (s.canBeReplaced()) {
             return true;
-        }
-        if (s.is(BlockTags.LEAVES)) {
-            tmpAbove.set(x, surfaceY + 1, z);
-            if (level.getBlockState(tmpAbove).isAir()) {
-                outPos.set(tmpAbove);
-                return true;
-            }
         }
         if (s.isFaceSturdy(level, outPos, Direction.UP)) {
             tmpAbove.set(x, surfaceY + 1, z);
@@ -529,7 +535,6 @@ public final class RainWaterSystem {
             }
         }
 
-        final int maxSearchDepth = FlowingFluids.config.rainMaxSurfaceSearchDepth;
         int steps = 0;
         while (outPos.getY() >= minBuildY && steps++ < maxSearchDepth) {
             final BlockState st = level.getBlockState(outPos);

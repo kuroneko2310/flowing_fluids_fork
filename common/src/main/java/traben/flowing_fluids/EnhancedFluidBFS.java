@@ -112,6 +112,15 @@ public class EnhancedFluidBFS {
             effectiveMaxNodes = Math.max(128, Math.round(maxNodes * budgetFactor));
         }
 
+        final float distanceLoadFactor = getDistanceLoadSheddingFactor();
+        int budgetCap = AdaptiveTickScheduler.getBFSBudget(level, startPos);
+        effectiveMaxNodes = Math.min(effectiveMaxNodes, budgetCap);
+        effectiveMaxNodes = Math.max(256, Math.round(effectiveMaxNodes * distanceLoadFactor));
+
+        int depthCap = Math.max(8, FlowingFluids.config.bfsMaxSearchDistance);
+        effectiveMaxDepth = Math.min(effectiveMaxDepth, depthCap);
+        effectiveMaxDepth = Math.max(8, Math.round(effectiveMaxDepth * Math.max(0.6f, distanceLoadFactor)));
+
         // OPTIMIZATION: Check if this position is already being processed
         long posKey = startPos.asLong();
         if (!processingPositions.add(posKey)) {
@@ -142,7 +151,7 @@ public class EnhancedFluidBFS {
 
             int nodesExplored = 0;
             int momentumBudget = 0;
-            int momentumCap = getDistanceScaledMomentumCap();
+            int momentumCap = Math.round(getDistanceScaledMomentumCap() * Math.max(0.7f, distanceLoadFactor));
             boolean dropEncountered = false;
             ChunkPos chunkPos = new ChunkPos(startPos);
             Direction inletGradient = FluidSpatialGrid.getGradientDirection(level, startPos);
@@ -170,9 +179,14 @@ public class EnhancedFluidBFS {
                 maxVisitedAmount = Math.max(maxVisitedAmount, currentAmount);
 
                 // Explore neighbors with weighted priority
-                Direction[] directions = getWeightedDirections(gradientVector);
+                Direction[] directions = prioritizeDownward(getWeightedDirections(gradientVector));
+                boolean skipUpward = distanceLoadFactor < 0.75f && nodesExplored > (effectiveMaxNodes / 2);
 
                 for (Direction dir : directions) {
+                    if (skipUpward && dir == Direction.UP) {
+                        continue;
+                    }
+
                     int neighborX = currentX + dir.getStepX();
                     int neighborY = currentY + dir.getStepY();
                     int neighborZ = currentZ + dir.getStepZ();
@@ -216,6 +230,13 @@ public class EnhancedFluidBFS {
                         }
                     }
                 }
+
+                // Early exit: if variance stays tiny and no big drops seen for a while, stop exploring.
+                if (!dropEncountered && visited.size() > 64 && (nodesExplored % 64 == 0)) {
+                    if (maxVisitedAmount - minVisitedAmount <= 1) {
+                        break;
+                    }
+                }
             }
 
             int clampedDistance = Math.max(1, Math.min(FlowingFluids.config.waterFlowDistance,
@@ -223,8 +244,9 @@ public class EnhancedFluidBFS {
 
             // 直線水路の入口で流入が止まらないよう、勾配方向へ細い探査を入れる。
             // 探査は軽量で、遮蔽物で打ち切る。
-            if (FlowingFluids.config.inletProbeMaxSteps > 0) {
-                nodesExplored += runInletProbe(level, startFluid, startPos, inletGradient, visited, visitedOrder,
+            int inletSteps = Math.max(0, Math.round(FlowingFluids.config.inletProbeMaxSteps * distanceLoadFactor));
+            if (inletSteps > 0) {
+                nodesExplored += runInletProbe(level, startFluid, startPos, inletGradient, inletSteps, visited, visitedOrder,
                     equalizedPositions, equalizedKeys, reusablePos, equalizationContext);
             }
 
@@ -239,9 +261,11 @@ public class EnhancedFluidBFS {
                 scaledSupplement,
                 Math.max(0, effectiveMaxNodes + scaledSupplement - nodesExplored)
             );
+            horizontalBudget = Math.max(0, Math.round(horizontalBudget * distanceLoadFactor));
+            int horizontalDepth = Math.max(1, Math.round(FlowingFluids.config.horizontalSupplementDepth * (0.6f + 0.4f * distanceLoadFactor)));
             if (horizontalBudget > 0) {
                 nodesExplored += runHorizontalSupplement(level, startFluid, visited, visitedOrder, equalizedPositions,
-                    equalizedKeys, reusablePos, horizontalBudget, FlowingFluids.config.horizontalSupplementDepth,
+                    equalizedKeys, reusablePos, horizontalBudget, horizontalDepth,
                     equalizationContext);
             }
 
@@ -261,6 +285,7 @@ public class EnhancedFluidBFS {
 
             int diffusionBudget = Math.max(0, (int) Math.round(
                 (effectiveMaxNodes - nodesExplored) * FlowingFluids.config.clusterDiffusionBudgetPortion));
+            diffusionBudget = Math.max(0, Math.round(diffusionBudget * distanceLoadFactor));
             if (diffusionBudget > 0) {
                 applyClusterDiffusion(level, startFluid, equalizedPositions, diffusionBudget,
                     FlowingFluids.config.clusterDiffusionHeightThreshold,
@@ -375,6 +400,25 @@ public class EnhancedFluidBFS {
     }
 
     /**
+     * Downward優先で方向を並び替える簡易ヘルパー。
+     * 下り方向を先に処理することで、排水溝や谷底への到達を早め、無駄な水平・上方向探索を減らす。
+     */
+    private static Direction[] prioritizeDownward(Direction[] directions) {
+        if (directions.length == 0 || directions[0] == Direction.DOWN) {
+            return directions;
+        }
+        Direction[] reordered = directions.clone();
+        for (int i = 1; i < reordered.length; i++) {
+            if (reordered[i] == Direction.DOWN) {
+                reordered[i] = reordered[0];
+                reordered[0] = Direction.DOWN;
+                break;
+            }
+        }
+        return reordered;
+    }
+
+    /**
      * 水流距離が長い場合のモーメントム上限を計算する。
      *
      * OPTIMIZED: 長距離設定でもより高いモーメントムを維持し、
@@ -401,6 +445,21 @@ public class EnhancedFluidBFS {
 
         // 最低でも64を確保（下り坂での効果を維持）
         return Math.max(64, scaled);
+    }
+
+    /**
+     * 流距離が長い設定時に探索量を間引く係数。
+     * 距離3以下では1.0、距離が伸びるほど0.35まで緩やかに低減する。
+     */
+    private static float getDistanceLoadSheddingFactor() {
+        int configured = Math.max(FlowingFluids.config.waterFlowDistance, 1);
+        int distanceCap = Math.max(configured, FlowingFluids.config.maxWaterFlowDistance);
+        int distance = Math.min(configured, distanceCap);
+        if (distance <= 3) {
+            return 1.0f;
+        }
+        float factor = 3.0f / distance;
+        return Math.max(0.35f, Math.min(1.0f, factor));
     }
 
     /**
@@ -633,7 +692,7 @@ public class EnhancedFluidBFS {
      * 勾配方向に沿って軽量な直線探索を行い、細い水路の入口が3ブロック程度で止まらないようにする。
      * 探査は遮蔽物で即終了し、既訪問セルには入らない。
      */
-    private static int runInletProbe(Level level, FluidState startFluid, BlockPos startPos, Direction gradient,
+    private static int runInletProbe(Level level, FluidState startFluid, BlockPos startPos, Direction gradient, int maxSteps,
                                      LongOpenHashSet visited, LongArrayList visitedOrder,
                                      List<BlockPos> equalizedPositions, LongOpenHashSet equalizedKeys,
                                      BlockPos.MutableBlockPos reusablePos, EqualizationContext equalizationContext) {
@@ -641,7 +700,7 @@ public class EnhancedFluidBFS {
             return 0; // 上下のみの勾配では入口延伸の効果が薄い
         }
 
-        int steps = Math.min(FlowingFluids.config.inletProbeMaxSteps, 32);
+        int steps = Math.min(Math.max(0, maxSteps), 32);
         if (steps <= 0) {
             return 0;
         }
