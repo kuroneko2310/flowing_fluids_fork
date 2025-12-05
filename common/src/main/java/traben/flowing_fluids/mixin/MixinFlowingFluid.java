@@ -65,6 +65,13 @@ public abstract class MixinFlowingFluid extends Fluid {
     private static final ThreadLocal<Short2BooleanOpenHashMap> ff$FLOW_DOWN_CACHE =
             ThreadLocal.withInitial(Short2BooleanOpenHashMap::new);
 
+    // Shared per-top-level slope search budget to prevent runaway recursion on vast flat surfaces.
+    // Budget is set at the start of flowing_fluids$getValidDirectionFromDeepSpreadSearch and
+    // consumed in flowing_fluids$getSlopeDistance.
+    @Unique
+    private static final ThreadLocal<int[]> ff$SLOPE_SEARCH_BUDGET =
+            ThreadLocal.withInitial(() -> new int[1]);
+
     @Unique
     private static final class FlowDownResult {
         private final int remainingAmount;
@@ -565,6 +572,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             boolean anyFlowableNeighbours2LevelsLowerOrMore = requiresSlope;
             BlockState sourceState = level.getBlockState(blockPos);
             BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos(blockPos.getX(), blockPos.getY(), blockPos.getZ());
+            Direction immediateLowDir = null;
 
             for (Direction direction : shuffled) {
                 mutablePos.set(blockPos.getX(), blockPos.getY(), blockPos.getZ());
@@ -580,14 +588,26 @@ public abstract class MixinFlowingFluid extends Fluid {
                     if (!anyFlowableNeighbours2LevelsLowerOrMore) {
                         anyFlowableNeighbours2LevelsLowerOrMore = amountDir < amount - 1;
                     }
+                    // Early fast-path: if we already found a neighbour 2+ levels lower, flow there without deep search.
+                    if (amountDir <= amount - 2) {
+                        immediateLowDir = direction;
+                        break;
+                    }
                     validDirections[validCount] = direction;
                     neighbourAmounts[validCount] = amountDir;
                     validCount++;
                 }
             }
 
+            if (immediateLowDir != null) {
+                return immediateLowDir;
+            }
+
             if (validCount == 0) {
                 return null;
+            }
+            if (validCount == 1) {
+                return validDirections[0];
             }
 
             for (int i = 0; i < validCount - 1; i++) {
@@ -632,6 +652,9 @@ public abstract class MixinFlowingFluid extends Fluid {
         // are still discovered. Reducing this distance to half (as before) limited searches
         // to 2 blocks for thin streams, making water ignore nearby drops.
         int adaptiveSlopeFindDistance = slopeFindDistance;
+
+        // Set per-search recursion budget: proportional to search distance, with a floor to still find nearby drops.
+        ff$SLOPE_SEARCH_BUDGET.get()[0] = Math.max(24, adaptiveSlopeFindDistance * 6);
 
         Short2BooleanOpenHashMap posCanFlowDown = ff$getFlowDownCache();
         posCanFlowDown.put(ffCacheKey(blockPos, blockPos), false);
@@ -692,6 +715,12 @@ public abstract class MixinFlowingFluid extends Fluid {
     protected int flowing_fluids$getSlopeDistance(LevelReader level, BlockPos sourcePosForKey, int distance, Direction fromDir, Fluid sourceFluid, int sourceAmount,
                                                   BlockPos newPos, Short2ObjectMap<Pair<BlockState, FluidState>> statesAtPos, Short2BooleanMap posCanFlowDown,
                                                   boolean forceSlopeDownSameOrEmpty, int slopeFindDistance) {
+        // Global budget to avoid deep recursion storms on large flat surfaces.
+        int[] budget = ff$SLOPE_SEARCH_BUDGET.get();
+        if (--budget[0] < 0) {
+            return 1000; // treat as no slope found within budget
+        }
+
         // OPTIMIZED: Early termination conditions to reduce cubic complexity
         // currently in a worse case scenario, water spreading on flat ground, this deep search will perform:
         // 160 side spread, flowing_fluids$canSpreadToOptionallySameOrEmpty() checks

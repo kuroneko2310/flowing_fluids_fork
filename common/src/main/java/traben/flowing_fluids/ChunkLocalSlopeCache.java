@@ -24,7 +24,11 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class ChunkLocalSlopeCache {
 
-    private static final int CACHE_SIZE_PER_CHUNK = 64;
+    // Larger LRU per chunk to avoid thrashing when many fluid columns exist in one chunk.
+    // Profiling showed repeated slope recalculation dominating FlowingFluid.tick on flat pools
+    // (cache evictions were happening every few ticks). 192 entries keeps typical
+    // puddle/river footprints hot without meaningful memory growth.
+    private static final int CACHE_SIZE_PER_CHUNK = 192;
 
     private static final ConcurrentHashMap<DimensionKey, DimensionCache> DIMENSION_CACHES = new ConcurrentHashMap<>();
     private static final DimensionKey FALLBACK_KEY = DimensionKey.ofIdentity(ChunkLocalSlopeCache.class);

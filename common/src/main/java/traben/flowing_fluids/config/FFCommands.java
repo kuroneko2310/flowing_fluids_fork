@@ -53,6 +53,31 @@ public class FFCommands {
         return 1;
     }
 
+    // 日本語用の数値コマンドヘルパー（設定値と現在値を案内）
+    private static LiteralArgumentBuilder<CommandSourceStack> jpIntCommand(String name, String description, String argName, int min, int max,
+                                                                           Consumer<Integer> setter, Supplier<Integer> getter,
+                                                                           String setMessage) {
+        return Commands.literal(name)
+                .executes(cont -> message(cont, description + "\n現在値: " + getter.get()))
+                .then(Commands.argument(argName, IntegerArgumentType.integer(min, max))
+                        .executes(cont -> {
+                            setter.accept(cont.getArgument(argName, Integer.class));
+                            return messageAndSaveConfig(cont, setMessage + getter.get());
+                        }));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> jpFloatCommand(String name, String description, String argName, float min, float max,
+                                                                             Consumer<Float> setter, Supplier<Float> getter,
+                                                                             String setMessage) {
+        return Commands.literal(name)
+                .executes(cont -> message(cont, description + "\n現在値: " + getter.get()))
+                .then(Commands.argument(argName, FloatArgumentType.floatArg(min, max))
+                        .executes(cont -> {
+                            setter.accept(cont.getArgument(argName, Float.class));
+                            return messageAndSaveConfig(cont, setMessage + getter.get());
+                        }));
+    }
+
     private static  LiteralArgumentBuilder<CommandSourceStack> floatChanceCommand(String name, String description, Consumer<Float> setter, Supplier<Float> getter) {
         return floatCommand(name, description, "chance", 0, 1, setter, getter);
     }
@@ -442,6 +467,10 @@ public class FFCommands {
                                         "Sets the chance of any water losing a level during random ticks in the nether",
                                         a -> FlowingFluids.config.evaporationNetherChance = a,
                                         () -> FlowingFluids.config.evaporationNetherChance)
+                                ).then(booleanCommand("rain_system_enabled",
+                                        "Master toggle for all rain-driven water generation, puddles, and refills handled by Flowing Fluids.",
+                                        a -> FlowingFluids.config.enableRainSystem = a,
+                                        () -> FlowingFluids.config.enableRainSystem)
                                 ).then(floatChanceCommand("water_rain_refill_chance",
                                         "Sets the chance of non-full water tiles increasing their level while its rains and they are open to the sky, during random ticks. This provides access to renewable water given enough time.\nNOTE: this will always be forcibly limited to 1/3rd of the current water_puddle_evaporation_chance setting otherwise water will endlessly fill the world during rain, this does effectively cap this value to 0.33",
                                         a -> FlowingFluids.config.rainRefillChance = a,
@@ -506,6 +535,154 @@ public class FFCommands {
                                         "Controls if the infinite biome refilling only happens to water at exactly sea level.",
                                         a -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly = a, () -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly)
                                 )
+                        ).then(Commands.literal("rain")
+                                .executes(cont -> message(cont, "雨関連の設定です。/flowing_fluids settings rain <項目> で個別に変更できます。\n現在: 有効=" + FlowingFluids.config.enableRainSystem
+                                        + " / 生成間隔=" + FlowingFluids.config.rainGenerateIntervalTicks + "t / チャンク半径=" + FlowingFluids.config.rainChunkRadius
+                                        + " / 1チャンク当たり試行=" + FlowingFluids.config.rainAttemptsPerChunk))
+                                .then(booleanCommand("enable",
+                                        "雨システム全体のON/OFF。水たまり生成や雨補給をまとめて無効化できます。",
+                                        "雨システムを有効にしました。",
+                                        "雨システムを無効にしました。",
+                                        a -> FlowingFluids.config.enableRainSystem = a, () -> FlowingFluids.config.enableRainSystem))
+                                .then(booleanCommand("biome_filter",
+                                        "バイオーム毎の降水可否判定を行います。無効化すると全バイオームで雨生成を試行します。",
+                                        "バイオームフィルタを有効にしました。",
+                                        "バイオームフィルタを無効にしました。",
+                                        a -> FlowingFluids.config.rainEnableBiomeFiltering = a, () -> FlowingFluids.config.rainEnableBiomeFiltering))
+                                .then(booleanCommand("skip_infinite_biomes",
+                                        "無限水判定のバイオーム（海/川/沼など）を雨生成の対象から除外します。",
+                                        "無限水バイオームをスキップします。",
+                                        "無限水バイオームも対象にします。",
+                                        a -> FlowingFluids.config.rainSkipInfiniteWaterBiomes = a, () -> FlowingFluids.config.rainSkipInfiniteWaterBiomes))
+                                .then(booleanCommand("chunk_cache",
+                                        "雨生成用のチャンクキャッシュを使ってバイオーム判定を高速化します。",
+                                        "チャンクキャッシュを有効にしました。",
+                                        "チャンクキャッシュを無効にしました。",
+                                        a -> FlowingFluids.config.rainEnableChunkCaching = a, () -> FlowingFluids.config.rainEnableChunkCaching))
+                                .then(booleanCommand("multithread",
+                                        "雨生成を並列スレッドで処理します。チャンク数が多いときに高速化します。",
+                                        "雨生成の並列処理を有効にしました。",
+                                        "雨生成の並列処理を無効にしました。",
+                                        a -> FlowingFluids.config.rainEnableMultithreading = a, () -> FlowingFluids.config.rainEnableMultithreading))
+                                .then(jpIntCommand("max_threads",
+                                        "雨処理に使う最大スレッド数。0は自動判定。",
+                                        "threads", 0, 32,
+                                        a -> FlowingFluids.config.rainMaxThreads = a,
+                                        () -> FlowingFluids.config.rainMaxThreads,
+                                        "最大スレッド数を設定しました: "))
+                                .then(jpIntCommand("generate_interval",
+                                        "雨生成を試行するtick間隔。数値が小さいほど頻繁に生成を試みます。",
+                                        "ticks", 1, 200,
+                                        a -> FlowingFluids.config.rainGenerateIntervalTicks = a,
+                                        () -> FlowingFluids.config.rainGenerateIntervalTicks,
+                                        "雨生成間隔を設定しました: "))
+                                .then(jpIntCommand("chunk_radius",
+                                        "プレイヤー周囲で雨生成を行うチャンク半径。",
+                                        "radius", 0, 8,
+                                        a -> FlowingFluids.config.rainChunkRadius = a,
+                                        () -> FlowingFluids.config.rainChunkRadius,
+                                        "雨生成チャンク半径を設定しました: "))
+                                .then(jpIntCommand("attempts_per_chunk",
+                                        "1チャンクあたりの雨水スポーン試行回数。",
+                                        "attempts", 0, 200,
+                                        a -> FlowingFluids.config.rainAttemptsPerChunk = a,
+                                        () -> FlowingFluids.config.rainAttemptsPerChunk,
+                                        "雨生成試行回数を設定しました: "))
+                                .then(jpFloatCommand("base_chance",
+                                        "雨生成の基本確率（0.0〜1.0）。",
+                                        "chance", 0f, 1f,
+                                        a -> FlowingFluids.config.rainBaseGenerateChance = a,
+                                        () -> FlowingFluids.config.rainBaseGenerateChance,
+                                        "基本確率を設定しました: "))
+                                .then(jpIntCommand("base_amount",
+                                        "1回の雨生成で置く水量（内部単位）。",
+                                        "amount", 1, 32,
+                                        a -> FlowingFluids.config.rainBaseWaterAmount = a,
+                                        () -> FlowingFluids.config.rainBaseWaterAmount,
+                                        "生成水量を設定しました: "))
+                                .then(jpIntCommand("max_chunks_per_tick",
+                                        "1tickで処理する最大チャンク数の上限。",
+                                        "chunks", 1, 512,
+                                        a -> FlowingFluids.config.rainMaxChunksPerTick = a,
+                                        () -> FlowingFluids.config.rainMaxChunksPerTick,
+                                        "1tickあたりチャンク上限を設定しました: "))
+                                .then(jpIntCommand("max_surface_search_depth",
+                                        "地表を探す最大深さ。0に近いほど軽くなります。",
+                                        "depth", 1, 16,
+                                        a -> FlowingFluids.config.rainMaxSurfaceSearchDepth = a,
+                                        () -> FlowingFluids.config.rainMaxSurfaceSearchDepth,
+                                        "表面探索の深さを設定しました: "))
+                                .then(jpIntCommand("max_water_stack_height",
+                                        "雨で積み上げる水の最大高さ。",
+                                        "height", 1, 8,
+                                        a -> FlowingFluids.config.rainMaxWaterStackHeight = a,
+                                        () -> FlowingFluids.config.rainMaxWaterStackHeight,
+                                        "最大スタック高さを設定しました: "))
+                                .then(booleanCommand("fills_higher",
+                                        "雨が既存の水より1段高い位置にも水を置くか。",
+                                        "雨で水を高く積む動作を有効にしました。",
+                                        "雨で水を高く積む動作を無効にしました。",
+                                        a -> FlowingFluids.config.rainFillsWaterHigherV2 = a, () -> FlowingFluids.config.rainFillsWaterHigherV2))
+                                .then(jpFloatCommand("level_jump_chance",
+                                        "雨リフィル後に追加で水位を+1する確率。",
+                                        "chance", 0f, 1f,
+                                        a -> FlowingFluids.config.rainLevelJumpChance = a,
+                                        () -> FlowingFluids.config.rainLevelJumpChance,
+                                        "水位ジャンプ確率を設定しました: "))
+                                .then(jpFloatCommand("surface_spawn_chance",
+                                        "雨で周囲の地面に浅い水たまりを生成する確率。",
+                                        "chance", 0f, 1f,
+                                        a -> FlowingFluids.config.rainSurfaceSpawnChance = a,
+                                        () -> FlowingFluids.config.rainSurfaceSpawnChance,
+                                        "水たまり生成確率を設定しました: "))
+                                .then(jpIntCommand("surface_spawn_level",
+                                        "生成する水たまりの高さ(1-8)。",
+                                        "level", 1, 8,
+                                        a -> FlowingFluids.config.rainSurfaceSpawnLevel = a,
+                                        () -> FlowingFluids.config.rainSurfaceSpawnLevel,
+                                        "水たまり高さを設定しました: "))
+                                .then(jpFloatCommand("queue_soft_cap_ratio",
+                                        "雨配置キューのソフト上限割合。1.0で上限なし、低いほど抑制。",
+                                        "ratio", 0f, 1f,
+                                        a -> FlowingFluids.config.rainQueueSoftCapRatio = a,
+                                        () -> FlowingFluids.config.rainQueueSoftCapRatio,
+                                        "キュー上限割合を設定しました: "))
+                                .then(jpFloatCommand("queue_min_multiplier",
+                                        "キューが埋まった際の最低生成倍率。",
+                                        "ratio", 0f, 1f,
+                                        a -> FlowingFluids.config.rainQueueMinChanceMultiplier = a,
+                                        () -> FlowingFluids.config.rainQueueMinChanceMultiplier,
+                                        "最低生成倍率を設定しました: "))
+                                .then(jpIntCommand("placement_queue_size",
+                                        "雨の水配置キューサイズ。大きいほど同時処理量が増えますがメモリ消費も増えます。",
+                                        "size", 64, 4096,
+                                        a -> FlowingFluids.config.rainPlacementQueueSize = a,
+                                        () -> FlowingFluids.config.rainPlacementQueueSize,
+                                        "配置キューサイズを設定しました: "))
+                                .then(jpIntCommand("placement_merge_distance",
+                                        "近傍の雨配置をまとめる距離。0で無効。",
+                                        "dist", 0, 4,
+                                        a -> FlowingFluids.config.rainPlacementAggregationDistance = a,
+                                        () -> FlowingFluids.config.rainPlacementAggregationDistance,
+                                        "配置統合距離を設定しました: "))
+                                .then(jpIntCommand("placement_max_combined_amount",
+                                        "まとめて配置する最大水量。",
+                                        "amount", 1, 64,
+                                        a -> FlowingFluids.config.rainPlacementMaxCombinedAmount = a,
+                                        () -> FlowingFluids.config.rainPlacementMaxCombinedAmount,
+                                        "配置合計上限を設定しました: "))
+                                .then(jpIntCommand("bfs_cooldown_ticks",
+                                        "雨で生成された水がBFS等を走るまでのクールダウンtick。",
+                                        "ticks", 1, 60,
+                                        a -> FlowingFluids.config.rainBfsCooldownTicks = a,
+                                        () -> FlowingFluids.config.rainBfsCooldownTicks,
+                                        "BFSクールダウンを設定しました: "))
+                                .then(jpIntCommand("max_chunks_cache_time_sec",
+                                        "雨チャンクキャッシュの保持時間(秒)。",
+                                        "seconds", 10, 3600,
+                                        a -> FlowingFluids.config.rainCacheDurationTicks = a * 20L,
+                                        () -> (int)(FlowingFluids.config.rainCacheDurationTicks / 20L),
+                                        "キャッシュ保持時間を設定しました(秒): "))
                         )
                 ).then(Commands.literal("~debug").executes(cont -> message(cont, "Debug commands you probably don't need these."))
                         .then(booleanCommand("random_ticks_printing",

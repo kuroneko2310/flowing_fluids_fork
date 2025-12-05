@@ -101,6 +101,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
 
     @Unique
     private boolean ff$tryRainFill(final Level level, final BlockPos blockPos, float chance) {
+        if (!FlowingFluids.config.enableRainSystem) return false;
         //this evaporation limit is critical!!!! otherwise the water fills endlessly
         int currentAmount = level.getFluidState(blockPos).getAmount();
         boolean blockedByInfiniteBiome = isInfBiome && isWithinInfBiomeHeights
@@ -188,6 +189,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
 
     @Unique
     private void ff$trySpawnSurfaceWater(Level level, BlockPos origin, RandomSource randomSource) {
+        if (!FlowingFluids.config.enableRainSystem) return;
         if (!level.isRaining() || FlowingFluids.config.rainSurfaceSpawnChance <= 0) return;
         if (!level.canSeeSky(origin.above())) return;
         if (randomSource.nextFloat() >= FlowingFluids.config.rainSurfaceSpawnChance) return;
