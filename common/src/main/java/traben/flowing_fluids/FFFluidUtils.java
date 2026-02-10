@@ -32,6 +32,7 @@ import net.minecraft.world.level.material.Fluids;
 import org.jetbrains.annotations.NotNull;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.ChunkLocalSlopeCache;
+import traben.flowing_fluids.ExtendedWaterlogStore;
 import traben.flowing_fluids.FluidSpatialGrid;
 import java.util.Arrays;
 import java.util.Collection;
@@ -149,6 +150,31 @@ public class FFFluidUtils {
         return getStateForFluidByAmount(fluid, amount).createLegacyBlock();
     }
 
+    public static boolean isExtendedWaterloggable(LevelAccessor level, BlockState state) {
+        if (!FlowingFluids.config.enableExtendedWaterlogging) return false;
+        if (!FlowingFluids.config.extendedWaterloggingAllowFences) return false;
+        var block = state.getBlock();
+        return state.is(net.minecraft.tags.BlockTags.FENCES)
+                || state.is(net.minecraft.tags.BlockTags.FENCE_GATES)
+                || state.is(net.minecraft.tags.BlockTags.WALLS)
+                || block == net.minecraft.world.level.block.Blocks.IRON_BARS;
+    }
+
+    public static FluidState getEffectiveFluidState(LevelAccessor level, BlockPos pos, BlockState state) {
+        FluidState base = state.getFluidState();
+        if (!base.isEmpty()) return base;
+        if (FlowingFluids.config.enableExtendedWaterlogging && ExtendedWaterlogStore.has(level, pos)) {
+            return ExtendedWaterlogStore.get(level, pos);
+        }
+        return base;
+    }
+
+    private static void notifyCaches(LevelAccessor levelAccessor, BlockPos pos, int newAmount) {
+        AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+        ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+        FluidSpatialGrid.setFluidAt(levelAccessor, pos, true, FluidAmountConverter.toInternal(newAmount));
+    }
+
 
     public static boolean setFluidStateAtPosToNewAmount(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid, int newAmount) {
         if (newAmount < 1) {
@@ -164,13 +190,26 @@ public class FFFluidUtils {
 
         //check if we are dealing with a waterlogged block
         var blockState = levelAccessor.getBlockState(pos);
+        boolean extendedWaterlog = isExtendedWaterloggable(levelAccessor, blockState);
+        if (extendedWaterlog) {
+            if (newAmount <= 0) {
+                ExtendedWaterlogStore.remove(levelAccessor, pos);
+                AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+                ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+                FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
+                return true;
+            }
+            ExtendedWaterlogStore.set(levelAccessor, pos, fluid, Math.min(newAmount, 8));
+            notifyCaches(levelAccessor, pos, newAmount);
+            return true;
+        }
         if (blockState.getBlock() instanceof LiquidBlockContainer liquidBlockContainer) {
             if (newAmount == 8) {
                 boolean result = liquidBlockContainer.placeLiquid(levelAccessor, pos, blockState, getStateForFluidByAmount(fluid, newAmount));
                 if (result) {
                     AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
                     ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
-                    FluidSpatialGrid.setFluidAt(levelAccessor, pos, true);
+                    FluidSpatialGrid.setFluidAt(levelAccessor, pos, true, FluidAmountConverter.toInternal(newAmount));
                 }
                 return result;
             }else if (blockState.getBlock() instanceof BucketPickup bucketPickup) {
@@ -195,7 +234,7 @@ public class FFFluidUtils {
         if (result) {
             AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
             ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
-            FluidSpatialGrid.setFluidAt(levelAccessor, pos, true);
+            FluidSpatialGrid.setFluidAt(levelAccessor, pos, true, FluidAmountConverter.toInternal(newAmount));
         }
         return result;
     }
@@ -203,6 +242,13 @@ public class FFFluidUtils {
 
     public static boolean removeAllFluidAtPos(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid) {
         var blockState = levelAccessor.getBlockState(pos);
+        if (isExtendedWaterloggable(levelAccessor, blockState)) {
+            ExtendedWaterlogStore.remove(levelAccessor, pos);
+            AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+            ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+            FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
+            return true;
+        }
         if (blockState.getBlock() instanceof LiquidBlockContainer
                 && blockState.getBlock() instanceof BucketPickup bucketPickup) {
             bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
@@ -289,6 +335,10 @@ public class FFFluidUtils {
     public static boolean canFluidFlowFromPosToDirection(FlowingFluid sourceFluid, int sourceAmount, BlockGetter blockGetter,
                                                          BlockPos blockPos, BlockState blockState, Direction direction,
                                                          BlockPos blockPos2, BlockState blockState2, FluidState fluidState2) {
+        // consider virtual waterlogged fluid
+        if (blockGetter instanceof LevelAccessor accessor) {
+            fluidState2 = getEffectiveFluidState(accessor, blockPos2, blockState2);
+        }
         //add extra fluid check for replacing into self
         return (fluidState2.canBeReplacedWith(blockGetter, blockPos2, sourceFluid, direction) || canFitIntoFluid(sourceFluid, fluidState2, direction, sourceAmount, blockState2))
                 && sourceFluid.canPassThroughWall(direction, blockGetter, blockPos, blockState, blockPos2, blockState2)
@@ -370,6 +420,12 @@ public class FFFluidUtils {
                         totalCapacity += space;
                     }
 
+                    // Once nearby reachable cells already hold enough capacity, stop widening the search.
+                    // This keeps rain/refill behavior local and avoids expensive far-field scans.
+                    if (totalCapacity >= amountToPlace && positionBuffer.size() >= 8) {
+                        break;
+                    }
+
                     // Optimized direction priority: down first (gravity), then sides, then up
                     // This follows natural fluid flow and finds space more efficiently
 
@@ -418,11 +474,21 @@ public class FFFluidUtils {
             int count = currentLevels.length;
 
             int[] finalLevels = Arrays.copyOf(currentLevels, count);
-            Integer[] order = new Integer[count];
+            int[] order = new int[count];
+            int[] levelFrequency = new int[9];
             for (int i = 0; i < count; i++) {
-                order[i] = i;
+                int clampedLevel = Math.max(0, Math.min(8, finalLevels[i]));
+                levelFrequency[clampedLevel]++;
             }
-            Arrays.sort(order, (a, b) -> Integer.compare(finalLevels[a], finalLevels[b]));
+            int[] levelOffsets = new int[9];
+            for (int level = 1; level < levelOffsets.length; level++) {
+                levelOffsets[level] = levelOffsets[level - 1] + levelFrequency[level - 1];
+            }
+            for (int i = 0; i < count; i++) {
+                int clampedLevel = Math.max(0, Math.min(8, finalLevels[i]));
+                int targetIndex = levelOffsets[clampedLevel]++;
+                order[targetIndex] = i;
+            }
 
             int remaining = placeable;
             // Evenly raise the lowest reachable cells first so added fluid does not pile up at the entry.
@@ -655,7 +721,7 @@ public class FFFluidUtils {
                         amountRemaining = addAmountToFluidAtPosWithRemainder(level, offset, flowSource, amountRemaining);
                         if (amountRemaining == 0) break;
                     } else if (offsetState.isAir()) {
-                        level.setBlock(offset, originalState.getFluidState().createLegacyBlock(), 3);
+                        setFluidStateAtPosToNewAmount(level, offset, flowSource, originalState.getFluidState().getAmount());
                         amountRemaining = 0;
                         break;
                     }
@@ -676,13 +742,17 @@ public class FFFluidUtils {
                         if (offsetState.getFluidState().getType() instanceof FlowingFluid) {
                             amountRemaining = addAmountToFluidAtPosWithRemainder(level, posTraversing, flowSource, amountRemaining);
                         } else if (offsetState.isAir()) {
-                            level.setBlock(posTraversing, originalState.getFluidState().createLegacyBlock(), 3);
+                            setFluidStateAtPosToNewAmount(level, posTraversing, flowSource, originalState.getFluidState().getAmount());
                             amountRemaining = 0;
                         } else {
                             break;
                         }
                     }
                 }
+
+                AdaptiveTickScheduler.notifyFluidChange(level, pos);
+                ChunkLocalSlopeCache.clearChunk(level, new net.minecraft.world.level.ChunkPos(pos));
+                FluidSpatialGrid.removeFluidAt(level, pos);
             } finally {
                 FlowingFluids.isManeuveringFluids = false;
             }

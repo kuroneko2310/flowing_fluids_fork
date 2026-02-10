@@ -117,33 +117,62 @@ public class FluidTickBuffer {
 
         // Collect all buffers from all threads
         DimensionKey dimensionKey = DimensionKey.of(level);
+        if (threadBuffers.isEmpty()) {
+            return;
+        }
+
+        boolean hasAnyChanges = false;
+        for (ThreadBufferEntry entry : threadBuffers.values()) {
+            if (entry.buffer.hasAnyChanges(dimensionKey)) {
+                hasAnyChanges = true;
+                break;
+            }
+        }
+        if (!hasAnyChanges) {
+            return;
+        }
         Map<BlockPos, FluidChange> allFluidChanges = new HashMap<>();
         Map<BlockPos, Direction> allGradientChanges = new HashMap<>();
         Set<BlockPos> allSlopeCacheInvalidations = new HashSet<>();
         List<ComponentInvalidation> allComponentInvalidations = new ArrayList<>();
 
-        // Merge all thread buffers
+        // Merge and drain all thread buffers
         for (ThreadBufferEntry entry : threadBuffers.values()) {
             TickBuffer buffer = entry.buffer;
-            allFluidChanges.putAll(buffer.getFluidChanges(dimensionKey));
-            allGradientChanges.putAll(buffer.getGradientChanges(dimensionKey));
-            allSlopeCacheInvalidations.addAll(buffer.getSlopeInvalidations(dimensionKey));
-            allComponentInvalidations.addAll(buffer.getComponentInvalidations(dimensionKey));
+            Map<BlockPos, FluidChange> fluidChanges = buffer.drainFluidChanges(dimensionKey);
+            if (fluidChanges != null && !fluidChanges.isEmpty()) {
+                allFluidChanges.putAll(fluidChanges);
+            }
+            Map<BlockPos, Direction> gradientChanges = buffer.drainGradientChanges(dimensionKey);
+            if (gradientChanges != null && !gradientChanges.isEmpty()) {
+                allGradientChanges.putAll(gradientChanges);
+            }
+            List<BlockPos> slopeInvalidations = buffer.drainSlopeInvalidations(dimensionKey);
+            if (slopeInvalidations != null && !slopeInvalidations.isEmpty()) {
+                allSlopeCacheInvalidations.addAll(slopeInvalidations);
+            }
+            List<ComponentInvalidation> componentInvalidations = buffer.drainComponentInvalidations(dimensionKey);
+            if (componentInvalidations != null && !componentInvalidations.isEmpty()) {
+                allComponentInvalidations.addAll(componentInvalidations);
+            }
         }
 
         // 1. Apply fluid changes to spatial grid
-        List<BlockPos> changedPositions = new ArrayList<>(allFluidChanges.size());
-        for (Map.Entry<BlockPos, FluidChange> entry : allFluidChanges.entrySet()) {
-            BlockPos pos = entry.getKey();
-            FluidChange change = entry.getValue();
+        if (!allFluidChanges.isEmpty()) {
+            List<BlockPos> changedPositions = new ArrayList<>(allFluidChanges.size());
+            for (Map.Entry<BlockPos, FluidChange> entry : allFluidChanges.entrySet()) {
+                BlockPos pos = entry.getKey();
+                FluidChange change = entry.getValue();
 
-            // Update spatial grid with precise amount
-            FluidSpatialGrid.setFluidAt(level, pos, change.hasFluid, change.amount);
-            changedPositions.add(pos);
+                // Update spatial grid with precise amount
+                FluidSpatialGrid.setFluidAt(level, pos, change.hasFluid, change.amount);
+                changedPositions.add(pos);
+            }
+
+            // Notify adaptive scheduler in bulk to reset neighbor delays per chunk
+            AdaptiveTickScheduler.notifyFluidChangesBulk(level, changedPositions);
+            FluidActivityTracker.recordChanges(level, changedPositions);
         }
-
-        // Notify adaptive scheduler in bulk to reset neighbor delays per chunk
-        AdaptiveTickScheduler.notifyFluidChangesBulk(level, changedPositions);
 
         // 2. Apply gradient changes
         for (Map.Entry<BlockPos, Direction> entry : allGradientChanges.entrySet()) {
@@ -164,10 +193,6 @@ public class FluidTickBuffer {
             FluidSpatialGrid.invalidateComponentsInRegion(level, invalidation.center, invalidation.radius);
         }
 
-        // 5. Clear all buffers for next tick
-        for (ThreadBufferEntry entry : threadBuffers.values()) {
-            entry.buffer.clearDimension(dimensionKey);
-        }
     }
 
     /**
@@ -198,7 +223,7 @@ public class FluidTickBuffer {
     public static int getBufferedChangeCount() {
         int total = 0;
         for (ThreadBufferEntry entry : threadBuffers.values()) {
-            total += entry.buffer.fluidChanges.size();
+            total += entry.buffer.getFluidChangeCount();
         }
         return total;
     }
@@ -234,58 +259,69 @@ public class FluidTickBuffer {
         private final Map<DimensionKey, List<BlockPos>> slopeCacheInvalidations = new HashMap<>();
         private final Map<DimensionKey, List<ComponentInvalidation>> componentInvalidations = new HashMap<>();
 
-        void putFluidChange(LevelAccessor level, BlockPos pos, FluidChange change) {
+        synchronized void putFluidChange(LevelAccessor level, BlockPos pos, FluidChange change) {
             fluidChanges.computeIfAbsent(DimensionKey.of(level), key -> new HashMap<>())
                 .put(pos.immutable(), change);
         }
 
-        void putGradientChange(LevelAccessor level, BlockPos pos, Direction direction) {
+        synchronized void putGradientChange(LevelAccessor level, BlockPos pos, Direction direction) {
             gradientChanges.computeIfAbsent(DimensionKey.of(level), key -> new HashMap<>())
                 .put(pos.immutable(), direction);
         }
 
-        void addSlopeInvalidation(LevelAccessor level, BlockPos pos) {
+        synchronized void addSlopeInvalidation(LevelAccessor level, BlockPos pos) {
             slopeCacheInvalidations.computeIfAbsent(DimensionKey.of(level), key -> new ArrayList<>())
                 .add(pos.immutable());
         }
 
-        void addComponentInvalidation(LevelAccessor level, ComponentInvalidation invalidation) {
+        synchronized void addComponentInvalidation(LevelAccessor level, ComponentInvalidation invalidation) {
             componentInvalidations.computeIfAbsent(DimensionKey.of(level), key -> new ArrayList<>())
                 .add(invalidation);
         }
 
-        Map<BlockPos, FluidChange> getFluidChanges(DimensionKey key) {
-            Map<BlockPos, FluidChange> map = fluidChanges.get(key);
-            return map != null ? new HashMap<>(map) : Collections.emptyMap();
+        synchronized Map<BlockPos, FluidChange> drainFluidChanges(DimensionKey key) {
+            return fluidChanges.remove(key);
         }
 
-        Map<BlockPos, Direction> getGradientChanges(DimensionKey key) {
-            Map<BlockPos, Direction> map = gradientChanges.get(key);
-            return map != null ? new HashMap<>(map) : Collections.emptyMap();
+        synchronized Map<BlockPos, Direction> drainGradientChanges(DimensionKey key) {
+            return gradientChanges.remove(key);
         }
 
-        Set<BlockPos> getSlopeInvalidations(DimensionKey key) {
-            List<BlockPos> list = slopeCacheInvalidations.get(key);
-            return list != null ? new HashSet<>(list) : Collections.emptySet();
+        synchronized List<BlockPos> drainSlopeInvalidations(DimensionKey key) {
+            return slopeCacheInvalidations.remove(key);
         }
 
-        List<ComponentInvalidation> getComponentInvalidations(DimensionKey key) {
-            List<ComponentInvalidation> list = componentInvalidations.get(key);
-            return list != null ? new ArrayList<>(list) : Collections.emptyList();
+        synchronized List<ComponentInvalidation> drainComponentInvalidations(DimensionKey key) {
+            return componentInvalidations.remove(key);
         }
 
-        void clearDimension(DimensionKey key) {
+        synchronized void clearDimension(DimensionKey key) {
             fluidChanges.remove(key);
             gradientChanges.remove(key);
             slopeCacheInvalidations.remove(key);
             componentInvalidations.remove(key);
         }
 
-        void clearAll() {
+        synchronized void clearAll() {
             fluidChanges.clear();
             gradientChanges.clear();
             slopeCacheInvalidations.clear();
             componentInvalidations.clear();
+        }
+
+        synchronized boolean hasAnyChanges(DimensionKey key) {
+            return fluidChanges.containsKey(key)
+                || gradientChanges.containsKey(key)
+                || slopeCacheInvalidations.containsKey(key)
+                || componentInvalidations.containsKey(key);
+        }
+
+        synchronized int getFluidChangeCount() {
+            int total = 0;
+            for (Map<BlockPos, FluidChange> map : fluidChanges.values()) {
+                total += map.size();
+            }
+            return total;
         }
     }
 
