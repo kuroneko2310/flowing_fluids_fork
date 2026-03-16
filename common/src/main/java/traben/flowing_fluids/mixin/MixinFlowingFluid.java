@@ -814,16 +814,80 @@ public abstract class MixinFlowingFluid extends Fluid {
             return false;
         }
 
+        int sourceWallCount = flowing_fluids$countLateralWalls(level, sourcePos, sourceState.getType());
+        int sourceFluidNeighbors = flowing_fluids$countLateralFluidNeighbors(level, sourcePos, sourceState.getType());
+        int targetWallCount = flowing_fluids$countLateralWalls(level, targetPos, sourceState.getType());
+        int targetEscapeRoutes = flowing_fluids$countLateralEscapeRoutes(level, targetPos, targetState, sourceState.getType(), sourceAmount);
+
         BlockPos belowTarget = targetPos.below();
         BlockState belowTargetState = level.getBlockState(belowTarget);
         FluidState belowTargetFluid = FFFluidUtils.getEffectiveFluidState(level, belowTarget, belowTargetState);
         if (belowTargetFluid.getType().isSame(sourceState.getType()) && belowTargetFluid.getAmount() > 0) {
-            return true;
+            return sourceFluidNeighbors > 0 || sourceWallCount >= 1 || targetWallCount >= 1;
         }
-        return belowTargetFluid.isEmpty()
+
+        boolean continuesDownward = belowTargetFluid.isEmpty()
                 && (belowTargetState.isAir()
                 || belowTargetState.canBeReplaced(sourceState.getType())
                 || FFFluidUtils.isPassThroughFluidBlock(level, belowTargetState, Direction.DOWN));
+        if (!continuesDownward) {
+            return false;
+        }
+
+        // Keep the source only when the surroundings look like a real stream/shaft:
+        // either the source is constrained, or the falling column is not free to immediately fan out.
+        boolean constrainedSource = sourceWallCount >= 2 || sourceFluidNeighbors >= 2;
+        boolean constrainedTarget = targetWallCount >= 2 || targetEscapeRoutes <= 1;
+        return constrainedSource || constrainedTarget;
+    }
+
+    @Unique
+    private int flowing_fluids$countLateralWalls(Level level, BlockPos pos, Fluid sourceFluid) {
+        int walls = 0;
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            mutablePos.set(pos).move(direction);
+            BlockState neighborState = level.getBlockState(mutablePos);
+            FluidState neighborFluid = FFFluidUtils.getEffectiveFluidState(level, mutablePos, neighborState);
+            if (!neighborFluid.isEmpty()) {
+                continue;
+            }
+            if (neighborState.isSolid() && !FFFluidUtils.isPassThroughFluidBlock(level, neighborState, direction)) {
+                walls++;
+            }
+        }
+        return walls;
+    }
+
+    @Unique
+    private int flowing_fluids$countLateralFluidNeighbors(Level level, BlockPos pos, Fluid sourceFluid) {
+        int neighbors = 0;
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            mutablePos.set(pos).move(direction);
+            FluidState neighborFluid = FFFluidUtils.getEffectiveFluidState(level, mutablePos, level.getBlockState(mutablePos));
+            if (neighborFluid.getType().isSame(sourceFluid) && neighborFluid.getAmount() > 0) {
+                neighbors++;
+            }
+        }
+        return neighbors;
+    }
+
+    @Unique
+    private int flowing_fluids$countLateralEscapeRoutes(Level level, BlockPos pos, BlockState stateAtPos,
+                                                        Fluid sourceFluid, int sourceAmount) {
+        int routes = 0;
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            mutablePos.set(pos).move(direction);
+            BlockState neighborState = level.getBlockState(mutablePos);
+            FluidState neighborFluid = FFFluidUtils.getEffectiveFluidState(level, mutablePos, neighborState);
+            if (flowing_fluids$canSpreadToOptionallySameOrEmpty(sourceFluid, Math.max(1, sourceAmount), level,
+                    pos, stateAtPos, direction, mutablePos, neighborState, neighborFluid, true)) {
+                routes++;
+            }
+        }
+        return routes;
     }
 
     @Unique
