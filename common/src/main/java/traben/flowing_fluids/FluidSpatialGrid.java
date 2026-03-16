@@ -81,6 +81,11 @@ public class FluidSpatialGrid {
         storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
         ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
         grid.setFluidAt(pos, hasFluid, amount);
+        if (!grid.isEmpty()) {
+            AdaptiveTickScheduler.autoDetectAreaType(level, chunkPos, grid.getFluidCount());
+        } else {
+            AdaptiveTickScheduler.setAreaType(level, chunkPos, AdaptiveTickScheduler.AreaType.NORMAL);
+        }
         if (grid.isEmpty()) {
             storage.chunkGrids.remove(chunkPos, grid);
             storage.chunkAccessTimes.remove(chunkPos);
@@ -258,6 +263,8 @@ public class FluidSpatialGrid {
                 }
             }
         }
+
+        AdaptiveTickScheduler.autoDetectAreaType(level, chunkPos, grid.getFluidCount());
 
         if (grid.isEmpty()) {
             storage.chunkGrids.remove(chunkPos, grid);

@@ -31,6 +31,7 @@ import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FlowingFluidsPlatform;
 import traben.flowing_fluids.PlugWaterFeature;
+import traben.flowing_fluids.rain.RainWaterSystem;
 
 import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -42,6 +43,7 @@ import java.util.stream.Collectors;
 public class FFCommands {
     private static int messageAndSaveConfig(CommandContext<CommandSourceStack> context, String text) {
         FlowingFluids.saveConfig();
+        RainWaterSystem.reloadConfig();
         context.getSource().getServer().getPlayerList().getPlayers().forEach(FlowingFluidsPlatform::sendConfigToClient);
         return message(context, text);
     }
@@ -51,6 +53,132 @@ public class FFCommands {
         String inputCommand = context.getInput();
         context.getSource().sendSystemMessage(Component.literal("\n§7§o/" + inputCommand + "§r\n" + text + "\n§7_____________________________"));
         return 1;
+    }
+
+    private static int rainStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, "Rain settings overview"
+                + "\nEnabled: " + FlowingFluids.config.enableRainSystem
+                + "\nGenerate interval: " + FlowingFluids.config.rainGenerateIntervalTicks + " ticks"
+                + "\nChunk radius: " + FlowingFluids.config.rainChunkRadius
+                + "\nAttempts per chunk: " + FlowingFluids.config.rainAttemptsPerChunk
+                + "\nBase chance / amount: " + FlowingFluids.config.rainBaseGenerateChance + " / " + FlowingFluids.config.rainBaseWaterAmount
+                + "\nWetness persist: " + FlowingFluids.config.rainWetnessPersistTicks + " ticks"
+                + "\nCatchment: radius=" + FlowingFluids.config.rainCatchmentRadius + ", max=" + FlowingFluids.config.rainCatchmentMaxBoost
+                + "\nUpstream: radius=" + FlowingFluids.config.rainUpstreamSearchRadius + ", max=" + FlowingFluids.config.rainUpstreamMaxBoost
+                + "\nIntensity multipliers: drizzle=" + FlowingFluids.config.rainIntensityDrizzleMultiplier
+                + ", steady=" + FlowingFluids.config.rainIntensitySteadyMultiplier
+                + ", heavy=" + FlowingFluids.config.rainIntensityHeavyMultiplier
+                + ", thunderstorm=" + FlowingFluids.config.rainIntensityThunderstormMultiplier
+                + "\nExtra puddles: chance=" + FlowingFluids.config.rainSurfaceSpawnChance + ", level=" + FlowingFluids.config.rainSurfaceSpawnLevel
+                + "\nUse `/flowing_fluids settings rain runtime_status`, `inspect_here`, or `preset` for more.");
+    }
+
+    private static int rainRuntimeStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, RainWaterSystem.describeRuntimeState(context.getSource().getLevel()));
+    }
+
+    private static int rainInspectHere(CommandContext<CommandSourceStack> context) {
+        BlockPos pos = BlockPos.containing(context.getSource().getPosition());
+        return message(context, RainWaterSystem.inspectRainAt(context.getSource().getLevel(), pos));
+    }
+
+    private static int rainReloadRuntime(CommandContext<CommandSourceStack> context) {
+        RainWaterSystem.reloadConfig();
+        return message(context, "Rain runtime state was refreshed. Cached wetness and queue data were cleared.");
+    }
+
+    private static int applyRainPreset(CommandContext<CommandSourceStack> context, String presetName) {
+        FFConfig defaults = new FFConfig();
+        switch (presetName) {
+            case "gentle" -> {
+                FlowingFluids.config.enableRainSystem = true;
+                FlowingFluids.config.rainGenerateIntervalTicks = 200;
+                FlowingFluids.config.rainAttemptsPerChunk = 4;
+                FlowingFluids.config.rainBaseGenerateChance = 0.035f;
+                FlowingFluids.config.rainBaseWaterAmount = 1;
+                FlowingFluids.config.rainFillsWaterHigherV2 = false;
+                FlowingFluids.config.rainSurfaceSpawnChance = 0.015f;
+                FlowingFluids.config.rainSurfaceSpawnLevel = 1;
+                FlowingFluids.config.rainLevelJumpChance = 0.03f;
+                FlowingFluids.config.rainPlacementMaxCombinedAmount = 12;
+                FlowingFluids.config.rainWetnessPersistTicks = 900;
+                FlowingFluids.config.rainCatchmentRadius = 2;
+                FlowingFluids.config.rainCatchmentMaxBoost = 1.3f;
+                FlowingFluids.config.rainUpstreamSearchRadius = 4;
+                FlowingFluids.config.rainUpstreamMaxBoost = 1.2f;
+                FlowingFluids.config.rainIntensityDrizzleMultiplier = 0.45f;
+                FlowingFluids.config.rainIntensitySteadyMultiplier = 0.85f;
+                FlowingFluids.config.rainIntensityHeavyMultiplier = 1.2f;
+                FlowingFluids.config.rainIntensityThunderstormMultiplier = 1.6f;
+            }
+            case "realistic" -> {
+                FlowingFluids.config.enableRainSystem = true;
+                FlowingFluids.config.rainGenerateIntervalTicks = 160;
+                FlowingFluids.config.rainAttemptsPerChunk = 6;
+                FlowingFluids.config.rainBaseGenerateChance = 0.05f;
+                FlowingFluids.config.rainBaseWaterAmount = 2;
+                FlowingFluids.config.rainFillsWaterHigherV2 = true;
+                FlowingFluids.config.rainSurfaceSpawnChance = 0.025f;
+                FlowingFluids.config.rainSurfaceSpawnLevel = 1;
+                FlowingFluids.config.rainLevelJumpChance = 0.06f;
+                FlowingFluids.config.rainPlacementMaxCombinedAmount = 18;
+                FlowingFluids.config.rainWetnessPersistTicks = 1800;
+                FlowingFluids.config.rainCatchmentRadius = 3;
+                FlowingFluids.config.rainCatchmentMaxBoost = 1.8f;
+                FlowingFluids.config.rainUpstreamSearchRadius = 6;
+                FlowingFluids.config.rainUpstreamMaxBoost = 1.6f;
+                FlowingFluids.config.rainIntensityDrizzleMultiplier = 0.45f;
+                FlowingFluids.config.rainIntensitySteadyMultiplier = 1.0f;
+                FlowingFluids.config.rainIntensityHeavyMultiplier = 1.8f;
+                FlowingFluids.config.rainIntensityThunderstormMultiplier = 2.6f;
+            }
+            case "downpour" -> {
+                FlowingFluids.config.enableRainSystem = true;
+                FlowingFluids.config.rainGenerateIntervalTicks = 120;
+                FlowingFluids.config.rainAttemptsPerChunk = 8;
+                FlowingFluids.config.rainBaseGenerateChance = 0.08f;
+                FlowingFluids.config.rainBaseWaterAmount = 3;
+                FlowingFluids.config.rainFillsWaterHigherV2 = true;
+                FlowingFluids.config.rainSurfaceSpawnChance = 0.04f;
+                FlowingFluids.config.rainSurfaceSpawnLevel = 2;
+                FlowingFluids.config.rainLevelJumpChance = 0.1f;
+                FlowingFluids.config.rainPlacementMaxCombinedAmount = 24;
+                FlowingFluids.config.rainWetnessPersistTicks = 2000;
+                FlowingFluids.config.rainCatchmentRadius = 4;
+                FlowingFluids.config.rainCatchmentMaxBoost = 2.0f;
+                FlowingFluids.config.rainUpstreamSearchRadius = 7;
+                FlowingFluids.config.rainUpstreamMaxBoost = 1.8f;
+                FlowingFluids.config.rainIntensityDrizzleMultiplier = 0.6f;
+                FlowingFluids.config.rainIntensitySteadyMultiplier = 1.2f;
+                FlowingFluids.config.rainIntensityHeavyMultiplier = 2.1f;
+                FlowingFluids.config.rainIntensityThunderstormMultiplier = 3.0f;
+            }
+            case "reset" -> {
+                FlowingFluids.config.enableRainSystem = defaults.enableRainSystem;
+                FlowingFluids.config.rainGenerateIntervalTicks = defaults.rainGenerateIntervalTicks;
+                FlowingFluids.config.rainAttemptsPerChunk = defaults.rainAttemptsPerChunk;
+                FlowingFluids.config.rainBaseGenerateChance = defaults.rainBaseGenerateChance;
+                FlowingFluids.config.rainBaseWaterAmount = defaults.rainBaseWaterAmount;
+                FlowingFluids.config.rainFillsWaterHigherV2 = defaults.rainFillsWaterHigherV2;
+                FlowingFluids.config.rainSurfaceSpawnChance = defaults.rainSurfaceSpawnChance;
+                FlowingFluids.config.rainSurfaceSpawnLevel = defaults.rainSurfaceSpawnLevel;
+                FlowingFluids.config.rainLevelJumpChance = defaults.rainLevelJumpChance;
+                FlowingFluids.config.rainPlacementMaxCombinedAmount = defaults.rainPlacementMaxCombinedAmount;
+                FlowingFluids.config.rainWetnessPersistTicks = defaults.rainWetnessPersistTicks;
+                FlowingFluids.config.rainCatchmentRadius = defaults.rainCatchmentRadius;
+                FlowingFluids.config.rainCatchmentMaxBoost = defaults.rainCatchmentMaxBoost;
+                FlowingFluids.config.rainUpstreamSearchRadius = defaults.rainUpstreamSearchRadius;
+                FlowingFluids.config.rainUpstreamMaxBoost = defaults.rainUpstreamMaxBoost;
+                FlowingFluids.config.rainIntensityDrizzleMultiplier = defaults.rainIntensityDrizzleMultiplier;
+                FlowingFluids.config.rainIntensitySteadyMultiplier = defaults.rainIntensitySteadyMultiplier;
+                FlowingFluids.config.rainIntensityHeavyMultiplier = defaults.rainIntensityHeavyMultiplier;
+                FlowingFluids.config.rainIntensityThunderstormMultiplier = defaults.rainIntensityThunderstormMultiplier;
+            }
+            default -> {
+                return message(context, "Unknown rain preset: " + presetName);
+            }
+        }
+        return messageAndSaveConfig(context, "Applied rain preset: " + presetName);
     }
 
     // 日本語用の数値コマンドヘルパー（設定値と現在値を案内）
@@ -536,9 +664,29 @@ public class FFCommands {
                                         a -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly = a, () -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly)
                                 )
                         ).then(Commands.literal("rain")
-                                .executes(cont -> message(cont, "雨関連の設定です。/flowing_fluids settings rain <項目> で個別に変更できます。\n現在: 有効=" + FlowingFluids.config.enableRainSystem
-                                        + " / 生成間隔=" + FlowingFluids.config.rainGenerateIntervalTicks + "t / チャンク半径=" + FlowingFluids.config.rainChunkRadius
-                                        + " / 1チャンク当たり試行=" + FlowingFluids.config.rainAttemptsPerChunk))
+                                .executes(FFCommands::rainStatus)
+                                .then(Commands.literal("status")
+                                        .executes(FFCommands::rainStatus))
+                                .then(Commands.literal("runtime_status")
+                                        .executes(FFCommands::rainRuntimeStatus))
+                                .then(Commands.literal("inspect_here")
+                                        .executes(FFCommands::rainInspectHere))
+                                .then(Commands.literal("reload_runtime")
+                                        .executes(FFCommands::rainReloadRuntime))
+                                .then(Commands.literal("preset")
+                                        .executes(cont -> message(cont, "Rain presets"
+                                                + "\nrealistic: balanced runoff and pooling with stronger terrain response"
+                                                + "\ngentle: lighter, calmer rain behavior"
+                                                + "\ndownpour: aggressive pooling and runoff"
+                                                + "\nreset: restore the rain realism values to defaults"))
+                                        .then(Commands.literal("realistic")
+                                                .executes(cont -> applyRainPreset(cont, "realistic")))
+                                        .then(Commands.literal("gentle")
+                                                .executes(cont -> applyRainPreset(cont, "gentle")))
+                                        .then(Commands.literal("downpour")
+                                                .executes(cont -> applyRainPreset(cont, "downpour")))
+                                        .then(Commands.literal("reset")
+                                                .executes(cont -> applyRainPreset(cont, "reset"))))
                                 .then(booleanCommand("enable",
                                         "雨システム全体のON/OFF。水たまり生成や雨補給をまとめて無効化できます。",
                                         "雨システムを有効にしました。",
@@ -671,6 +819,60 @@ public class FFCommands {
                                         a -> FlowingFluids.config.rainPlacementMaxCombinedAmount = a,
                                         () -> FlowingFluids.config.rainPlacementMaxCombinedAmount,
                                         "配置合計上限を設定しました: "))
+                                .then(jpIntCommand("wetness_persist_ticks",
+                                        "How long absorbed ground wetness lingers before it fully dries out.",
+                                        "ticks", 20, 24000,
+                                        a -> FlowingFluids.config.rainWetnessPersistTicks = a,
+                                        () -> FlowingFluids.config.rainWetnessPersistTicks,
+                                        "Set wetness persist ticks: "))
+                                .then(jpIntCommand("catchment_radius",
+                                        "Radius used to sample nearby open sky for the catchment boost.",
+                                        "radius", 1, 6,
+                                        a -> FlowingFluids.config.rainCatchmentRadius = a,
+                                        () -> FlowingFluids.config.rainCatchmentRadius,
+                                        "Set catchment radius: "))
+                                .then(jpFloatCommand("catchment_max_boost",
+                                        "Maximum multiplier granted by local catchment sampling.",
+                                        "boost", 1f, 4f,
+                                        a -> FlowingFluids.config.rainCatchmentMaxBoost = a,
+                                        () -> FlowingFluids.config.rainCatchmentMaxBoost,
+                                        "Set catchment max boost: "))
+                                .then(jpIntCommand("upstream_search_radius",
+                                        "Radius used to look for higher nearby terrain that can feed runoff.",
+                                        "radius", 1, 12,
+                                        a -> FlowingFluids.config.rainUpstreamSearchRadius = a,
+                                        () -> FlowingFluids.config.rainUpstreamSearchRadius,
+                                        "Set upstream search radius: "))
+                                .then(jpFloatCommand("upstream_max_boost",
+                                        "Maximum runoff boost gained from higher nearby terrain samples.",
+                                        "boost", 1f, 4f,
+                                        a -> FlowingFluids.config.rainUpstreamMaxBoost = a,
+                                        () -> FlowingFluids.config.rainUpstreamMaxBoost,
+                                        "Set upstream max boost: "))
+                                .then(jpFloatCommand("drizzle_multiplier",
+                                        "Intensity multiplier used while the system chooses drizzle rainfall.",
+                                        "multiplier", 0.1f, 4f,
+                                        a -> FlowingFluids.config.rainIntensityDrizzleMultiplier = a,
+                                        () -> FlowingFluids.config.rainIntensityDrizzleMultiplier,
+                                        "Set drizzle multiplier: "))
+                                .then(jpFloatCommand("steady_multiplier",
+                                        "Intensity multiplier used while the system chooses steady rainfall.",
+                                        "multiplier", 0.1f, 4f,
+                                        a -> FlowingFluids.config.rainIntensitySteadyMultiplier = a,
+                                        () -> FlowingFluids.config.rainIntensitySteadyMultiplier,
+                                        "Set steady multiplier: "))
+                                .then(jpFloatCommand("heavy_multiplier",
+                                        "Intensity multiplier used while the system chooses heavy rainfall.",
+                                        "multiplier", 0.1f, 4f,
+                                        a -> FlowingFluids.config.rainIntensityHeavyMultiplier = a,
+                                        () -> FlowingFluids.config.rainIntensityHeavyMultiplier,
+                                        "Set heavy multiplier: "))
+                                .then(jpFloatCommand("thunderstorm_multiplier",
+                                        "Intensity multiplier used when thunderstorm rain is active.",
+                                        "multiplier", 0.1f, 6f,
+                                        a -> FlowingFluids.config.rainIntensityThunderstormMultiplier = a,
+                                        () -> FlowingFluids.config.rainIntensityThunderstormMultiplier,
+                                        "Set thunderstorm multiplier: "))
                                 .then(jpIntCommand("bfs_cooldown_ticks",
                                         "雨で生成された水がBFS等を走るまでのクールダウンtick。",
                                         "ticks", 1, 60,

@@ -4,6 +4,7 @@ import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
@@ -218,6 +219,9 @@ public class AdaptiveTickScheduler {
             data.stableTicks = equilibriumIndex <= EQUILIBRIUM_BFS_THRESHOLD
                 ? data.stableTicks + 1
                 : 0;
+            if (equilibriumIndex > EQUILIBRIUM_BFS_THRESHOLD) {
+                data.poolStableTicks = 0;
+            }
         }
 
         if (FlowingFluids.LOG.isDebugEnabled()) {
@@ -296,6 +300,14 @@ public class AdaptiveTickScheduler {
         }
 
         return !throttled;
+    }
+
+    /**
+     * Consumes a pending forced recheck flag for long-stable fluids.
+     */
+    public static boolean hasForcedRecheck(LevelAccessor level, BlockPos pos) {
+        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        return data != null && data.pendingForcedRecheck;
     }
 
     /**
@@ -406,7 +418,7 @@ public class AdaptiveTickScheduler {
         if (threshold <= 0) {
             return false;
         }
-        FluidState current = level.getFluidState(pos);
+        FluidState current = FFFluidUtils.getEffectiveFluidState(level, pos);
         if (current.isEmpty()) {
             return false;
         }
@@ -514,16 +526,40 @@ public class AdaptiveTickScheduler {
      * Call this periodically to classify chunks.
      */
     public static void autoDetectAreaType(LevelAccessor level, ChunkPos chunkPos, int fluidBlockCount) {
-        // Ocean: > 1000 fluid blocks
-        // High activity (village/canal): 100-1000 blocks
-        // Normal: < 100 blocks
-        if (fluidBlockCount > 1000) {
-            setAreaType(level, chunkPos, AreaType.OCEAN);
-        } else if (fluidBlockCount > 100) {
-            setAreaType(level, chunkPos, AreaType.HIGH_ACTIVITY);
-        } else {
-            setAreaType(level, chunkPos, AreaType.NORMAL);
+        boolean oceanLikeBiome = false;
+        boolean riverLikeBiome = false;
+
+        if (level instanceof Level world) {
+            BlockPos samplePos = new BlockPos(chunkPos.getMiddleBlockX(), world.getSeaLevel(), chunkPos.getMiddleBlockZ());
+            var biome = world.getBiome(samplePos);
+            oceanLikeBiome = FFFluidUtils.isOceanBiome(biome) || FFFluidUtils.isBeachBiome(biome);
+            riverLikeBiome = FFFluidUtils.isRiverBiome(biome);
         }
+
+        setAreaType(level, chunkPos, classifyAreaType(oceanLikeBiome, riverLikeBiome, fluidBlockCount));
+    }
+
+    static AreaType classifyAreaType(boolean oceanLikeBiome, boolean riverLikeBiome, int fluidBlockCount) {
+        if (oceanLikeBiome) {
+            if (fluidBlockCount >= 96) {
+                return AreaType.OCEAN;
+            }
+            if (fluidBlockCount >= 32) {
+                return AreaType.HIGH_ACTIVITY;
+            }
+        }
+
+        if (riverLikeBiome) {
+            return fluidBlockCount >= 48 ? AreaType.HIGH_ACTIVITY : AreaType.NORMAL;
+        }
+
+        if (fluidBlockCount > 1000) {
+            return AreaType.OCEAN;
+        }
+        if (fluidBlockCount > 100) {
+            return AreaType.HIGH_ACTIVITY;
+        }
+        return AreaType.NORMAL;
     }
 
     /**
@@ -539,7 +575,7 @@ public class AdaptiveTickScheduler {
 
         if (data == null) {
             // New fluid position, start with base delay
-            dimensionData.stabilityMap.put(posKey, new FluidStabilityData(fluidAmount, 0, baseDelay));
+            createAndTrackData(dimensionData, pos, fluidAmount).currentDelay = baseDelay;
             return baseDelay;
         }
 
@@ -571,7 +607,7 @@ public class AdaptiveTickScheduler {
         }
 
         int boostedDelay = data.currentDelay;
-        FluidState state = level.getFluidState(pos);
+        FluidState state = FFFluidUtils.getEffectiveFluidState(level, pos);
         if (!state.isEmpty()) {
             float connectedMultiplier = FlowingFluids.config.connectedFlowDelayMultiplier;
             float channelMultiplier = FlowingFluids.config.channelBoostDelayMultiplier;
@@ -685,6 +721,10 @@ public class AdaptiveTickScheduler {
     }
 
     public static void recordFlowDirection(LevelAccessor level, BlockPos pos, Direction direction) {
+        recordFlowDirection(level, pos, direction, 1.0f);
+    }
+
+    public static void recordFlowDirection(LevelAccessor level, BlockPos pos, Direction direction, float momentumStrength) {
         if (level == null || pos == null || direction == null || !direction.getAxis().isHorizontal()) {
             return;
         }
@@ -694,6 +734,8 @@ public class AdaptiveTickScheduler {
             data = createAndTrackData(dimensionData, pos, 0);
         }
         data.lastFlowDirection = direction;
+        data.flowMomentumStrength = Mth.clamp(momentumStrength, 0.0f, 1.0f);
+        data.poolStableTicks = 0;
         if (level instanceof Level lvl) {
             data.lastFlowTick = lvl.getGameTime();
         }
@@ -703,7 +745,7 @@ public class AdaptiveTickScheduler {
         if (level == null || pos == null || maxAgeTicks <= 0) {
             return null;
         }
-        if (level instanceof Level lvl && lvl.getFluidState(pos).isEmpty()) {
+        if (level instanceof Level lvl && FFFluidUtils.getEffectiveFluidState(lvl, pos).isEmpty()) {
             return null;
         }
         FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
@@ -717,6 +759,71 @@ public class AdaptiveTickScheduler {
             }
         }
         return data.lastFlowDirection;
+    }
+
+    public static float getFlowMomentum(LevelAccessor level, BlockPos pos, int maxAgeTicks) {
+        if (level == null || pos == null || maxAgeTicks <= 0) {
+            return 0.0f;
+        }
+        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        if (data == null || data.lastFlowDirection == null || data.flowMomentumStrength <= 0.0f) {
+            return 0.0f;
+        }
+        if (level instanceof Level lvl) {
+            long age = lvl.getGameTime() - data.lastFlowTick;
+            if (age > maxAgeTicks) {
+                return 0.0f;
+            }
+            float ageFactor = 1.0f - (float) age / (float) maxAgeTicks;
+            return data.flowMomentumStrength * Math.max(0.0f, ageFactor);
+        }
+        return data.flowMomentumStrength;
+    }
+
+    public static void markPoolStable(LevelAccessor level, BlockPos pos, boolean stable) {
+        if (level == null || pos == null) {
+            return;
+        }
+        SchedulerDimensionData dimensionData = getData(level);
+        FluidStabilityData data = dimensionData.stabilityMap.get(pos.asLong());
+        if (!stable) {
+            if (data == null) {
+                return;
+            }
+            data.poolStableTicks = 0;
+            return;
+        }
+        if (data == null) {
+            data = createAndTrackData(dimensionData, pos, 0);
+        }
+        if (level instanceof Level lvl) {
+            long gameTime = lvl.getGameTime();
+            if (data.lastPoolStableTick == gameTime - 1) {
+                data.poolStableTicks++;
+            } else if (data.lastPoolStableTick != gameTime) {
+                data.poolStableTicks = 1;
+            }
+            data.lastPoolStableTick = gameTime;
+        } else {
+            data.poolStableTicks++;
+        }
+    }
+
+    public static int getPoolStableTicks(LevelAccessor level, BlockPos pos, int maxAgeTicks) {
+        if (level == null || pos == null || maxAgeTicks <= 0) {
+            return 0;
+        }
+        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        if (data == null || data.poolStableTicks <= 0) {
+            return 0;
+        }
+        if (level instanceof Level lvl) {
+            long age = lvl.getGameTime() - data.lastPoolStableTick;
+            if (age > maxAgeTicks) {
+                return 0;
+            }
+        }
+        return data.poolStableTicks;
     }
 
     public static void markFlowActive(LevelAccessor level, BlockPos pos, int ticks) {
@@ -930,7 +1037,10 @@ public class AdaptiveTickScheduler {
         boolean pendingForcedRecheck; // Flag to re-run BFS even when stable
         long lastForcedRecheckTick; // Game time of last forced check
         Direction lastFlowDirection;
+        float flowMomentumStrength;
         long lastFlowTick;
+        int poolStableTicks;
+        long lastPoolStableTick;
         long forceTickUntil;
 
         FluidStabilityData(int lastAmount, int stabilityCounter, int currentDelay) {
@@ -946,7 +1056,10 @@ public class AdaptiveTickScheduler {
             this.pendingForcedRecheck = false;
             this.lastForcedRecheckTick = 0;
             this.lastFlowDirection = null;
+            this.flowMomentumStrength = 0.0f;
             this.lastFlowTick = 0;
+            this.poolStableTicks = 0;
+            this.lastPoolStableTick = 0;
             this.forceTickUntil = 0;
         }
     }

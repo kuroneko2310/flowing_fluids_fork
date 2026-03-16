@@ -7,7 +7,6 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
-import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -34,15 +33,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * This is the core of the "Natural Hybrid Fluid" system.
  */
 public class EnhancedFluidBFS {
+    private static final int MIN_INTERNAL_DRY_FILL = 64;
+    private static final int CLUSTER_PARTITION_THRESHOLD = 96;
 
     // OPTIMIZED: Thread pool for parallel BFS processing
     private static final int BFS_PARALLELISM = Math.max(2, Runtime.getRuntime().availableProcessors() / 2);
-    private static final java.util.concurrent.ForkJoinPool BFS_POOL = new java.util.concurrent.ForkJoinPool(
-        BFS_PARALLELISM,
-        java.util.concurrent.ForkJoinPool.defaultForkJoinWorkerThreadFactory,
-        null,
-        true  // Async mode for better throughput
-    );
+    private static volatile java.util.concurrent.ForkJoinPool bfsPool = createBfsPool();
 
     // Depth configurations for different terrain types
     private static final int DEPTH_GENTLE = 60;      // Gentle slopes (reduced for perf)
@@ -50,11 +46,10 @@ public class EnhancedFluidBFS {
     private static final int DEPTH_RIVER = 225;      // Natural rivers (reduced for perf)
     private static final int DEPTH_OCEAN = 48;       // Large water bodies (ultra-light, reduced)
 
-    // Direction cache to avoid repeated sorting (optimization)
-    private static final int MAX_DIRECTION_CACHE_SIZE = 1000; // Prevent unbounded growth
-    // LRU cache implementation using LinkedHashMap
-    private static final Map<Vec3i, Direction[]> directionCache = java.util.Collections.synchronizedMap(
-        new java.util.LinkedHashMap<Vec3i, Direction[]>(100, 0.75f, true) {
+    // Direction caches are thread-local so worker threads never fight over a global lock.
+    private static final int MAX_DIRECTION_CACHE_SIZE = 1000;
+    private static final ThreadLocal<Map<Vec3i, Direction[]>> directionCache = ThreadLocal.withInitial(() ->
+        new java.util.LinkedHashMap<Vec3i, Direction[]>(128, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(java.util.Map.Entry<Vec3i, Direction[]> eldest) {
                 return size() > MAX_DIRECTION_CACHE_SIZE;
@@ -76,6 +71,7 @@ public class EnhancedFluidBFS {
     // Track positions currently being processed to prevent duplicate BFS runs
     private static final Set<Long> processingPositions = ConcurrentHashMap.newKeySet();
     private static long lastCleanupTime = System.currentTimeMillis();
+    private static volatile boolean warnedParallelBfs = false;
 
     /**
      * Performs BFS equalization with all enhancements.
@@ -137,8 +133,11 @@ public class EnhancedFluidBFS {
         try {
             // Initialize BFS
             LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
-            LongOpenHashSet visited = new LongOpenHashSet();
-            LongArrayList visitedOrder = new LongArrayList();
+            IntArrayFIFOQueue depthQueue = new IntArrayFIFOQueue();
+            LongOpenHashSet visited = new LongOpenHashSet(Math.max(64, effectiveMaxNodes));
+            int expectedVisited = Math.max(64, Math.min(effectiveMaxNodes, 2048));
+            LongArrayList visitedOrder = new LongArrayList(expectedVisited);
+            ((ArrayList<BlockPos>) equalizedPositions).ensureCapacity(expectedVisited);
 
             EqualizationContext equalizationContext = new EqualizationContext(effectiveMaxNodes);
 
@@ -146,6 +145,7 @@ public class EnhancedFluidBFS {
 
             long startLong = startPos.asLong();
             queue.enqueue(startLong);
+            depthQueue.enqueue(0);
             visited.add(startLong);
             equalizedPositions.add(startPos.immutable());
 
@@ -163,8 +163,9 @@ public class EnhancedFluidBFS {
             // Get or estimate gradient vector for weighted search
             Vec3i gradientVector = ChunkLocalSlopeCache.getGradientVector(level, chunkPos, startPos);
 
-            while (!queue.isEmpty() && nodesExplored < effectiveMaxNodes + momentumBudget && visited.size() < effectiveMaxDepth) {
+            while (!queue.isEmpty() && nodesExplored < effectiveMaxNodes + momentumBudget) {
                 long currentLong = queue.dequeueLong();
+                int currentDepth = depthQueue.dequeueInt();
                 int currentX = BlockPos.getX(currentLong);
                 int currentY = BlockPos.getY(currentLong);
                 int currentZ = BlockPos.getZ(currentLong);
@@ -203,9 +204,14 @@ public class EnhancedFluidBFS {
 
                     // CRITICAL: Include air blocks and replaceable blocks!
                     if (canIncludeInBFS(neighborState, neighborFluidState, startFluid)) {
+                        int nextDepth = currentDepth + 1;
+                        if (nextDepth > effectiveMaxDepth) {
+                            continue;
+                        }
                         visited.add(neighborLong);
                         visitedOrder.add(neighborLong);
                         queue.enqueue(neighborLong);
+                        depthQueue.enqueue(nextDepth);
 
                         // Add to equalization list if it needs balancing
                         int neighborAmount = FluidSpatialGrid.getFluidAmount(level, reusablePos);
@@ -239,8 +245,8 @@ public class EnhancedFluidBFS {
                 }
             }
 
-            int clampedDistance = Math.max(1, Math.min(FlowingFluids.config.waterFlowDistance,
-                Math.max(FlowingFluids.config.maxWaterFlowDistance, FlowingFluids.config.waterFlowDistance)));
+            int maxDistance = Math.max(1, FlowingFluids.config.maxWaterFlowDistance);
+            int clampedDistance = Math.max(1, Math.min(FlowingFluids.config.waterFlowDistance, maxDistance));
 
             // 直線水路の入口で流入が止まらないよう、勾配方向へ細い探査を入れる。
             // 探査は軽量で、遮蔽物で打ち切る。
@@ -384,19 +390,23 @@ public class EnhancedFluidBFS {
             return DEFAULT_DIRECTIONS;
         }
 
-        // Check cache first - LRU automatically handles size limit
-        return directionCache.computeIfAbsent(gradientVector, gv -> {
-            Direction[] directions = Direction.values().clone();
+        Map<Vec3i, Direction[]> cache = directionCache.get();
+        Direction[] cached = cache.get(gradientVector);
+        if (cached != null) {
+            return cached;
+        }
 
-            // Sort by weight (lower = preferred)
-            Arrays.sort(directions, (a, b) -> {
-                float weightA = ChunkLocalSlopeCache.calculateDirectionWeight(gv, a);
-                float weightB = ChunkLocalSlopeCache.calculateDirectionWeight(gv, b);
-                return Float.compare(weightA, weightB);
-            });
+        Direction[] directions = Direction.values().clone();
 
-            return directions;
+        // Sort by weight (lower = preferred)
+        Arrays.sort(directions, (a, b) -> {
+            float weightA = ChunkLocalSlopeCache.calculateDirectionWeight(gradientVector, a);
+            float weightB = ChunkLocalSlopeCache.calculateDirectionWeight(gradientVector, b);
+            return Float.compare(weightA, weightB);
         });
+
+        cache.put(gradientVector, directions);
+        return directions;
     }
 
     /**
@@ -432,7 +442,8 @@ public class EnhancedFluidBFS {
      */
     private static int getDistanceScaledMomentumCap() {
         int configured = Math.max(FlowingFluids.config.waterFlowDistance, 1);
-        int distance = Math.min(configured, Math.max(FlowingFluids.config.maxWaterFlowDistance, configured));
+        int maxDistance = Math.max(1, FlowingFluids.config.maxWaterFlowDistance);
+        int distance = Math.min(configured, maxDistance);
         if (distance <= 4) {
             return MAX_MOMENTUM_BONUS;
         }
@@ -453,8 +464,8 @@ public class EnhancedFluidBFS {
      */
     private static float getDistanceLoadSheddingFactor() {
         int configured = Math.max(FlowingFluids.config.waterFlowDistance, 1);
-        int distanceCap = Math.max(configured, FlowingFluids.config.maxWaterFlowDistance);
-        int distance = Math.min(configured, distanceCap);
+        int maxDistance = Math.max(1, FlowingFluids.config.maxWaterFlowDistance);
+        int distance = Math.min(configured, maxDistance);
         if (distance <= 3) {
             return 1.0f;
         }
@@ -542,10 +553,90 @@ public class EnhancedFluidBFS {
      * FIXED: NPE handling and proper iteration through valid positions only.
      */
     public static void equalizePositions(Level level, List<BlockPos> positions) {
-        equalizePositions(level, positions, findFirstFluidType(level, positions));
+        FluidSectionDataCache cache = new FluidSectionDataCache(level, Math.max(16, positions.size() / 2));
+        equalizePositions(level, positions, findFirstFluidType(positions, cache), cache);
     }
 
     public static void equalizePositions(Level level, List<BlockPos> positions, Fluid fallbackFluid) {
+        FluidSectionDataCache cache = new FluidSectionDataCache(level, Math.max(16, positions.size() / 2));
+        equalizePositions(level, positions, fallbackFluid, cache);
+    }
+
+    static void equalizePositionKeys(Level level, LongOpenHashSet positionKeys, Fluid fallbackFluid, FluidSectionDataCache cache) {
+        if (positionKeys.isEmpty()) {
+            return;
+        }
+        if (positionKeys.size() < CLUSTER_PARTITION_THRESHOLD) {
+            List<BlockPos> positions = new ArrayList<>(positionKeys.size());
+            for (long key : positionKeys) {
+                positions.add(BlockPos.of(key));
+            }
+            equalizePositionsInternal(level, positions, fallbackFluid, cache);
+            return;
+        }
+
+        LongOpenHashSet visited = new LongOpenHashSet(positionKeys.size());
+        LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+        LongArrayList cluster = new LongArrayList(Math.min(positionKeys.size(), 256));
+
+        for (long seed : positionKeys) {
+            if (!visited.add(seed)) {
+                continue;
+            }
+            cluster.clear();
+            queue.enqueue(seed);
+            cluster.add(seed);
+
+            while (!queue.isEmpty()) {
+                long current = queue.dequeueLong();
+                int currentX = BlockPos.getX(current);
+                int currentY = BlockPos.getY(current);
+                int currentZ = BlockPos.getZ(current);
+
+                for (Direction direction : DEFAULT_DIRECTIONS) {
+                    long neighbor = BlockPos.asLong(
+                        currentX + direction.getStepX(),
+                        currentY + direction.getStepY(),
+                        currentZ + direction.getStepZ()
+                    );
+                    if (!positionKeys.contains(neighbor) || !visited.add(neighbor)) {
+                        continue;
+                    }
+                    queue.enqueue(neighbor);
+                    cluster.add(neighbor);
+                }
+            }
+
+            List<BlockPos> clusterPositions = new ArrayList<>(cluster.size());
+            for (int i = 0; i < cluster.size(); i++) {
+                clusterPositions.add(BlockPos.of(cluster.getLong(i)));
+            }
+            equalizePositionsInternal(level, clusterPositions, fallbackFluid, cache);
+        }
+    }
+
+    private static void equalizePositions(Level level, List<BlockPos> positions, Fluid fallbackFluid, FluidSectionDataCache cache) {
+        if (positions.isEmpty()) {
+            return;
+        }
+
+        if (positions.size() >= CLUSTER_PARTITION_THRESHOLD) {
+            LongOpenHashSet positionKeys = new LongOpenHashSet(Math.max(positions.size(), 16));
+            for (BlockPos pos : positions) {
+                positionKeys.add(pos.asLong());
+            }
+            equalizePositionKeys(level, positionKeys, fallbackFluid, cache);
+            return;
+        }
+        equalizePositionsInternal(level, positions, fallbackFluid, cache);
+    }
+
+    static void equalizePositionKeys(Level level, LongOpenHashSet positionKeys, Fluid fallbackFluid) {
+        equalizePositionKeys(level, positionKeys, fallbackFluid,
+            new FluidSectionDataCache(level, Math.max(16, positionKeys.size() / 8)));
+    }
+
+    private static void equalizePositionsInternal(Level level, List<BlockPos> positions, Fluid fallbackFluid, FluidSectionDataCache cache) {
         if (positions.isEmpty()) {
             return;
         }
@@ -556,8 +647,8 @@ public class EnhancedFluidBFS {
         List<Integer> validAmounts = new ArrayList<>();
 
         for (BlockPos pos : positions) {
-            int amount = FluidSpatialGrid.getFluidAmount(level, pos);
-            if (amount > 0 || canAcceptFluid(level, pos)) {
+            int amount = cache.amount(pos);
+            if (amount > 0 || cache.canAcceptFluid(pos)) {
                 totalAmount += amount;
                 validPos.add(pos);
                 validAmounts.add(amount);
@@ -568,33 +659,80 @@ public class EnhancedFluidBFS {
             return;
         }
 
-        // Calculate average amount
-        int averageAmount = totalAmount / validPos.size();
-        int remainder = totalAmount % validPos.size();
-
-        List<Integer> distributionOrder = new ArrayList<>(validPos.size());
+        int[] finalAmounts = new int[validPos.size()];
+        int[] yLevels = new int[validPos.size()];
+        int[] supportScores = new int[validPos.size()];
+        int[] distances = new int[validPos.size()];
+        List<Integer> wetOrder = new ArrayList<>(validPos.size());
+        List<Integer> dryOrder = new ArrayList<>(validPos.size());
         for (int i = 0; i < validPos.size(); i++) {
-            distributionOrder.add(i);
+            BlockPos pos = validPos.get(i);
+            int amount = validAmounts.get(i);
+            finalAmounts[i] = amount;
+            yLevels[i] = pos.getY();
+            distances[i] = Math.abs(pos.getX() - positions.get(0).getX())
+                    + Math.abs(pos.getY() - positions.get(0).getY())
+                    + Math.abs(pos.getZ() - positions.get(0).getZ());
+            supportScores[i] = cache.supportScore(pos, fallbackFluid, HORIZONTAL_DIRECTIONS);
+            if (amount > 0) {
+                wetOrder.add(i);
+            } else {
+                dryOrder.add(i);
+            }
         }
-        distributionOrder.sort((a, b) -> {
-            int cmp = Integer.compare(validAmounts.get(a), validAmounts.get(b));
+
+        wetOrder.sort((a, b) -> {
+            int cmp = Integer.compare(finalAmounts[a], finalAmounts[b]);
+            if (cmp != 0) {
+                return cmp;
+            }
+            cmp = Integer.compare(yLevels[a], yLevels[b]);
+            if (cmp != 0) {
+                return cmp;
+            }
+            cmp = Integer.compare(supportScores[b], supportScores[a]);
+            if (cmp != 0) {
+                return cmp;
+            }
+            cmp = Integer.compare(distances[a], distances[b]);
+            if (cmp != 0) {
+                return cmp;
+            }
+            return Long.compare(validPos.get(a).asLong(), validPos.get(b).asLong());
+        });
+        dryOrder.sort((a, b) -> {
+            int cmp = Integer.compare(yLevels[a], yLevels[b]);
+            if (cmp != 0) {
+                return cmp;
+            }
+            cmp = Integer.compare(supportScores[b], supportScores[a]);
+            if (cmp != 0) {
+                return cmp;
+            }
+            cmp = Integer.compare(distances[a], distances[b]);
             if (cmp != 0) {
                 return cmp;
             }
             return Long.compare(validPos.get(a).asLong(), validPos.get(b).asLong());
         });
 
-        // Distribute fluid evenly to valid positions only
-        for (int rank = 0; rank < distributionOrder.size(); rank++) {
-            int index = distributionOrder.get(rank);
-            BlockPos pos = validPos.get(index);
+        int remaining = distributeInternalAmounts(finalAmounts, wetOrder, totalAmount, FluidAmountConverter.getMaxInternal());
+        if (remaining > 0 && !dryOrder.isEmpty()) {
+            int selectedDryCount = determineInternalDryActivationCount(remaining, dryOrder.size());
+            remaining = distributeInternalAmounts(finalAmounts, dryOrder.subList(0, selectedDryCount),
+                remaining, FluidAmountConverter.getMaxInternal());
+        }
 
-            // Give remainder to lowest water levels first
-            int newAmount = averageAmount + (rank < remainder ? 1 : 0);
+        // Distribute fluid to valid positions only
+        for (int index = 0; index < validPos.size(); index++) {
+            BlockPos pos = validPos.get(index);
+            int newAmount = finalAmounts[index];
 
             // Buffer the change with null safety
-            FluidState fluidState = level.getFluidState(pos);
-            Fluid fluidType = (fluidState != null && !fluidState.isEmpty()) ? fluidState.getType() : fallbackFluid;
+            Fluid fluidType = cache.fluidType(pos);
+            if (fluidType == null) {
+                fluidType = fallbackFluid;
+            }
 
             if (fluidType != null) {
                 FluidTickBuffer.bufferFluidChange(level, pos, newAmount, newAmount > 0, fluidType);
@@ -602,22 +740,64 @@ public class EnhancedFluidBFS {
         }
     }
 
-    private static Fluid findFirstFluidType(Level level, List<BlockPos> positions) {
+    private static Fluid findFirstFluidType(List<BlockPos> positions, FluidSectionDataCache cache) {
         for (BlockPos pos : positions) {
-            FluidState state = level.getFluidState(pos);
-            if (state != null && !state.isEmpty()) {
-                return state.getType();
+            Fluid fluid = cache.fluidType(pos);
+            if (fluid != null) {
+                return fluid;
             }
         }
         return null;
     }
 
-    /**
-     * Checks if a position can accept fluid.
-     */
-    private static boolean canAcceptFluid(BlockGetter level, BlockPos pos) {
-        BlockState state = level.getBlockState(pos);
-        return state.isAir() || state.canBeReplaced() || !level.getFluidState(pos).isEmpty();
+    private static int determineInternalDryActivationCount(int remaining, int dryCandidates) {
+        if (remaining <= 0 || dryCandidates <= 0) {
+            return 0;
+        }
+        int minCellsNeeded = Math.max(1, (remaining + FluidAmountConverter.getMaxInternal() - 1)
+            / FluidAmountConverter.getMaxInternal());
+        int maxCellsForCoherentFill = remaining >= MIN_INTERNAL_DRY_FILL
+                ? Math.max(1, remaining / MIN_INTERNAL_DRY_FILL)
+                : 1;
+        int selected = Math.min(dryCandidates, minCellsNeeded);
+        if (selected > maxCellsForCoherentFill) {
+            selected = Math.min(dryCandidates, maxCellsForCoherentFill);
+        }
+        return Math.max(1, selected);
+    }
+
+    private static int distributeInternalAmounts(int[] levels, List<Integer> orderedIndices, int amount, int maxLevel) {
+        if (amount <= 0 || orderedIndices.isEmpty()) {
+            return amount;
+        }
+
+        int remaining = amount;
+        for (int tier = 0; tier < orderedIndices.size() && remaining > 0; tier++) {
+            int currentLevel = levels[orderedIndices.get(tier)];
+            int nextLevel = tier == orderedIndices.size() - 1
+                    ? maxLevel
+                    : levels[orderedIndices.get(tier + 1)];
+            int span = Math.max(0, nextLevel - currentLevel);
+            if (span == 0) {
+                continue;
+            }
+
+            int needed = span * (tier + 1);
+            if (remaining >= needed) {
+                for (int i = 0; i <= tier; i++) {
+                    levels[orderedIndices.get(i)] += span;
+                }
+                remaining -= needed;
+            } else {
+                int share = remaining / (tier + 1);
+                int extra = remaining % (tier + 1);
+                for (int i = 0; i <= tier; i++) {
+                    levels[orderedIndices.get(i)] += share + (i < extra ? 1 : 0);
+                }
+                remaining = 0;
+            }
+        }
+        return remaining;
     }
 
     private static int runHorizontalSupplement(Level level, FluidState startFluid, LongOpenHashSet visited,
@@ -909,33 +1089,22 @@ public class EnhancedFluidBFS {
             return performEqualization(level, sources.get(0), maxDepth, maxNodes);
         }
 
-        // OPTIMIZATION: Process multiple sources in parallel
-        List<java.util.concurrent.Future<List<BlockPos>>> futures = new ArrayList<>(sources.size());
-
-        for (BlockPos source : sources) {
-            futures.add(BFS_POOL.submit(() ->
-                performEqualization(level, source, maxDepth, maxNodes)
-            ));
+        if (!warnedParallelBfs) {
+            warnedParallelBfs = true;
+            FlowingFluids.LOG.warn("Parallel BFS disabled to avoid unsafe world access. Running sequentially.");
         }
 
         // Collect results
         List<BlockPos> allPositions = new ArrayList<>();
         LongOpenHashSet seen = new LongOpenHashSet();
 
-        for (java.util.concurrent.Future<List<BlockPos>> future : futures) {
-            try {
-                List<BlockPos> result = future.get(50, java.util.concurrent.TimeUnit.MILLISECONDS);
-                for (BlockPos pos : result) {
-                    long key = pos.asLong();
-                    if (seen.add(key)) {
-                        allPositions.add(pos);
-                    }
+        for (BlockPos source : sources) {
+            List<BlockPos> result = performEqualization(level, source, maxDepth, maxNodes);
+            for (BlockPos pos : result) {
+                long key = pos.asLong();
+                if (seen.add(key)) {
+                    allPositions.add(pos);
                 }
-            } catch (java.util.concurrent.TimeoutException e) {
-                // Skip slow BFS operations to maintain TPS
-                FlowingFluids.LOG.debug("Parallel BFS timed out for a source");
-            } catch (Exception e) {
-                FlowingFluids.LOG.warn("Error in parallel BFS: " + e.getMessage());
             }
         }
 
@@ -946,13 +1115,48 @@ public class EnhancedFluidBFS {
      * Shuts down the BFS thread pool (call on server shutdown).
      */
     public static void shutdown() {
-        BFS_POOL.shutdown();
+        processingPositions.clear();
+        directionCache.remove();
+        java.util.concurrent.ForkJoinPool current;
+        synchronized (EnhancedFluidBFS.class) {
+            current = bfsPool;
+            bfsPool = null;
+        }
+        if (current == null) {
+            return;
+        }
+        current.shutdown();
         try {
-            if (!BFS_POOL.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
-                BFS_POOL.shutdownNow();
+            if (!current.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                current.shutdownNow();
             }
         } catch (InterruptedException e) {
-            BFS_POOL.shutdownNow();
+            Thread.currentThread().interrupt();
+            current.shutdownNow();
+        }
+    }
+
+    private static java.util.concurrent.ForkJoinPool createBfsPool() {
+        return new java.util.concurrent.ForkJoinPool(
+            BFS_PARALLELISM,
+            java.util.concurrent.ForkJoinPool.defaultForkJoinWorkerThreadFactory,
+            null,
+            true
+        );
+    }
+
+    private static java.util.concurrent.ForkJoinPool getBfsPool() {
+        java.util.concurrent.ForkJoinPool current = bfsPool;
+        if (current != null && !current.isShutdown() && !current.isTerminated() && !current.isTerminating()) {
+            return current;
+        }
+        synchronized (EnhancedFluidBFS.class) {
+            current = bfsPool;
+            if (current == null || current.isShutdown() || current.isTerminated() || current.isTerminating()) {
+                bfsPool = createBfsPool();
+                FlowingFluids.warn("Recreated enhanced BFS worker pool after shutdown.");
+            }
+            return bfsPool;
         }
     }
 }

@@ -22,12 +22,16 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashSet;
 import java.util.Set;
 
 public final class FlowingFluids {
     public static final String MOD_ID = "flowing_fluids";
+    private static final DateTimeFormatter CONFIG_BACKUP_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     public final static Logger LOG = LoggerFactory.getLogger("FlowingFluids");
     public static boolean isManeuveringFluids = false;
@@ -35,19 +39,24 @@ public final class FlowingFluids {
     public static long debug_killFluidUpdatesUntilTime = 0;
     public static int waterPluggedThisSession = 0;
 
-    public static Set<Pair<Fluid,TagKey<Block>>> nonDisplacerTags = new HashSet<>();
-    public static Set<Pair<Fluid,Block>> nonDisplacers = new HashSet<>();
+    public static Set<Pair<Fluid, TagKey<Block>>> nonDisplacerTags = new HashSet<>();
+    public static Set<Pair<Fluid, Block>> nonDisplacers = new HashSet<>();
     public static Set<TagKey<Biome>> infiniteBiomeTags = new HashSet<>();
     public static Set<ResourceKey<Biome>> infiniteBiomes = new HashSet<>();
 
     public static FFConfig config = new FFConfig();
-    
+
     public static void info(String str) { LOG.info("[Flowing Fluids] {}", str); }
     public static void warn(String str) { LOG.warn("[Flowing Fluids] {}", str); }
     public static void error(String str) { LOG.error("[Flowing Fluids] {}", str); }
 
     public static void init() {
         info("initialising");
+
+        infiniteBiomeTags.clear();
+        infiniteBiomes.clear();
+        nonDisplacerTags.clear();
+        nonDisplacers.clear();
 
         infiniteBiomeTags.add(BiomeTags.IS_OCEAN);
         infiniteBiomeTags.add(BiomeTags.IS_RIVER);
@@ -56,51 +65,78 @@ public final class FlowingFluids {
         infiniteBiomes.add(Biomes.MANGROVE_SWAMP);
 
         nonDisplacerTags.add(Pair.of(Fluids.WATER, BlockTags.ICE));
-        nonDisplacers.add(Pair.of(Fluids.WATER,Blocks.SPONGE));
-        nonDisplacers.add(Pair.of(Fluids.LAVA,Blocks.OBSIDIAN));
+        nonDisplacers.add(Pair.of(Fluids.WATER, Blocks.SPONGE));
+        nonDisplacers.add(Pair.of(Fluids.LAVA, Blocks.OBSIDIAN));
 
         loadConfig();
     }
-
 
     public static void loadConfig() {
         File configFile = new File(FlowingFluidsPlatform.getConfigDirectory().toFile(), "flowing_fluids.json");
         Gson gson = new GsonBuilder().setPrettyPrinting().setLenient().create();
 
+        FFConfig loadedConfig = null;
+        boolean rewriteConfig = false;
+
         if (configFile.exists()) {
-            try {
-                FileReader fileReader = new FileReader(configFile);
-                config = gson.fromJson(fileReader, FFConfig.class);
-                fileReader.close();
-                config.ensureCollections();
-                RainWaterSystem.reloadConfig();
-                //saveConfig();
-            } catch (IOException e) {
-                // ETFUtils.logMessage("Config could not be loaded, using defaults", false);
+            try (FileReader fileReader = new FileReader(configFile)) {
+                loadedConfig = gson.fromJson(fileReader, FFConfig.class);
+                if (loadedConfig == null) {
+                    warn("Config file was empty, regenerating defaults.");
+                    rewriteConfig = true;
+                }
+            } catch (IOException | RuntimeException e) {
+                warn("Failed to load config, backing it up and regenerating defaults: " + e.getMessage());
+                backupBrokenConfig(configFile);
+                rewriteConfig = true;
             }
         } else {
-            config = new FFConfig();
-            config.ensureCollections();
-            RainWaterSystem.reloadConfig();
-            // only time client side ever calls this
+            rewriteConfig = true;
+        }
+
+        config = loadedConfig != null ? loadedConfig : new FFConfig();
+        config.ensureCollections();
+        RainWaterSystem.reloadConfig();
+
+        if (rewriteConfig) {
             saveConfig();
         }
     }
 
     public static void saveConfig() {
-        // only trigger on client side when loading defaults
         File configFile = new File(FlowingFluidsPlatform.getConfigDirectory().toFile(), "flowing_fluids.json");
         Gson gson = new GsonBuilder().setPrettyPrinting().create();
-        if (!configFile.getParentFile().exists()) {
-            //noinspection ResultOfMethodCallIgnored
-            configFile.getParentFile().mkdirs();
+        File parent = configFile.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            warn("Could not create config directory: " + parent.getAbsolutePath());
+            return;
         }
-        try {
-            FileWriter fileWriter = new FileWriter(configFile);
+
+        try (FileWriter fileWriter = new FileWriter(configFile)) {
             fileWriter.write(gson.toJson(config));
-            fileWriter.close();
-        } catch (IOException ignored) {}
+        } catch (IOException e) {
+            warn("Failed to save config: " + e.getMessage());
+        }
     }
 
+    private static void backupBrokenConfig(File configFile) {
+        if (!configFile.exists()) {
+            return;
+        }
 
+        String fileName = configFile.getName();
+        int extensionIndex = fileName.lastIndexOf('.');
+        String baseName = extensionIndex >= 0 ? fileName.substring(0, extensionIndex) : fileName;
+        String extension = extensionIndex >= 0 ? fileName.substring(extensionIndex) : "";
+        File backupFile = new File(
+                configFile.getParentFile(),
+                baseName + ".invalid-" + CONFIG_BACKUP_TIMESTAMP.format(LocalDateTime.now()) + extension
+        );
+
+        try {
+            Files.copy(configFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException backupException) {
+            warn("Failed to back up broken config: " + backupException.getMessage());
+        }
+    }
 }
