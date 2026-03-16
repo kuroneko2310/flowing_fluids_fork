@@ -365,6 +365,9 @@ public abstract class MixinFlowingFluid extends Fluid {
                 if (remainingAmount <= 0) {
                     return;
                 }
+                if (flowDownResult.skipHorizontalSpread()) {
+                    return;
+                }
 
                 // Enhanced pressure-based fast path algorithm
                 // This optimization detects common patterns and skips expensive slope calculations
@@ -667,7 +670,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                 // example: lava flowing down onto water creates stone in this case
                 flowing_fluids$setOrRemoveWaterAmountAt(level, blockPos, amount - 1, thisState, Direction.DOWN);
                 flowing_fluids$spreadTo2(level, actualPosDown, actualStateDown, Direction.DOWN, 1);
-                return new FFFlowDownResult(amount - 1, false);
+                return new FFFlowDownResult(amount - 1, false, false);
             } else {
                 if (FlowingFluids.config.easyPistonPump && FlowingFluids.config.enablePistonPushing) {
                     // check if an upwards piston is present one block further below, and is still moving, and delay this tick
@@ -676,7 +679,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                         // delay this tick
                         level.scheduleTick(blockPos, this, 10);
                         FlowingFluids.pistonTick = true;
-                        return new FFFlowDownResult(amount, false);
+                        return new FFFlowDownResult(amount, false, false);
                     }
                 }
 
@@ -684,11 +687,12 @@ public abstract class MixinFlowingFluid extends Fluid {
                 int fluidDownAmount = downFState.getAmount();
 
                 if (ff$handleWaterLoggedFlowAndReturnIfHandled(level, blockPos, fluidState, amount, thisState, actualPosDown, fluidDownAmount, true))
-                    return new FFFlowDownResult(level.getFluidState(blockPos).getAmount(), false);
+                    return new FFFlowDownResult(level.getFluidState(blockPos).getAmount(), false, false);
 
                 int amountDestCanAccept = Math.min(8 - fluidDownAmount, amount);
 
                 boolean retainedMinimum = false;
+                boolean skipHorizontalSpread = false;
                 // Avoid draining the entire source when falling into an empty air column.
                 // Leaving at least the drop-off amount in the source keeps lateral equalization active,
                 // preventing the upstream section of a canal from staying permanently overfilled.
@@ -721,15 +725,21 @@ public abstract class MixinFlowingFluid extends Fluid {
                             destNewAmount = Math.max(0, destNewAmount - reserve);
                         }
                     }
+                    if (sourceNewAmount == 0
+                            && flowing_fluids$shouldKeepThinFallingSource(level, blockPos, fluidState, amount,
+                            actualPosDown, actualStateDown, fluidDownAmount)) {
+                        sourceNewAmount = Math.min(Math.max(1, getDropOff(level)), amount);
+                        skipHorizontalSpread = true;
+                    }
                     // set both amounts
                     flowing_fluids$setOrRemoveWaterAmountAt(level, blockPos, sourceNewAmount, thisState, Direction.DOWN);
                     flowing_fluids$spreadTo2(level, actualPosDown, actualStateDown, Direction.DOWN, destNewAmount);
-                    return new FFFlowDownResult(sourceNewAmount, retainedMinimum);
+                    return new FFFlowDownResult(sourceNewAmount, retainedMinimum, skipHorizontalSpread);
                 }
             }
         }
         // return the remaining amount of the source liquid
-        return new FFFlowDownResult(amount, false);
+        return new FFFlowDownResult(amount, false, false);
     }
 
     @Unique
@@ -784,6 +794,36 @@ public abstract class MixinFlowingFluid extends Fluid {
             }
         }
         return false;
+    }
+
+    @Unique
+    private boolean flowing_fluids$shouldKeepThinFallingSource(Level level, BlockPos sourcePos, FluidState sourceState,
+                                                               int sourceAmount, BlockPos targetPos,
+                                                               BlockState targetState, int targetAmount) {
+        if (!sourceState.is(FluidTags.WATER)) {
+            return false;
+        }
+        int thinAmountCap = Math.max(1, getDropOff(level));
+        if (sourceAmount <= 0 || sourceAmount > thinAmountCap) {
+            return false;
+        }
+        if (targetAmount != 0 || !targetState.isAir()) {
+            return false;
+        }
+        if (!flowing_fluids$hasRetentionAnchor(level, sourcePos, sourceState)) {
+            return false;
+        }
+
+        BlockPos belowTarget = targetPos.below();
+        BlockState belowTargetState = level.getBlockState(belowTarget);
+        FluidState belowTargetFluid = FFFluidUtils.getEffectiveFluidState(level, belowTarget, belowTargetState);
+        if (belowTargetFluid.getType().isSame(sourceState.getType()) && belowTargetFluid.getAmount() > 0) {
+            return true;
+        }
+        return belowTargetFluid.isEmpty()
+                && (belowTargetState.isAir()
+                || belowTargetState.canBeReplaced(sourceState.getType())
+                || FFFluidUtils.isPassThroughFluidBlock(level, belowTargetState, Direction.DOWN));
     }
 
     @Unique
