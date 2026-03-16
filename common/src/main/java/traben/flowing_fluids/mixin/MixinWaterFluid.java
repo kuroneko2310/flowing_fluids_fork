@@ -135,6 +135,9 @@ public abstract class MixinWaterFluid extends FlowingFluid {
                 }
             }
         } else if (isWithinInfBiomeHeights) {
+            if (!FFFluidUtils.isInfiniteBiomeRandomRefillEnabled()) {
+                return false;
+            }
             if (amount < 8 && chance < FlowingFluids.config.oceanRiverSwampRefillChance) {
                 // if in ocean or river and below sea level
                 if (isInfBiome && hasSkyLight) {

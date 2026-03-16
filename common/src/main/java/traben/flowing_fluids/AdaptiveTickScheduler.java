@@ -844,6 +844,10 @@ public class AdaptiveTickScheduler {
         }
     }
 
+    public static boolean isFlowActiveNow(LevelAccessor level, BlockPos pos) {
+        return isFlowActive(level, pos);
+    }
+
     private static boolean isFlowActive(LevelAccessor level, BlockPos pos) {
         if (!(level instanceof Level lvl)) {
             return false;

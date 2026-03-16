@@ -93,8 +93,10 @@ public class FlowingFluidsApiImpl implements FlowingFluidsAPI {
     public void setConfig(final @NotNull FFConfig config, @Nullable MinecraftServer server) {
         FlowingFluids.config = config;
         FlowingFluids.saveConfig();
+        FlowingFluids.applyConfigRuntime();
         if (server != null) {
             FlowingFluids.info("Flowing Fluids config was changed by the "+modid+" mod, and will be applied to the server.");
+            FlowingFluids.refreshFluidRuntime(server);
             server.getPlayerList().getPlayers().forEach(FlowingFluidsPlatform::sendConfigToClient);
         } else {
             FlowingFluids.warn("Flowing Fluids config was changed by the "+modid+" mod, but no server was provided. This will only modify the local config for single-player etc.");

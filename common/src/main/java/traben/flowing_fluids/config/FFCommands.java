@@ -43,7 +43,8 @@ import java.util.stream.Collectors;
 public class FFCommands {
     private static int messageAndSaveConfig(CommandContext<CommandSourceStack> context, String text) {
         FlowingFluids.saveConfig();
-        RainWaterSystem.reloadConfig();
+        FlowingFluids.applyConfigRuntime();
+        FlowingFluids.refreshFluidRuntime(context.getSource().getServer());
         context.getSource().getServer().getPlayerList().getPlayers().forEach(FlowingFluidsPlatform::sendConfigToClient);
         return message(context, text);
     }
@@ -85,6 +86,33 @@ public class FFCommands {
     private static int rainReloadRuntime(CommandContext<CommandSourceStack> context) {
         RainWaterSystem.reloadConfig();
         return message(context, "Rain runtime state was refreshed. Cached wetness and queue data were cleared.");
+    }
+
+    private static int inspectInfiniteBiomeHere(CommandContext<CommandSourceStack> context) {
+        BlockPos pos = BlockPos.containing(context.getSource().getPosition());
+        return message(context, describeInfiniteBiomeStatus(context.getSource().getLevel(), pos));
+    }
+
+    private static String describeInfiniteBiomeStatus(Level level, BlockPos pos) {
+        var biome = level.getBiome(pos);
+        FluidState fluidState = level.getFluidState(pos);
+        boolean inInfiniteBiome = FFFluidUtils.matchInfiniteBiomes(biome);
+        boolean withinBand = FFFluidUtils.isWithinInfiniteBiomeRefillBand(level, pos);
+        boolean randomRefillEnabled = FFFluidUtils.isInfiniteBiomeRandomRefillEnabled();
+        boolean nonConsumeEnabled = FFFluidUtils.isInfiniteBiomeNonConsumeEnabled();
+        boolean surfaceDrainEnabled = FFFluidUtils.isInfiniteBiomeSurfaceDrainEnabled();
+        return "Infinite biome runtime status"
+                + "\nPosition: " + pos
+                + "\nFluid amount: " + fluidState.getAmount()
+                + "\nInfinite biome: " + inInfiniteBiome
+                + "\nWithin refill band: " + withinBand
+                + "\nRefill chance: " + FlowingFluids.config.oceanRiverSwampRefillChance
+                + " (enabled=" + randomRefillEnabled + ")"
+                + "\nNon-consume chance: " + FlowingFluids.config.infiniteWaterBiomeNonConsumeChance
+                + " (enabled=" + nonConsumeEnabled + ")"
+                + "\nSurface drain chance: " + FlowingFluids.config.infiniteWaterBiomeDrainSurfaceChance
+                + " (enabled=" + surfaceDrainEnabled + ")"
+                + "\nSea-level only refill: " + FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly;
     }
 
     private static int applyRainPreset(CommandContext<CommandSourceStack> context, String presetName) {
@@ -456,6 +484,19 @@ public class FFCommands {
                                                 "人工水路（運河）の流動距離（平地に水がある場合）。\n適応型流動が有効な場合のみ動作します。\nデフォルト: 32, 範囲: 4-128",
                                                 "distance", 4, 128,
                                                 a -> FlowingFluids.config.canalFlowDistance = a, () -> FlowingFluids.config.canalFlowDistance)
+                                        ).then(booleanCommand("broad_surface_suppression",
+                                                "海・湖・池の広い安定水面で、全体をならそうとする処理を強く抑えます。",
+                                                "広水面抑制を有効にしました。",
+                                                "広水面抑制を無効にしました。",
+                                                a -> FlowingFluids.config.broadSurfaceSuppressionEnabled = a, () -> FlowingFluids.config.broadSurfaceSuppressionEnabled)
+                                        ).then(intCommand("broad_surface_stable_ticks",
+                                                "広い水面を静的とみなすまでの安定 tick 数です。",
+                                                "ticks", 1, 40,
+                                                a -> FlowingFluids.config.broadSurfaceStableTicks = a, () -> FlowingFluids.config.broadSurfaceStableTicks)
+                                        ).then(intCommand("broad_surface_slope_clamp",
+                                                "広い水面での slope 探索距離の基本 clamp 値です。海はこの値、湖は+1まで使います。",
+                                                "distance", 1, 8,
+                                                a -> FlowingFluids.config.broadSurfaceSlopeClamp = a, () -> FlowingFluids.config.broadSurfaceSlopeClamp)
                                         ).then(booleanCommand("enable_distance_based_optimization",
                                                 "階層的距離管理: 遠距離の水を低頻度で更新します。\n長距離流動で50-70%のパフォーマンス向上を提供し、視覚的影響は最小限です。",
                                                 "距離ベース最適化が有効になりました。遠距離の水は低頻度で更新され、パフォーマンスが向上します。",
@@ -662,6 +703,10 @@ public class FFCommands {
                                 ).then(booleanCommand("only_infinite_biomes_at_sea_level",
                                         "Controls if the infinite biome refilling only happens to water at exactly sea level.",
                                         a -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly = a, () -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly)
+                                ).then(Commands.literal("inspect_infinite_here")
+                                        .executes(FFCommands::inspectInfiniteBiomeHere)
+                                ).then(Commands.literal("infinite_biome_runtime_status")
+                                        .executes(FFCommands::inspectInfiniteBiomeHere)
                                 )
                         ).then(Commands.literal("rain")
                                 .executes(FFCommands::rainStatus)

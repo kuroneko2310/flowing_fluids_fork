@@ -4,6 +4,8 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import it.unimi.dsi.fastutil.Pair;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.TagKey;
@@ -53,16 +55,9 @@ public final class FlowingFluids {
     public static void init() {
         info("initialising");
 
-        infiniteBiomeTags.clear();
-        infiniteBiomes.clear();
+        rebuildInfiniteBiomeDefaults();
         nonDisplacerTags.clear();
         nonDisplacers.clear();
-
-        infiniteBiomeTags.add(BiomeTags.IS_OCEAN);
-        infiniteBiomeTags.add(BiomeTags.IS_RIVER);
-        infiniteBiomeTags.add(BiomeTags.IS_BEACH);
-        infiniteBiomes.add(Biomes.SWAMP);
-        infiniteBiomes.add(Biomes.MANGROVE_SWAMP);
 
         nonDisplacerTags.add(Pair.of(Fluids.WATER, BlockTags.ICE));
         nonDisplacers.add(Pair.of(Fluids.WATER, Blocks.SPONGE));
@@ -95,8 +90,7 @@ public final class FlowingFluids {
         }
 
         config = loadedConfig != null ? loadedConfig : new FFConfig();
-        config.ensureCollections();
-        RainWaterSystem.reloadConfig();
+        applyConfigRuntime();
 
         if (rewriteConfig) {
             saveConfig();
@@ -117,6 +111,47 @@ public final class FlowingFluids {
         } catch (IOException e) {
             warn("Failed to save config: " + e.getMessage());
         }
+    }
+
+    public static void rebuildInfiniteBiomeDefaults() {
+        infiniteBiomeTags.clear();
+        infiniteBiomes.clear();
+        infiniteBiomeTags.add(BiomeTags.IS_OCEAN);
+        infiniteBiomeTags.add(BiomeTags.IS_RIVER);
+        infiniteBiomeTags.add(BiomeTags.IS_BEACH);
+        infiniteBiomes.add(Biomes.SWAMP);
+        infiniteBiomes.add(Biomes.MANGROVE_SWAMP);
+    }
+
+    public static void applyConfigRuntime() {
+        if (config == null) {
+            config = new FFConfig();
+        }
+        config.ensureCollections();
+        rebuildInfiniteBiomeDefaults();
+        RainWaterSystem.reloadConfig();
+    }
+
+    public static void refreshFluidRuntime(MinecraftServer server) {
+        if (server == null) {
+            return;
+        }
+        for (ServerLevel level : server.getAllLevels()) {
+            refreshFluidRuntime(level);
+        }
+    }
+
+    public static void refreshFluidRuntime(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        AdaptiveTickScheduler.clearDimension(level);
+        FluidSpatialGrid.clearDimension(level);
+        ChunkLocalSlopeCache.clearDimension(level);
+        FluidActivityTracker.clearDimension(level);
+        FluidTickBuffer.clearDimension(level);
+        ParallelFluidEqualizer.clearDimension(level);
+        ExtendedWaterlogStore.clearDimension(level);
     }
 
     private static void backupBrokenConfig(File configFile) {

@@ -330,6 +330,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                     && level.getBrightness(LightLayer.SKY, blockPos) > 0;
 
             boolean dontConsumeWater = isWaterAndInfiniteBiome
+                    && FFFluidUtils.isInfiniteBiomeNonConsumeEnabled()
                     && level.getSeaLevel() != blockPos.getY()
                     && level.getRandom().nextFloat() < FlowingFluids.config.infiniteWaterBiomeNonConsumeChance;
 
@@ -472,7 +473,8 @@ public abstract class MixinFlowingFluid extends Fluid {
                         }
                     } else {
                         FluidState currentState = level.getFluidState(blockPos);
-                        int fastRefill = currentState.getType().isSame(fluidState.getType())
+                        int fastRefill = FFFluidUtils.isInfiniteBiomeRandomRefillEnabled()
+                                && currentState.getType().isSame(fluidState.getType())
                                 ? FFFluidUtils.getInfiniteBiomeRefillAmount(level, blockPos, fluidState.getType(),
                                 currentState.getAmount(), true)
                                 : 0;
@@ -528,7 +530,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         final float pressureHeadDelta = Math.max(0.0f, sourcePressureHead - destPressureHead);
 
         if (fluidState.is(FluidTags.WATER)
-                && flowing_fluids$shouldSuppressStablePoolTransfer(level, blockPos, amount, posDir, destFluidAmount, difference, pressureHeadDelta)) {
+                && flowing_fluids$shouldSuppressStablePoolTransfer(level, blockPos, fluidState, amount, posDir, destFluidAmount, difference, pressureHeadDelta)) {
             flowing_fluids$updateStablePoolTracking(level, blockPos, fluidState, amount, true);
             flowing_fluids$updateStablePoolTracking(level, posDir, fluidState, destFluidAmount, true);
             return;
@@ -1059,6 +1061,13 @@ public abstract class MixinFlowingFluid extends Fluid {
                 }
             }
 
+            if (flowing_fluids$isBroadSurfaceWater(level, blockPos, fluidState, amount)) {
+                boolean oceanLikeBiome = FFFluidUtils.isOceanBiome(level.getBiome(blockPos))
+                        || FFFluidUtils.isBeachBiome(level.getBiome(blockPos));
+                int broadClamp = Math.max(1, FlowingFluids.config.broadSurfaceSlopeClamp + (oceanLikeBiome ? 0 : 1));
+                effectiveDistance = Math.min(effectiveDistance, broadClamp);
+            }
+
             float multiplier = FlowingFluids.config.slopeFindDistanceMultiplier;
             if (multiplier <= 0.0f) {
                 multiplier = 0.1f;
@@ -1347,11 +1356,28 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Unique
-    private boolean flowing_fluids$shouldSuppressStablePoolTransfer(Level level, BlockPos sourcePos, int sourceAmount,
-                                                                    BlockPos targetPos, int targetAmount, int difference,
+    private boolean flowing_fluids$shouldSuppressStablePoolTransfer(Level level, BlockPos sourcePos, FluidState sourceState,
+                                                                    int sourceAmount, BlockPos targetPos, int targetAmount, int difference,
                                                                     float pressureHeadDelta) {
         if (difference <= 0 || difference > 2) {
             return false;
+        }
+        boolean sourceBroadSurface = flowing_fluids$isBroadSurfaceWater(level, sourcePos, sourceState, sourceAmount);
+        boolean targetBroadSurface = targetAmount > 0
+                && flowing_fluids$isBroadSurfaceWater(level, targetPos, sourceState, targetAmount);
+        if (sourceBroadSurface && targetBroadSurface) {
+            if (pressureHeadDelta > 1.25f) {
+                return false;
+            }
+            if (AdaptiveTickScheduler.isFlowActiveNow(level, sourcePos)
+                    || AdaptiveTickScheduler.isFlowActiveNow(level, targetPos)) {
+                return false;
+            }
+            if (flowing_fluids$hasImmediateSurfaceEdge(level, sourcePos, sourceState.getType())
+                    || flowing_fluids$hasImmediateSurfaceEdge(level, targetPos, sourceState.getType())) {
+                return false;
+            }
+            return true;
         }
         if (sourceAmount > 4 || targetAmount > 4) {
             return false;
@@ -1374,6 +1400,30 @@ public abstract class MixinFlowingFluid extends Fluid {
         }
         if (minimumRetainedAmount > 0) {
             return false;
+        }
+        boolean sourceBroadSurface = flowing_fluids$isBroadSurfaceWater(level, sourcePos, sourceState, sourceAmount);
+        boolean targetBroadSurface = targetAmount > 0
+                && flowing_fluids$isBroadSurfaceWater(level, targetPos, sourceState, targetAmount);
+        if (sourceBroadSurface && targetBroadSurface) {
+            if (difference <= 0 || difference > 2) {
+                return false;
+            }
+            if (pressureHeadDelta > 1.25f) {
+                return false;
+            }
+            if (AdaptiveTickScheduler.isFlowActiveNow(level, sourcePos)
+                    || AdaptiveTickScheduler.isFlowActiveNow(level, targetPos)) {
+                return false;
+            }
+            if (flowing_fluids$hasImmediateSurfaceEdge(level, sourcePos, sourceState.getType())
+                    || flowing_fluids$hasImmediateSurfaceEdge(level, targetPos, sourceState.getType())) {
+                return false;
+            }
+            if (flowing_fluids$hasImmediateDownwardOutlet(level, sourcePos, sourceState.getType(), sourceAmount)
+                    || flowing_fluids$hasImmediateDownwardOutlet(level, targetPos, sourceState.getType(), Math.max(1, targetAmount))) {
+                return false;
+            }
+            return true;
         }
         if (difference <= 0 || difference > 3) {
             return false;
@@ -1406,6 +1456,53 @@ public abstract class MixinFlowingFluid extends Fluid {
         BlockPos abovePos = pos.above();
         FluidState above = FFFluidUtils.getEffectiveFluidState(level, abovePos, level.getBlockState(abovePos));
         return above.getType().isSame(sourceFluid) && above.getAmount() > 0;
+    }
+
+    @Unique
+    private boolean flowing_fluids$isBroadSurfaceWater(Level level, BlockPos pos, FluidState fluidState, int amount) {
+        if (!FlowingFluids.config.broadSurfaceSuppressionEnabled || !fluidState.is(FluidTags.WATER) || amount <= 0) {
+            return false;
+        }
+        var biome = level.getBiome(pos);
+        boolean oceanLikeBiome = FFFluidUtils.isOceanBiome(biome) || FFFluidUtils.isBeachBiome(biome);
+        boolean riverLikeBiome = FFFluidUtils.isRiverBiome(biome);
+        boolean hasFluidAbove = flowing_fluids$hasFluidAbove(level, pos, fluidState.getType());
+        boolean immediateDownwardOutlet = flowing_fluids$hasImmediateDownwardOutlet(level, pos, fluidState.getType(), amount);
+
+        BlockPos belowPos = pos.below();
+        BlockState belowState = level.getBlockState(belowPos);
+        FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
+        boolean supportedBelow = (belowFluid.getType().isSame(fluidState.getType()) && belowFluid.getAmount() >= amount)
+                || (!belowState.isAir() && !belowState.canBeReplaced(fluidState.getType()));
+
+        int lateralWaterNeighbors = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            cursor.setWithOffset(pos, dir);
+            FluidState neighbor = FFFluidUtils.getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
+            if (neighbor.getType().isSame(fluidState.getType()) && neighbor.getAmount() > 0) {
+                lateralWaterNeighbors++;
+            }
+        }
+
+        int stableTicks = AdaptiveTickScheduler.getPoolStableTicks(level, pos, 20);
+        return FFFluidUtils.classifyBroadSurfaceWater(oceanLikeBiome, riverLikeBiome, lateralWaterNeighbors,
+                hasFluidAbove, supportedBelow, immediateDownwardOutlet, stableTicks,
+                FlowingFluids.config.broadSurfaceStableTicks);
+    }
+
+    @Unique
+    private boolean flowing_fluids$hasImmediateSurfaceEdge(Level level, BlockPos pos, Fluid sourceFluid) {
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            cursor.setWithOffset(pos, dir);
+            BlockState state = level.getBlockState(cursor);
+            FluidState neighbor = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
+            if (neighbor.isEmpty() && (state.isAir() || state.canBeReplaced(sourceFluid))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Unique
@@ -1456,6 +1553,15 @@ public abstract class MixinFlowingFluid extends Fluid {
     private boolean flowing_fluids$shouldSuppressExploratorySpread(Level level, BlockPos pos, FluidState fluidState, int amount) {
         if (!fluidState.is(FluidTags.WATER)) {
             return false;
+        }
+        if (flowing_fluids$isBroadSurfaceWater(level, pos, fluidState, amount)) {
+            if (AdaptiveTickScheduler.isFlowActiveNow(level, pos)) {
+                return false;
+            }
+            if (flowing_fluids$hasImmediateSurfaceEdge(level, pos, fluidState.getType())) {
+                return false;
+            }
+            return !flowing_fluids$hasImmediateDownwardOutlet(level, pos, fluidState.getType(), amount);
         }
         var biome = level.getBiome(pos);
         boolean broadWaterBiome = FFFluidUtils.isOceanBiome(biome) || FFFluidUtils.isBeachBiome(biome);

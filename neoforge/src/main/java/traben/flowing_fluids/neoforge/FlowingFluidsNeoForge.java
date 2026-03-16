@@ -86,6 +86,7 @@ class ModRegister {
             try {
                 if (data.isValid()) {
                     FlowingFluids.config = data.delegate;
+                    FlowingFluids.applyConfigRuntime();
 
                     FlowingFluids.info("- Server Config data received and synced");
                 } else {

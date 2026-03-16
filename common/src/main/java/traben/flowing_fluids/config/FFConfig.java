@@ -53,6 +53,9 @@ public class FFConfig {
     public int riverFlowDistance = 64; // Flow distance in river biomes
     public int oceanFlowDistance = 128; // Flow distance in ocean biomes
     public int canalFlowDistance = 48; // Flow distance for artificial canals (flat terrain)
+    public boolean broadSurfaceSuppressionEnabled = true; // Suppress wide, stable surface leveling until disturbed
+    public int broadSurfaceStableTicks = 6; // Stable ticks required before broad surface suppression applies
+    public int broadSurfaceSlopeClamp = 2; // Base slope-search clamp for broad surfaces
     public int forcedEqualizationStableTicks = 1200; // Stable ticks before a forced lightweight recheck is scheduled
     public int forcedEqualizationCooldownTicks = 600; // Cooldown between forced rechecks per column
     public float forcedEqualizationBudgetFactor = 0.2f; // Budget multiplier when running forced lightweight checks
@@ -300,6 +303,9 @@ public class FFConfig {
         riverFlowDistance = buffer.readVarInt();
         oceanFlowDistance = buffer.readVarInt();
         canalFlowDistance = buffer.readVarInt();
+        broadSurfaceSuppressionEnabled = buffer.readBoolean();
+        broadSurfaceStableTicks = buffer.readVarInt();
+        broadSurfaceSlopeClamp = buffer.readVarInt();
 
         // Performance monitoring settings
         enablePerformanceMonitoring = buffer.readBoolean();
@@ -468,6 +474,9 @@ public class FFConfig {
         buffer.writeVarInt(riverFlowDistance);
         buffer.writeVarInt(oceanFlowDistance);
         buffer.writeVarInt(canalFlowDistance);
+        buffer.writeBoolean(broadSurfaceSuppressionEnabled);
+        buffer.writeVarInt(broadSurfaceStableTicks);
+        buffer.writeVarInt(broadSurfaceSlopeClamp);
 
         // Performance monitoring settings
         buffer.writeBoolean(enablePerformanceMonitoring);

@@ -953,6 +953,22 @@ public class FFFluidUtils {
                 || isBeachBiome(biome);
     }
 
+    public static boolean isInfiniteBiomeRefillEnabled() {
+        return isInfiniteBiomeRandomRefillEnabled() || isInfiniteBiomeNonConsumeEnabled();
+    }
+
+    public static boolean isInfiniteBiomeRandomRefillEnabled() {
+        return FlowingFluids.config != null && FlowingFluids.config.oceanRiverSwampRefillChance > 0.0f;
+    }
+
+    public static boolean isInfiniteBiomeNonConsumeEnabled() {
+        return FlowingFluids.config != null && FlowingFluids.config.infiniteWaterBiomeNonConsumeChance > 0.0f;
+    }
+
+    public static boolean isInfiniteBiomeSurfaceDrainEnabled() {
+        return FlowingFluids.config != null && FlowingFluids.config.infiniteWaterBiomeDrainSurfaceChance > 0.0f;
+    }
+
     public static boolean isWithinInfiniteBiomeRefillBand(Level level, BlockPos pos) {
         return isWithinInfiniteBiomeRefillBand(pos.getY(), level.getSeaLevel(), FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly);
     }
@@ -1045,6 +1061,19 @@ public class FFFluidUtils {
             return 1;
         }
         return 0;
+    }
+
+    public static boolean classifyBroadSurfaceWater(boolean oceanLikeBiome, boolean riverLikeBiome, int lateralWaterNeighbors,
+                                                    boolean hasFluidAbove, boolean supportedBelow,
+                                                    boolean immediateDownwardOutlet, int stableTicks,
+                                                    int requiredStableTicks) {
+        if (riverLikeBiome) {
+            return false;
+        }
+        if (lateralWaterNeighbors < 3 || hasFluidAbove || !supportedBelow || immediateDownwardOutlet) {
+            return false;
+        }
+        return stableTicks >= Math.max(1, requiredStableTicks) && (oceanLikeBiome || lateralWaterNeighbors >= 3);
     }
 
     /**
