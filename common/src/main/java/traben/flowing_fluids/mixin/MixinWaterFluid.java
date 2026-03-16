@@ -56,9 +56,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
         if (FlowingFluids.config.dontTickAtLocation(blockPos, level)) return; // do not calculate
 
 
-        isWithinInfBiomeHeights = FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly
-                ? level.getSeaLevel() == blockPos.getY() || level.getSeaLevel() - 1 == blockPos.getY()
-                : level.getSeaLevel() == blockPos.getY() && blockPos.getY() > 0;
+        isWithinInfBiomeHeights = FFFluidUtils.isWithinInfiniteBiomeRefillBand(level, blockPos);
 
         hasSkyLight = level.getBrightness(LightLayer.SKY, blockPos) > 0; // is close enough to sky/atmosphere access
 
@@ -140,7 +138,10 @@ public abstract class MixinWaterFluid extends FlowingFluid {
             if (amount < 8 && chance < FlowingFluids.config.oceanRiverSwampRefillChance) {
                 // if in ocean or river and below sea level
                 if (isInfBiome && hasSkyLight) {
-                    return FFFluidUtils.changeFluidAmountAtPos(level, blockPos, this, 1);
+                    int refillAmount = FFFluidUtils.getInfiniteBiomeRefillAmount(level, blockPos, this, amount, false);
+                    if (refillAmount > 0) {
+                        return FFFluidUtils.changeFluidAmountAtPos(level, blockPos, this, refillAmount);
+                    }
                 }
             }
         }

@@ -322,9 +322,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             ff$getWaterAmountCache().clear();
             ff$getSectionSampleContext().begin(level);
 
-            boolean withinInfBiomeHeights = FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly
-                    ? level.getSeaLevel() == blockPos.getY() || level.getSeaLevel() - 1 == blockPos.getY()
-                    : level.getSeaLevel() == blockPos.getY() && blockPos.getY() > 0;
+            boolean withinInfBiomeHeights = FFFluidUtils.isWithinInfiniteBiomeRefillBand(level, blockPos);
 
             boolean isWaterAndInfiniteBiome = fluidState.is(FluidTags.WATER)
                     && withinInfBiomeHeights
@@ -472,10 +470,19 @@ public abstract class MixinFlowingFluid extends Fluid {
                                 FFFluidUtils.changeFluidAmountAtPos(level, blockPos, this, -1);
                             }
                         }
-                    } else if (dontConsumeWater) {
-                        // if we are in a truly infinite biome, we need to set this back to the original state
-                        // as we don't want to lose water in these biomes
-                        FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, fluidState.getType(), fluidState.getAmount());
+                    } else {
+                        FluidState currentState = level.getFluidState(blockPos);
+                        int fastRefill = currentState.getType().isSame(fluidState.getType())
+                                ? FFFluidUtils.getInfiniteBiomeRefillAmount(level, blockPos, fluidState.getType(),
+                                currentState.getAmount(), true)
+                                : 0;
+                        if (fastRefill > 0) {
+                            FFFluidUtils.changeFluidAmountAtPos(level, blockPos, fluidState.getType(), fastRefill);
+                        } else if (dontConsumeWater) {
+                            // if we are in a truly infinite biome, we need to set this back to the original state
+                            // as we don't want to lose water in these biomes
+                            FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, fluidState.getType(), fluidState.getAmount());
+                        }
                     }
                 }
 

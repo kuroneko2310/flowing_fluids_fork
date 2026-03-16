@@ -953,6 +953,100 @@ public class FFFluidUtils {
                 || isBeachBiome(biome);
     }
 
+    public static boolean isWithinInfiniteBiomeRefillBand(Level level, BlockPos pos) {
+        return isWithinInfiniteBiomeRefillBand(pos.getY(), level.getSeaLevel(), FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly);
+    }
+
+    public static boolean isWithinInfiniteBiomeRefillBand(int y, int seaLevel, boolean seaLevelOnly) {
+        if (y <= 0) {
+            return false;
+        }
+        if (seaLevelOnly) {
+            return y == seaLevel || y == seaLevel - 1;
+        }
+        return y <= seaLevel;
+    }
+
+    public static int getInfiniteBiomeRefillAmount(LevelAccessor level, BlockPos pos, Fluid fluid, int amount, boolean aggressive) {
+        if (!(level instanceof Level world)) {
+            return 0;
+        }
+        if (amount <= 0 || amount >= 8 || pos.getY() == world.getSeaLevel()) {
+            return 0;
+        }
+        if (!isWithinInfiniteBiomeRefillBand(world, pos)) {
+            return 0;
+        }
+
+        FluidState below = getEffectiveFluidState(level, pos.below(), level.getBlockState(pos.below()));
+        boolean hasFullBelow = below.getType().isSame(fluid) && below.getAmount() >= 8;
+
+        FluidState above = getEffectiveFluidState(level, pos.above(), level.getBlockState(pos.above()));
+        boolean hasFluidAbove = above.getType().isSame(fluid) && above.getAmount() > 0;
+
+        int lateralWaterNeighbors = 0;
+        int supportedNeighbors = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            cursor.setWithOffset(pos, direction);
+            FluidState neighbor = getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
+            if (!neighbor.getType().isSame(fluid) || neighbor.getAmount() <= 0) {
+                continue;
+            }
+            lateralWaterNeighbors++;
+
+            cursor.move(Direction.DOWN);
+            FluidState neighborBelow = getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
+            if (neighborBelow.getType().isSame(fluid) && neighborBelow.getAmount() >= 8) {
+                supportedNeighbors++;
+            }
+            cursor.move(Direction.UP);
+        }
+
+        return classifyInfiniteBiomeRefillAmount(amount, hasFullBelow, lateralWaterNeighbors, supportedNeighbors, hasFluidAbove, aggressive);
+    }
+
+    public static int classifyInfiniteBiomeRefillAmount(int amount, boolean hasFullBelow, int lateralWaterNeighbors,
+                                                        int supportedNeighbors, boolean hasFluidAbove, boolean aggressive) {
+        int room = 8 - amount;
+        if (amount <= 0 || room <= 0) {
+            return 0;
+        }
+
+        boolean anchored = supportedNeighbors >= 2
+                || (hasFullBelow && lateralWaterNeighbors >= 1)
+                || (hasFluidAbove && lateralWaterNeighbors >= 1);
+        if (!anchored) {
+            return 0;
+        }
+
+        int supportScore = (hasFullBelow ? 2 : 0)
+                + lateralWaterNeighbors
+                + supportedNeighbors
+                + (hasFluidAbove ? 1 : 0);
+
+        if (aggressive) {
+            if (supportScore >= 7) {
+                return room;
+            }
+            if (supportScore >= 5) {
+                return Math.min(room, 2);
+            }
+            if (supportScore >= 4 && amount <= 3) {
+                return 1;
+            }
+            return 0;
+        }
+
+        if (supportScore >= 6) {
+            return Math.min(room, 2);
+        }
+        if (supportScore >= 4) {
+            return 1;
+        }
+        return 0;
+    }
+
     /**
      * Sea-level infinite biomes are often broad, exposed surfaces. Draining those full or well-supported
      * tiles creates visible oscillation as equalization immediately fills them back in. Only allow
