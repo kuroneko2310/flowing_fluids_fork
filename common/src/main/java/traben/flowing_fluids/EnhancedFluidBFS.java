@@ -15,6 +15,7 @@ import net.minecraft.world.level.material.FluidState;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * This is the core of the "Natural Hybrid Fluid" system.
  */
 public class EnhancedFluidBFS {
-    private static final int MIN_INTERNAL_DRY_FILL = 64;
+    private static final int MIN_INTERNAL_DRY_FILL = Math.max(8, FluidAmountConverter.scaleLegacyInternal(64));
     private static final int CLUSTER_PARTITION_THRESHOLD = 96;
 
     // OPTIMIZED: Thread pool for parallel BFS processing
@@ -298,6 +299,8 @@ public class EnhancedFluidBFS {
                     FlowingFluids.config.clusterDiffusionMaxCluster);
             }
 
+            cacheComponentMembership(level, startLong, visitedOrder);
+
             return equalizedPositions;
         } finally {
             // Always remove from processing set when done
@@ -309,6 +312,19 @@ public class EnhancedFluidBFS {
         long key = pos.asLong();
         if (equalizedKeys.add(key)) {
             equalizedPositions.add(pos.immutable());
+        }
+    }
+
+    private static void cacheComponentMembership(Level level, long startKey, LongArrayList visitedOrder) {
+        int componentId = FluidSpatialGrid.allocateComponentId();
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        mutablePos.set(BlockPos.getX(startKey), BlockPos.getY(startKey), BlockPos.getZ(startKey));
+        FluidSpatialGrid.setComponentId(level, mutablePos, componentId);
+
+        for (int i = 0; i < visitedOrder.size(); i++) {
+            long visitedKey = visitedOrder.getLong(i);
+            mutablePos.set(BlockPos.getX(visitedKey), BlockPos.getY(visitedKey), BlockPos.getZ(visitedKey));
+            FluidSpatialGrid.setComponentId(level, mutablePos, componentId);
         }
     }
 
@@ -1022,24 +1038,7 @@ public class EnhancedFluidBFS {
             }
 
             int allowedTransfer = Math.min(budget, totalExcess);
-            float ratio = allowedTransfer / (float) totalExcess;
-
-            // Calculate new amounts in-place using clusterAmounts array
-            int newTotal = 0;
-            for (int i = 0; i < clusterSize; i++) {
-                int amount = clusterAmounts[i];
-                int delta = amount - average;
-                int adjustment = Math.round(Math.abs(delta) * ratio);
-                int newAmount = delta >= 0 ? amount - adjustment : amount + adjustment;
-                clusterAmounts[i] = Math.max(0, newAmount);
-                newTotal += clusterAmounts[i];
-            }
-
-            // Apply correction to maintain total
-            int correction = total - newTotal;
-            if (correction != 0) {
-                clusterAmounts[0] = Math.max(0, clusterAmounts[0] + correction);
-            }
+            rebalanceClusterAmounts(clusterAmounts, clusterSize, total, average, allowedTransfer);
 
             // Buffer all changes
             for (int i = 0; i < clusterSize; i++) {
@@ -1134,6 +1133,67 @@ public class EnhancedFluidBFS {
             Thread.currentThread().interrupt();
             current.shutdownNow();
         }
+    }
+
+    static void rebalanceClusterAmounts(int[] clusterAmounts, int clusterSize, int total, int average, int allowedTransfer) {
+        if (clusterAmounts == null || clusterSize <= 0 || allowedTransfer <= 0) {
+            return;
+        }
+
+        int totalExcess = computeTotalExcess(clusterAmounts, clusterSize, average);
+        if (totalExcess <= 0) {
+            return;
+        }
+
+        float ratio = allowedTransfer / (float) totalExcess;
+        double[] fractionalRemainders = new double[clusterSize];
+        Integer[] order = new Integer[clusterSize];
+        int newTotal = 0;
+
+        for (int i = 0; i < clusterSize; i++) {
+            int amount = clusterAmounts[i];
+            int delta = amount - average;
+            double target = delta >= 0
+                ? amount - (Math.max(0, delta) * ratio)
+                : amount + (Math.abs(delta) * ratio);
+            int floor = Math.max(0, (int) Math.floor(target));
+            clusterAmounts[i] = floor;
+            fractionalRemainders[i] = target - floor;
+            order[i] = i;
+            newTotal += floor;
+        }
+
+        int remainder = total - newTotal;
+        if (remainder > 0) {
+            Arrays.sort(order, (left, right) -> Double.compare(fractionalRemainders[right], fractionalRemainders[left]));
+            for (int i = 0; i < order.length && remainder > 0; i++) {
+                clusterAmounts[order[i]]++;
+                remainder--;
+            }
+        } else if (remainder < 0) {
+            Arrays.sort(order, Comparator
+                .comparingDouble((Integer index) -> fractionalRemainders[index])
+                .thenComparingInt(index -> clusterAmounts[index]));
+            for (int i = 0; i < order.length && remainder < 0; i++) {
+                int index = order[i];
+                if (clusterAmounts[index] <= 0) {
+                    continue;
+                }
+                clusterAmounts[index]--;
+                remainder++;
+            }
+        }
+    }
+
+    private static int computeTotalExcess(int[] clusterAmounts, int clusterSize, int average) {
+        int totalExcess = 0;
+        for (int i = 0; i < clusterSize; i++) {
+            int delta = clusterAmounts[i] - average;
+            if (delta > 0) {
+                totalExcess += delta;
+            }
+        }
+        return totalExcess;
     }
 
     private static java.util.concurrent.ForkJoinPool createBfsPool() {

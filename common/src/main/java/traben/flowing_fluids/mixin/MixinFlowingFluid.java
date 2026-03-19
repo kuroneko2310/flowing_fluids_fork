@@ -3,7 +3,6 @@ package traben.flowing_fluids.mixin;
 
 import com.mojang.datafixers.util.Pair;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2FloatOpenHashMap;
 import it.unimi.dsi.fastutil.shorts.Short2BooleanMap;
 import it.unimi.dsi.fastutil.shorts.Short2BooleanOpenHashMap;
 import it.unimi.dsi.fastutil.shorts.Short2ObjectMap;
@@ -22,12 +21,12 @@ import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BucketPickup;
 import net.minecraft.world.level.block.DirectionalBlock;
-import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.LiquidBlockContainer;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -49,8 +48,10 @@ import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FluidActivityTracker;
 import traben.flowing_fluids.ParallelFluidEqualizer;
+import traben.flowing_fluids.ParallelFluidTickManager;
 import traben.flowing_fluids.config.FFConfig;
 import traben.flowing_fluids.optimization.HierarchicalDistanceManager;
+import traben.flowing_fluids.optimization.WaterFlowProfile;
 
 
 import static traben.flowing_fluids.FFFluidUtils.getStateForFluidByAmount;
@@ -86,14 +87,6 @@ public abstract class MixinFlowingFluid extends Fluid {
             ThreadLocal.withInitial(() -> new int[1]);
 
     @Unique
-    private static final ThreadLocal<Long2FloatOpenHashMap> ff$PRESSURE_HEAD_CACHE =
-            ThreadLocal.withInitial(() -> {
-                Long2FloatOpenHashMap cache = new Long2FloatOpenHashMap();
-                cache.defaultReturnValue(Float.NaN);
-                return cache;
-            });
-
-    @Unique
     private static final ThreadLocal<Long2IntOpenHashMap> ff$WATER_AMOUNT_CACHE =
             ThreadLocal.withInitial(() -> {
                 Long2IntOpenHashMap cache = new Long2IntOpenHashMap();
@@ -120,11 +113,6 @@ public abstract class MixinFlowingFluid extends Fluid {
         Short2BooleanOpenHashMap cache = ff$FLOW_DOWN_CACHE.get();
         cache.clear();
         return cache;
-    }
-
-    @Unique
-    private static Long2FloatOpenHashMap ff$getPressureHeadCache() {
-        return ff$PRESSURE_HEAD_CACHE.get();
     }
 
     @Unique
@@ -168,30 +156,17 @@ public abstract class MixinFlowingFluid extends Fluid {
             //here we are handling flow to or from a waterloggable block
             int totalAmount = destFluidAmount + amount;
             if (fromUsesVirtualFluidState || toUsesVirtualFluidState) {
-                int cappedDestination = Math.min(8, totalAmount);
-                int remainingSource = Math.max(0, totalAmount - cappedDestination);
-                FFFluidUtils.setFluidStateAtPosToNewAmount(level, posFrom, fluidState.getType(), remainingSource);
-                FFFluidUtils.setFluidStateAtPosToNewAmount(level, posTo, fluidState.getType(), cappedDestination);
-                return true;
+                return FFFluidUtils.transferFluidAmount(level, posFrom, posTo, fluidState.getType(), amount, 0) > 0;
             }
             if (totalAmount < 8) { //crucial this only runs after we confirm they are waterloggables, as otherwise return should be false
-                return true; //do nothing
-            } else {
-                //both should only be possible when flowing down
-                if (toIsWaterloggableVanilla && fromIsWaterloggableVanilla) {
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(level, posFrom, fluidState.getType(), 0);
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(level, posTo, fluidState.getType(), 8);
-                } else if (toIsWaterloggableVanilla) {
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(level, posFrom, fluidState.getType(), totalAmount - 8);
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(level, posTo, fluidState.getType(), 8);
-                } else {//from
-                    //don't flow out if destination cannot take all 8 levels of fluid
-                    if (destFluidAmount > 0) return true;
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(level, posFrom, fluidState.getType(), 0);
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(level, posTo, fluidState.getType(), 8);
-                }
+                return false; // let normal flow handling decide
             }
-            return true;
+
+            int transferAmount = MixinFluidRegressionLogic.computeVanillaWaterlogTransferAmount(fromIsWaterloggableVanilla, toIsWaterloggableVanilla, amount, destFluidAmount);
+            if (transferAmount <= 0) {
+                return false;
+            }
+            return FFFluidUtils.transferFluidAmount(level, posFrom, posTo, fluidState.getType(), transferAmount, 0) > 0;
         }
         //no water loggables
         return false;
@@ -213,14 +188,23 @@ public abstract class MixinFlowingFluid extends Fluid {
                 && FlowingFluids.config.randomTickLevelingDistance > 0
                 && level.getChunkAt(pos).getFluidTicks().count() < 16 //ignore chunks with many updating fluids
                 && FlowingFluids.config.isFluidAllowed(this)
-                && !level.getFluidState(pos.above()).getType().isSame(this)//don't settle if there is a fluid above
+                && !FFFluidUtils.getEffectiveFluidState(level, pos.above()).getType().isSame(this)//don't settle if there is a fluid above
         ) {
             //search in a random direction up to 32 blocks for a lower fluid to level out with
 
             final int amount = state.getAmount();
             if (amount <= getDropOff(level)) return;
+            if (state.is(FluidTags.WATER)
+                    && FFFluidUtils.isSmallSupportedThinSurfaceCluster(level, pos, this, 3, getDropOff(level))) {
+                return;
+            }
 
             final int amountLess = amount - 1;
+            final boolean broadSurfaceSource = state.is(FluidTags.WATER)
+                    && flowing_fluids$isBroadSurfaceWater(level, pos, state, amount);
+            final int maxTransferDistance = broadSurfaceSource
+                    ? Math.min(3, FlowingFluids.config.randomTickLevelingDistance)
+                    : 1;
 
             Direction[] shuffled = FFFluidUtils.getCardinalsShuffle(random);
             final Direction randomDirection = shuffled[0];
@@ -233,6 +217,7 @@ public abstract class MixinFlowingFluid extends Fluid {
 
             final BlockPos.MutableBlockPos movingDir = pos.mutable();
             final BlockPos.MutableBlockPos movingDirAbove = pos.above().mutable();
+            boolean stablePath = true;
 
             for (int i = 0; i < FlowingFluids.config.randomTickLevelingDistance; i++) {
                 Direction step = straightOnly ? randomDirection : (random.nextBoolean() ? randomDirection : offStep);
@@ -240,22 +225,28 @@ public abstract class MixinFlowingFluid extends Fluid {
                 movingDirAbove.move(step);
 
                 var stateDir = level.getBlockState(movingDir);
-                if (!(stateDir.getBlock() instanceof LiquidBlock)) return;
-
-                var fluidStateDir = stateDir.getFluidState();
+                var fluidStateDir = FFFluidUtils.getEffectiveFluidState(level, movingDir, stateDir);
                 if (!fluidStateDir.getType().isSame(this)) return;
 
-                if (level.getFluidState(movingDirAbove).getType().isSame(this)) return;
+                if (FFFluidUtils.getEffectiveFluidState(level, movingDirAbove).getType().isSame(this)) return;
 
                 int amountDir = fluidStateDir.getAmount();
                 if (amountDir > amount) return;
 
+                int distance = i + 1;
                 if (amountDir < amountLess) {
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(level, movingDir, this, amountDir + 1);
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(level, pos, this, amountLess);
+                    boolean broadSurfaceTarget = fluidStateDir.is(FluidTags.WATER)
+                            && flowing_fluids$isBroadSurfaceWater(level, movingDir, fluidStateDir, amountDir);
+                    if (distance <= maxTransferDistance
+                            && (distance == 1 || (broadSurfaceSource && stablePath && broadSurfaceTarget
+                            && !flowing_fluids$hasImmediateDownwardOutlet(level, movingDir, this, amountDir)))
+                            && FFFluidUtils.transferFluidAmount(level, pos, movingDir, this, 1, amountLess) > 0) {
+                        return;
+                    }
                     return;
                 }
-                //continue;
+                stablePath &= amountDir >= amountLess
+                        && !flowing_fluids$hasImmediateDownwardOutlet(level, movingDir, this, amountDir);
             }
         }
     }
@@ -318,7 +309,6 @@ public abstract class MixinFlowingFluid extends Fluid {
             }
 
             FlowingFluids.isManeuveringFluids = true;
-            ff$getPressureHeadCache().clear();
             ff$getWaterAmountCache().clear();
             ff$getSectionSampleContext().begin(level);
 
@@ -339,15 +329,54 @@ public abstract class MixinFlowingFluid extends Fluid {
             #endif
 
             try {
-                if (fluidState.is(FluidTags.WATER)) {
+                WaterFlowProfile waterProfile = null;
+                HierarchicalDistanceManager distanceManager = null;
+                HierarchicalDistanceManager.RangeTier rangeTier = null;
+                int effectiveFlowDistance = Math.max(1, FlowingFluids.config.waterFlowDistance);
+                if (fluidState.is(FluidTags.WATER)
+                ) {
+                    waterProfile = flowing_fluids$getWaterFlowProfile(level, blockPos, fluidState, fluidState.getAmount());
+                    distanceManager = HierarchicalDistanceManager.getInstance();
+                    rangeTier = distanceManager.getSimulationTier(blockPos, level);
+                    boolean forcedRecheck = AdaptiveTickScheduler.hasForcedRecheck(level, blockPos);
+                    HierarchicalDistanceManager.TerrainType terrainType = distanceManager.estimateTerrainType(blockPos, level);
+                    effectiveFlowDistance = distanceManager.getEffectiveFlowDistance(
+                            Math.max(1, FlowingFluids.config.waterFlowDistance), terrainType, FlowingFluids.config);
+
+                    if (!forcedRecheck
+                            && distanceManager.shouldUseMacroFluidModel(rangeTier)
+                            && waterProfile.shouldUseMacroScheduling(rangeTier)) {
+                        flowing_fluids$updateStablePoolTracking(level, blockPos, fluidState, fluidState.getAmount(), true);
+                        ParallelFluidTickManager.queueDistantStableTick(level, blockPos, waterProfile.getMacroDelayBucket(rangeTier));
+                        return;
+                    }
+                    if (!forcedRecheck && waterProfile.isStillReservoir()) {
+                        flowing_fluids$updateStablePoolTracking(level, blockPos, fluidState, fluidState.getAmount(), true);
+                        int calmDelay = waterProfile.getStableInteriorDelay(getTickDelay(level));
+                        calmDelay = distanceManager.alignDelayToUpdateInterval(blockPos, level, level.getGameTime(),
+                                effectiveFlowDistance, calmDelay, FlowingFluids.config);
+                        level.scheduleTick(blockPos, this, calmDelay);
+                        return;
+                    }
+
                     int internalAmount = FluidSpatialGrid.getFluidAmount(level, blockPos);
                     if (internalAmount <= 0) {
                         internalAmount = FluidAmountConverter.toInternal(fluidState.getAmount());
                     }
 
+                    int baseDelay = getTickDelay(level);
                     if (!AdaptiveTickScheduler.shouldTick(level, blockPos, internalAmount)) {
-                        int baseDelay = getTickDelay(level);
                         int adaptiveDelay = AdaptiveTickScheduler.getAdaptiveDelay(level, blockPos, internalAmount, baseDelay);
+                        adaptiveDelay = waterProfile.adjustScheduledDelay(adaptiveDelay);
+                        adaptiveDelay = distanceManager.alignDelayToUpdateInterval(blockPos, level, level.getGameTime(),
+                                effectiveFlowDistance, adaptiveDelay, FlowingFluids.config);
+                        if (!forcedRecheck
+                                && distanceManager.shouldUseMacroFluidModel(rangeTier)
+                                && waterProfile.shouldUseMacroScheduling(rangeTier)
+                                && adaptiveDelay >= 8) {
+                            ParallelFluidTickManager.queueDistantStableTick(level, blockPos, waterProfile.getMacroDelayBucket(rangeTier));
+                            return;
+                        }
                         level.scheduleTick(blockPos, this, Math.max(1, adaptiveDelay));
                         return;
                     }
@@ -397,7 +426,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                     boolean hasFluidAbove = false;
                     BlockPos abovePos = blockPos.above();
                     for (int i = 0; i < 3; i++) { // Check up to 3 blocks above
-                        var aboveState = level.getFluidState(abovePos);
+                        var aboveState = FFFluidUtils.getEffectiveFluidState(level, abovePos);
                         if (aboveState.getType().isSame(this) && aboveState.getAmount() == 8) {
                             hasFluidAbove = true;
                             break;
@@ -410,7 +439,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                         boolean allNeighborsFull = true;
                         for (Direction dir : Direction.Plane.HORIZONTAL) {
                             var neighborPos = blockPos.relative(dir);
-                            var neighborFluid = level.getFluidState(neighborPos);
+                            var neighborFluid = FFFluidUtils.getEffectiveFluidState(level, neighborPos);
                             if (!neighborFluid.getType().isSame(this) || neighborFluid.getAmount() < 8) {
                                 allNeighborsFull = false;
                                 break;
@@ -434,29 +463,30 @@ public abstract class MixinFlowingFluid extends Fluid {
                     ff$flowToSides(level, blockPos, fluidState, remainingAmount, thisState,
                             retainedMinimumForDropOff ? getDropOff(level) : 0);//, remainingAmount);
             } else if (FlowingFluids.config.flowToEdges) {
+                    Direction dir = flowing_fluids$getImmediateThinEdgeDrop(level, blockPos, fluidState, thisState);
+                    if (dir == null && !flowing_fluids$shouldSuppressThinCapDrift(level, blockPos, fluidState, remainingAmount)) {
+                        // Thin edge detection alone misses short ledges behind one lateral spread step, which makes
+                        // shallow water freeze at stair-steps instead of falling. Keep the cheap immediate check
+                        // first, then fall back to the broader slope search for non-settled caps.
+                        dir = flowing_fluids$getLowestSpreadableLookingFor4BlockDrops(level, blockPos, fluidState, 1, true);
+                    }
+                    if (dir != null) {
+                        BlockPos pos = blockPos.relative(dir);
+                        flowing_fluids$setOrRemoveWaterAmountAt(level, blockPos, 0, thisState, dir);
+                        flowing_fluids$spreadTo2(level, pos, level.getBlockState(pos), dir, remainingAmount);
+                        flowing_fluids$invalidateFluidSampleCaches(blockPos, pos);
+                        if (fluidState.is(FluidTags.WATER) && FlowingFluids.config.flowInertiaStrength > 0f) {
+                            float momentum = Mth.clamp(remainingAmount / 8.0f, 0.2f, 1.0f);
+                            AdaptiveTickScheduler.recordFlowDirection(level, blockPos, dir, momentum);
+                        }
+                        return;
+                    }
                     if (flowing_fluids$shouldSuppressThinCapDrift(level, blockPos, fluidState, remainingAmount)) {
                         flowing_fluids$updateStablePoolTracking(level, blockPos, fluidState, remainingAmount, true);
                         return;
                     }
-                    // if the remaining amount is less than the drop-off amount, we can still flow to the sides but only if
-                    // we find a nearby ledge to flow towards, as we want this water to settle when on flat ground
-                    // use 1 as the amount as we don't spread to lower values than the drop-off, so we only want empty destination tiles
-                    Direction dir = remainingAmount <= 1
-                            ? flowing_fluids$getImmediateThinEdgeDrop(level, blockPos, fluidState, thisState)
-                            : flowing_fluids$getLowestSpreadableLookingFor4BlockDrops(level, blockPos, fluidState, 1, true);
-
-                    // dir is null if no spreadable block was found
-                    if (dir != null) {
-                        // much simpler logic than flowing_fluids$flowToSides() as we are only flowing our total remaining value into an empty space
-                var pos = blockPos.relative(dir);
-                flowing_fluids$setOrRemoveWaterAmountAt(level, blockPos, 0, thisState, dir);
-                flowing_fluids$spreadTo2(level, pos, level.getBlockState(pos), dir, remainingAmount);
-                flowing_fluids$invalidateFluidSampleCaches(blockPos, pos);
-                if (fluidState.is(FluidTags.WATER) && FlowingFluids.config.flowInertiaStrength > 0f) {
-                    float momentum = Mth.clamp(remainingAmount / 8.0f, 0.35f, 1.0f);
-                    AdaptiveTickScheduler.recordFlowDirection(level, blockPos, dir, momentum);
-                }
-            }
+                    flowing_fluids$updateStablePoolTracking(level, blockPos, fluidState, remainingAmount, true);
+                    return;
                 }
 
 
@@ -464,22 +494,18 @@ public abstract class MixinFlowingFluid extends Fluid {
             } finally {
 
                 if (isWaterAndInfiniteBiome) {
-                    if (level.getSeaLevel() == blockPos.getY()) {
-                        if (level.getRandom().nextFloat() < FlowingFluids.config.infiniteWaterBiomeDrainSurfaceChance) {
-                            var amount = level.getFluidState(blockPos).getAmount();
-                            if (FFFluidUtils.shouldDrainInfiniteBiomeSurface(level, blockPos, this, amount)) {
-                                FFFluidUtils.changeFluidAmountAtPos(level, blockPos, this, -1);
-                            }
-                        }
-                    } else {
-                        FluidState currentState = level.getFluidState(blockPos);
-                        int fastRefill = FFFluidUtils.isInfiniteBiomeRandomRefillEnabled()
+                    if (level.getSeaLevel() != blockPos.getY()) {
+                        FluidState currentState = FFFluidUtils.getEffectiveFluidState(level, blockPos);
+                        int fastRefill = FFFluidUtils.isInfiniteBiomeFlowingRefillEnabled()
                                 && currentState.getType().isSame(fluidState.getType())
-                                ? FFFluidUtils.getInfiniteBiomeRefillAmount(level, blockPos, fluidState.getType(),
-                                currentState.getAmount(), true)
+                                && FFFluidUtils.shouldAttemptInfiniteBiomeFlowingRefill(level, blockPos,
+                                fluidState.getType(), fluidState.getAmount(), currentState.getAmount())
+                                ? FFFluidUtils.getInfiniteBiomeFlowingRefillAmount(level, blockPos, fluidState.getType(),
+                                currentState.getAmount())
                                 : 0;
                         if (fastRefill > 0) {
-                            FFFluidUtils.changeFluidAmountAtPos(level, blockPos, fluidState.getType(), fastRefill);
+                            FFFluidUtils.applyConnectedFluidAmountDelta(level, blockPos, (FlowingFluid) fluidState.getType(),
+                                    fastRefill, 12, false, true);
                         } else if (dontConsumeWater) {
                             // if we are in a truly infinite biome, we need to set this back to the original state
                             // as we don't want to lose water in these biomes
@@ -522,22 +548,24 @@ public abstract class MixinFlowingFluid extends Fluid {
         int toAmount;
 
 
-        // calculate the amount that would level both liquids
         final int difference = amount - destFluidAmount;
-        final int averageLevel = destFluidAmount + difference / 2;
-        final float sourcePressureHead = flowing_fluids$getPressureHead(level, blockPos, fluidState.getType(), amount);
-        final float destPressureHead = flowing_fluids$getPressureHead(level, posDir, fluidState.getType(), destFluidAmount);
-        final float pressureHeadDelta = Math.max(0.0f, sourcePressureHead - destPressureHead);
+        WaterFlowProfile waterProfile = fluidState.is(FluidTags.WATER)
+                ? flowing_fluids$getWaterFlowProfile(level, blockPos, fluidState, amount)
+                : null;
+        final float transferBias = flowing_fluids$getProfileTransferBias(level, blockPos, dir, fluidState, amount,
+                destFluidAmount, difference, waterProfile);
 
         if (fluidState.is(FluidTags.WATER)
-                && flowing_fluids$shouldSuppressStablePoolTransfer(level, blockPos, fluidState, amount, posDir, destFluidAmount, difference, pressureHeadDelta)) {
+                && (waterProfile == null || !waterProfile.shouldBypassStableTransferSuppression())
+                && flowing_fluids$shouldSuppressStablePoolTransfer(level, blockPos, fluidState, amount, posDir, destFluidAmount, difference, transferBias)) {
             flowing_fluids$updateStablePoolTracking(level, blockPos, fluidState, amount, true);
             flowing_fluids$updateStablePoolTracking(level, posDir, fluidState, destFluidAmount, true);
             return;
         }
 
-        if (flowing_fluids$shouldSuppressShallowFlatTransfer(level, blockPos, fluidState, amount, posDir,
-                destFluidAmount, difference, pressureHeadDelta, minimumRetainedAmount)) {
+        if ((waterProfile == null || !waterProfile.shouldBypassStableTransferSuppression())
+                && flowing_fluids$shouldSuppressShallowFlatTransfer(level, blockPos, fluidState, amount, posDir,
+                destFluidAmount, difference, transferBias, minimumRetainedAmount)) {
             flowing_fluids$updateStablePoolTracking(level, blockPos, fluidState, amount, true);
             if (destFluidAmount > 0) {
                 flowing_fluids$updateStablePoolTracking(level, posDir, fluidState, destFluidAmount, true);
@@ -545,37 +573,38 @@ public abstract class MixinFlowingFluid extends Fluid {
             return;
         }
 
-        // if the difference is odd, we need to add 1 to the 'from' amount
-        boolean hasRemainder = (difference % 2 != 0);
+        FFFluidUtils.DiscreteFlowBalance baseBalance = FFFluidUtils.resolveDiscreteFlowBalance(
+                amount,
+                destFluidAmount,
+                minimumRetainedAmount,
+                0f);
+        fromAmount = baseBalance.sourceAmount();
+        toAmount = baseBalance.destinationAmount();
 
-        fromAmount = averageLevel;
-        if (hasRemainder) {
-            toAmount = averageLevel + 1;
-        } else {
-            toAmount = averageLevel;
-        }
-
-        if (minimumRetainedAmount > 0) {
-            // keep at least the retained portion on the source to maintain drop-off support while still equalizing
-            int adjustedFrom = Math.max(fromAmount, minimumRetainedAmount);
-            int adjustedTo = combinedTotal - adjustedFrom;
-            if (adjustedTo < 0) {
-                adjustedTo = 0;
-                adjustedFrom = combinedTotal;
-            }
-            fromAmount = adjustedFrom;
-            toAmount = adjustedTo;
-        }
-
-        if (difference > 0 && FlowingFluids.config.pressureFlowBonusStrength > 0f) {
+        if (difference > 0 && transferBias > 0f) {
             int available = Math.max(0, fromAmount - minimumRetainedAmount);
-            int bonus = Math.round(pressureHeadDelta * FlowingFluids.config.pressureFlowBonusStrength);
-            int transferable = Math.min(available, bonus);
+            float maxExtraTransfer = waterProfile != null && waterProfile.regime() == WaterFlowProfile.Regime.BREACH
+                    ? 3
+                    : (destFluidAmount <= 0 ? 1 : 2);
             int room = 8 - toAmount;
-            int actual = Math.min(transferable, room);
-            if (actual > 0) {
-                fromAmount -= actual;
-                toAmount += actual;
+            float actualBias = Math.min(Math.min(maxExtraTransfer, room), Math.min(available, transferBias));
+            if (actualBias > 0f) {
+                FFFluidUtils.DiscreteFlowBalance pressuredBalance = FFFluidUtils.resolveDiscreteFlowBalance(
+                        amount,
+                        destFluidAmount,
+                        minimumRetainedAmount,
+                        actualBias);
+                fromAmount = pressuredBalance.sourceAmount();
+                toAmount = pressuredBalance.destinationAmount();
+            }
+        }
+
+        if (flowing_fluids$shouldPreserveLateralSource(level, blockPos, fluidState, amount, posDir, destFluidAmount,
+                fromAmount, toAmount)) {
+            int reserve = Math.min(Math.max(1, getDropOff(level)), amount);
+            if (toAmount - reserve >= destFluidAmount) {
+                fromAmount = reserve;
+                toAmount -= reserve;
             }
         }
 
@@ -589,10 +618,24 @@ public abstract class MixinFlowingFluid extends Fluid {
         if (fluidState.is(FluidTags.WATER) && FlowingFluids.config.flowInertiaStrength > 0f) {
             if (changed) {
                 int moved = Math.max(0, amount - fromAmount);
-                float momentum = Mth.clamp((moved / 4.0f) + (pressureHeadDelta / 16.0f), 0.2f, 1.0f);
+                float momentum = Mth.clamp((moved / 4.0f) + (transferBias / 6.0f), 0.2f, 1.0f);
                 AdaptiveTickScheduler.recordFlowDirection(level, blockPos, dir, momentum);
             }
         }
+    }
+
+    @Unique
+    private float flowing_fluids$getThinEdgeForwardBias(Level level, BlockPos origin, Direction direction,
+                                                        FluidState fluidState, int amount) {
+        if (!fluidState.is(FluidTags.WATER) || amount <= 1) {
+            return 0.15f;
+        }
+        WaterFlowProfile waterProfile = flowing_fluids$getWaterFlowProfile(level, origin, fluidState, amount);
+        float bias = 0.15f + waterProfile.getDirectionalTransferBias() * 0.06f;
+        if (flowing_fluids$isRiverTransferZone(level, origin, origin.relative(direction))) {
+            bias += 0.03f;
+        }
+        return Mth.clamp(bias, 0.15f, 0.3f);
     }
 
     @Unique
@@ -608,9 +651,6 @@ public abstract class MixinFlowingFluid extends Fluid {
             inertiaMomentum = AdaptiveTickScheduler.getFlowMomentum(level, origin, FlowingFluids.config.flowInertiaMaxAgeTicks);
         }
 
-        float sourcePressureHead = applyBias
-                ? flowing_fluids$getPressureHead(level, origin, sourceFluid, fluidState.getAmount())
-                : 0f;
         float effectiveInertia = inertiaStrength * Math.max(0.15f, inertiaMomentum);
         Direction bestDirection = null;
         float bestScore = Float.NEGATIVE_INFINITY;
@@ -638,7 +678,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             }
 
             float score = applyBias
-                    ? flowing_fluids$getDirectionBias(level, origin, dir, sourceFluid, 0, sourcePressureHead,
+                    ? flowing_fluids$getDirectionBias(level, origin, dir, sourceFluid, fluidState.getAmount(), 0,
                     inertiaDir, affinityStrength, effectiveInertia)
                     : 0f;
             if (score > bestScore) {
@@ -696,7 +736,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                 int fluidDownAmount = downFState.getAmount();
 
                 if (ff$handleWaterLoggedFlowAndReturnIfHandled(level, blockPos, fluidState, amount, thisState, actualPosDown, fluidDownAmount, true))
-                    return new FFFlowDownResult(level.getFluidState(blockPos).getAmount(), false, false);
+                    return new FFFlowDownResult(FFFluidUtils.getEffectiveFluidState(level, blockPos).getAmount(), false, false);
 
                 int amountDestCanAccept = Math.min(8 - fluidDownAmount, amount);
 
@@ -708,14 +748,13 @@ public abstract class MixinFlowingFluid extends Fluid {
                 if (fluidDownAmount == 0 && actualStateDown.isAir() && amountDestCanAccept == amount) {
                     if (flowing_fluids$hasRetentionAnchor(level, blockPos, fluidState)) {
                         int retained = getDropOff(level);
-                        if (FlowingFluids.config.downwardPressureStrength > 0f
-                                && FlowingFluids.config.downwardPressureMaxColumn > 0) {
-                            int column = flowing_fluids$getColumnHeight(level, blockPos, fluidState.getType(),
-                                    FlowingFluids.config.downwardPressureMaxColumn);
-                            int bonus = Math.round(column * FlowingFluids.config.downwardPressureStrength);
-                            retained = Math.max(0, retained - bonus);
-                        }
+                        WaterFlowProfile waterProfile = fluidState.is(FluidTags.WATER)
+                                ? flowing_fluids$getWaterFlowProfile(level, blockPos, fluidState, amount)
+                                : null;
                         if (retained > 0 && amount > retained) {
+                            if (waterProfile != null) {
+                                retained = Math.max(0, retained - waterProfile.getDownwardRetentionRelief());
+                            }
                             amountDestCanAccept = amount - retained;
                             retainedMinimum = true;
                         }
@@ -725,21 +764,6 @@ public abstract class MixinFlowingFluid extends Fluid {
                 if (amountDestCanAccept > 0) {
                     int destNewAmount = fluidDownAmount + amountDestCanAccept;
                     int sourceNewAmount = amount - amountDestCanAccept;
-                    // Keep a tiny column when cascading fast so the stream doesn't visually break.
-                    if (sourceNewAmount == 0 && amount > 0) {
-                        var aboveState = level.getFluidState(blockPos.above());
-                        if (aboveState.getType().isSame(fluidState.getType()) && aboveState.getAmount() > 0) {
-                            int reserve = Math.min(getDropOff(level), amount);
-                            sourceNewAmount = reserve;
-                            destNewAmount = Math.max(0, destNewAmount - reserve);
-                        }
-                    }
-                    if (sourceNewAmount == 0
-                            && flowing_fluids$shouldKeepThinFallingSource(level, blockPos, fluidState, amount,
-                            actualPosDown, actualStateDown, fluidDownAmount)) {
-                        sourceNewAmount = Math.min(Math.max(1, getDropOff(level)), amount);
-                        skipHorizontalSpread = true;
-                    }
                     // set both amounts
                     flowing_fluids$setOrRemoveWaterAmountAt(level, blockPos, sourceNewAmount, thisState, Direction.DOWN);
                     flowing_fluids$spreadTo2(level, actualPosDown, actualStateDown, Direction.DOWN, destNewAmount);
@@ -789,11 +813,26 @@ public abstract class MixinFlowingFluid extends Fluid {
     @Unique
     private boolean flowing_fluids$hasRetentionAnchor(Level level, BlockPos origin, FluidState sourceState) {
         Fluid sourceFluid = sourceState.getType();
+        BlockPos belowPos = origin.below();
+        BlockState belowState = level.getBlockState(belowPos);
+        FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
+        boolean supportedBelow = (belowFluid.getType().isSame(sourceFluid) && belowFluid.getAmount() >= sourceState.getAmount())
+                || (!belowState.isAir() && !belowState.canBeReplaced(sourceFluid));
+        if (!supportedBelow) {
+            return false;
+        }
+
         BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         mutablePos.set(origin).move(Direction.UP);
         FluidState above = FFFluidUtils.getEffectiveFluidState(level, mutablePos, level.getBlockState(mutablePos));
         if (above.getType().isSame(sourceFluid) && above.getAmount() > 0) {
-            return true;
+            for (Direction dir : Direction.Plane.HORIZONTAL) {
+                mutablePos.set(origin).move(dir);
+                FluidState neighbor = FFFluidUtils.getEffectiveFluidState(level, mutablePos, level.getBlockState(mutablePos));
+                if (neighbor.getType().isSame(sourceFluid) && neighbor.getAmount() > 0) {
+                    return true;
+                }
+            }
         }
         for (Direction dir : Direction.Plane.HORIZONTAL) {
             mutablePos.set(origin).move(dir);
@@ -806,48 +845,35 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Unique
-    private boolean flowing_fluids$shouldKeepThinFallingSource(Level level, BlockPos sourcePos, FluidState sourceState,
-                                                               int sourceAmount, BlockPos targetPos,
-                                                               BlockState targetState, int targetAmount) {
+    private boolean flowing_fluids$shouldPreserveLateralSource(Level level, BlockPos sourcePos, FluidState sourceState,
+                                                               int sourceAmount, BlockPos targetPos, int targetAmount,
+                                                               int proposedSourceAmount, int proposedTargetAmount) {
         if (!sourceState.is(FluidTags.WATER)) {
             return false;
         }
-        int thinAmountCap = Math.max(1, getDropOff(level));
+        if (proposedSourceAmount > 0 || proposedTargetAmount <= targetAmount) {
+            return false;
+        }
+        int thinAmountCap = Math.max(2, getDropOff(level) + 1);
         if (sourceAmount <= 0 || sourceAmount > thinAmountCap) {
             return false;
         }
-        if (targetAmount != 0 || !targetState.isAir()) {
+        if (flowing_fluids$hasFluidAbove(level, sourcePos, sourceState.getType())) {
             return false;
         }
-        if (!flowing_fluids$hasRetentionAnchor(level, sourcePos, sourceState)) {
+        if (flowing_fluids$hasImmediateDownwardOutlet(level, sourcePos, sourceState.getType(), sourceAmount)) {
             return false;
         }
-
-        int sourceWallCount = flowing_fluids$countLateralWalls(level, sourcePos, sourceState.getType());
-        int sourceFluidNeighbors = flowing_fluids$countLateralFluidNeighbors(level, sourcePos, sourceState.getType());
-        int targetWallCount = flowing_fluids$countLateralWalls(level, targetPos, sourceState.getType());
-        int targetEscapeRoutes = flowing_fluids$countLateralEscapeRoutes(level, targetPos, targetState, sourceState.getType(), sourceAmount);
-
-        BlockPos belowTarget = targetPos.below();
-        BlockState belowTargetState = level.getBlockState(belowTarget);
-        FluidState belowTargetFluid = FFFluidUtils.getEffectiveFluidState(level, belowTarget, belowTargetState);
-        if (belowTargetFluid.getType().isSame(sourceState.getType()) && belowTargetFluid.getAmount() > 0) {
-            return sourceFluidNeighbors > 0 || sourceWallCount >= 1 || targetWallCount >= 1;
+        if (FFFluidUtils.isRiverBiome(level.getBiome(sourcePos)) || FFFluidUtils.isRiverBiome(level.getBiome(targetPos))) {
+            return true;
         }
-
-        boolean continuesDownward = belowTargetFluid.isEmpty()
-                && (belowTargetState.isAir()
-                || belowTargetState.canBeReplaced(sourceState.getType())
-                || FFFluidUtils.isPassThroughFluidBlock(level, belowTargetState, Direction.DOWN));
-        if (!continuesDownward) {
-            return false;
+        if (flowing_fluids$isBroadSurfaceWater(level, sourcePos, sourceState, sourceAmount)) {
+            return true;
         }
-
-        // Keep the source only when the surroundings look like a real stream/shaft:
-        // either the source is constrained, or the falling column is not free to immediately fan out.
-        boolean constrainedSource = sourceWallCount >= 2 || sourceFluidNeighbors >= 2;
-        boolean constrainedTarget = targetWallCount >= 2 || targetEscapeRoutes <= 1;
-        return constrainedSource || constrainedTarget;
+        if (flowing_fluids$countLateralFluidNeighbors(level, sourcePos, sourceState.getType()) >= 2) {
+            return true;
+        }
+        return targetAmount == 0 && flowing_fluids$hasRetentionAnchor(level, sourcePos, sourceState);
     }
 
     @Unique
@@ -922,8 +948,13 @@ public abstract class MixinFlowingFluid extends Fluid {
     private void flowing_fluids$validateLiquidMixin(final #if MC > MC_21 ServerLevel #else Level #endif level, final BlockPos blockPos, final BlockState blockState, final CallbackInfoReturnable<FluidState> cir) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.isFluidAllowed(this)) {
-            var state = level.getFluidState(blockPos);
-            cir.setReturnValue(getStateForFluidByAmount(state.getType(), state.getAmount()));
+            FluidState baseState = blockState.getFluidState();
+            FluidState effectiveState = FFFluidUtils.getEffectiveFluidState(level, blockPos, blockState);
+            if (!effectiveState.isEmpty()
+                    && (!effectiveState.getType().isSame(baseState.getType())
+                    || effectiveState.getAmount() != baseState.getAmount())) {
+                cir.setReturnValue(getStateForFluidByAmount(effectiveState.getType(), effectiveState.getAmount()));
+            }
         }
     }
 
@@ -1015,15 +1046,15 @@ public abstract class MixinFlowingFluid extends Fluid {
                 inertiaDir = AdaptiveTickScheduler.getFlowInertiaDirection(level, blockPos, FlowingFluids.config.flowInertiaMaxAgeTicks);
                 inertiaMomentum = AdaptiveTickScheduler.getFlowMomentum(level, blockPos, FlowingFluids.config.flowInertiaMaxAgeTicks);
             }
-            if (affinityStrength > 0f || inertiaStrength > 0f || FlowingFluids.config.pressureFlowBonusStrength > 0f) {
+            if (affinityStrength > 0f || inertiaStrength > 0f) {
                 Direction biased = flowing_fluids$pickBiasedDirection(level, blockPos, fluidState.getType(),
                         validDirections, neighbourAmounts, validCount, amount, inertiaDir, affinityStrength,
                         inertiaStrength * Math.max(0.15f, inertiaMomentum));
                 if (biased != null) {
                     return biased;
                 }
-                }
-                return validDirections[0];
+            }
+            return validDirections[0];
             }
             return spreadDirection;
         } finally {
@@ -1037,6 +1068,9 @@ public abstract class MixinFlowingFluid extends Fluid {
 
         int slopeFindDistance = getSlopeFindDistance(level);
         if (slopeFindDistance < 1) return null;
+        WaterFlowProfile waterProfile = fluidState.is(FluidTags.WATER)
+                ? flowing_fluids$getWaterFlowProfile(level, blockPos, fluidState, amount)
+                : null;
         if (requiresSlope && flowing_fluids$shouldSuppressExploratorySpread(level, blockPos, fluidState, amount)) {
             return null;
         }
@@ -1046,9 +1080,10 @@ public abstract class MixinFlowingFluid extends Fluid {
         // to 2 blocks for thin streams, making water ignore nearby drops.
         int adaptiveSlopeFindDistance = slopeFindDistance;
         if (fluidState.is(FluidTags.WATER)) {
+            HierarchicalDistanceManager manager = HierarchicalDistanceManager.getInstance();
+            HierarchicalDistanceManager.RangeTier rangeTier = manager.getSimulationTier(blockPos, level);
             int effectiveDistance = slopeFindDistance;
             if (FlowingFluids.config.enableAdaptiveFlowDistance) {
-                HierarchicalDistanceManager manager = HierarchicalDistanceManager.getInstance();
                 HierarchicalDistanceManager.TerrainType terrainType = manager.estimateTerrainType(blockPos, level);
                 effectiveDistance = manager.getEffectiveFlowDistance(effectiveDistance, terrainType, FlowingFluids.config);
 
@@ -1061,11 +1096,17 @@ public abstract class MixinFlowingFluid extends Fluid {
                 }
             }
 
-            if (flowing_fluids$isBroadSurfaceWater(level, blockPos, fluidState, amount)) {
+            int broadClamp = FlowingFluids.config.broadSurfaceSlopeClamp;
+            if (waterProfile != null) {
+                broadClamp = Math.max(1, FlowingFluids.config.broadSurfaceSlopeClamp
+                        + (waterProfile.isBroadSurface() && !waterProfile.isRiverLikeBiome() ? 0 : 1));
+                effectiveDistance = waterProfile.refineSlopeDistance(effectiveDistance,
+                        manager.getCorridorSearchClamp(rangeTier), broadClamp);
+            } else if (flowing_fluids$isBroadSurfaceWater(level, blockPos, fluidState, amount)) {
                 boolean oceanLikeBiome = FFFluidUtils.isOceanBiome(level.getBiome(blockPos))
                         || FFFluidUtils.isBeachBiome(level.getBiome(blockPos));
-                int broadClamp = Math.max(1, FlowingFluids.config.broadSurfaceSlopeClamp + (oceanLikeBiome ? 0 : 1));
-                effectiveDistance = Math.min(effectiveDistance, broadClamp);
+                effectiveDistance = Math.min(effectiveDistance,
+                        Math.max(1, FlowingFluids.config.broadSurfaceSlopeClamp + (oceanLikeBiome ? 0 : 1)));
             }
 
             float multiplier = FlowingFluids.config.slopeFindDistanceMultiplier;
@@ -1077,6 +1118,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             int maxDistance = Math.max(1, FlowingFluids.config.maxWaterFlowDistance);
             int maxScaled = Math.max(1, Math.round(maxDistance * multiplier));
             adaptiveSlopeFindDistance = Math.max(1, Math.min(maxScaled, scaled));
+
         }
         adaptiveSlopeFindDistance = FluidActivityTracker.getAdaptiveSlopeFindDistance(level, blockPos, adaptiveSlopeFindDistance);
 
@@ -1101,10 +1143,6 @@ public abstract class MixinFlowingFluid extends Fluid {
             int bestDistance = Integer.MAX_VALUE;
             float bestScore = Float.MAX_VALUE;
             BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos(blockPos.getX(), blockPos.getY(), blockPos.getZ());
-            float sourcePressureHead = applyBias
-                    ? flowing_fluids$getPressureHead(level, blockPos, sourceFluid, amount)
-                    : 0f;
-
             // Get chunk position for cache
             var chunkPos = new net.minecraft.world.level.ChunkPos(blockPos);
 
@@ -1135,8 +1173,8 @@ public abstract class MixinFlowingFluid extends Fluid {
 
                 if (!requiresSlope || distance <= adaptiveSlopeFindDistance) {
                     float bias = applyBias
-                            ? flowing_fluids$getDirectionBias(level, blockPos, dir, sourceFluid, directionAmounts[i],
-                            sourcePressureHead, inertiaDir, affinityStrength, inertiaStrength * Math.max(0.15f, inertiaMomentum))
+                            ? flowing_fluids$getDirectionBias(level, blockPos, dir, sourceFluid, amount, directionAmounts[i],
+                            inertiaDir, affinityStrength, inertiaStrength * Math.max(0.15f, inertiaMomentum))
                             : 0f;
                     float score = distance - bias;
                     if (score < bestScore || (score == bestScore && distance < bestDistance)) {
@@ -1274,13 +1312,12 @@ public abstract class MixinFlowingFluid extends Fluid {
         if (count <= 0) {
             return null;
         }
-        float sourcePressureHead = flowing_fluids$getPressureHead(level, origin, sourceFluid, sourceAmount);
         float bestScore = Float.MAX_VALUE;
         Direction bestDirection = null;
         for (int i = 0; i < count; i++) {
             Direction dir = directions[i];
-            float bias = flowing_fluids$getDirectionBias(level, origin, dir, sourceFluid, neighbourAmounts[i],
-                    sourcePressureHead, inertiaDir, affinityStrength, inertiaStrength);
+            float bias = flowing_fluids$getDirectionBias(level, origin, dir, sourceFluid, sourceAmount, neighbourAmounts[i],
+                    inertiaDir, affinityStrength, inertiaStrength);
             float score = neighbourAmounts[i] - bias;
             if (score < bestScore) {
                 bestScore = score;
@@ -1292,15 +1329,11 @@ public abstract class MixinFlowingFluid extends Fluid {
 
     @Unique
     private float flowing_fluids$getDirectionBias(Level level, BlockPos origin, Direction dir, Fluid sourceFluid,
-                                                  int targetAmount, float sourcePressureHead,
+                                                  int sourceAmount, int targetAmount,
                                                   @Nullable Direction inertiaDir, float affinityStrength, float inertiaStrength) {
         float bias = 0f;
         if (affinityStrength > 0f) {
             bias += flowing_fluids$getWaterAffinityBias(level, origin, dir, sourceFluid, affinityStrength);
-        }
-        if (FlowingFluids.config.pressureFlowBonusStrength > 0f) {
-            bias += flowing_fluids$getLateralPressureBias(level, origin, dir, sourceFluid, targetAmount, sourcePressureHead,
-                    FlowingFluids.config.pressureFlowBonusStrength);
         }
         if (inertiaStrength > 0f && inertiaDir != null && inertiaDir == dir) {
             bias += inertiaStrength;
@@ -1309,50 +1342,26 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Unique
-    private float flowing_fluids$getPressureHead(Level level, BlockPos origin, Fluid sourceFluid, int localAmount) {
-        FluidSectionDataCache sectionCache = ff$getSectionSampleContext().sampleCache(level, ff$SECTION_SAMPLE_THRESHOLD);
-        if (sectionCache != null) {
-            float extraPressure = 0.0f;
-            int maxColumn = Math.max(0, FlowingFluids.config.downwardPressureMaxColumn);
-            if (maxColumn > 0) {
-                int column = sectionCache.columnHeight(origin, sourceFluid, maxColumn);
-                if (column > 0) {
-                    float columnWeight = Math.max(0.25f, FlowingFluids.config.downwardPressureStrength);
-                    extraPressure = column * 8.0f * columnWeight;
-                }
-            }
-            return localAmount + extraPressure;
-        }
-
-        long key = origin.asLong();
-        Long2FloatOpenHashMap cache = ff$getPressureHeadCache();
-        float cachedExtra = cache.get(key);
-        if (!Float.isNaN(cachedExtra)) {
-            return localAmount + cachedExtra;
-        }
-
-        float extraPressure = 0.0f;
-        int maxColumn = Math.max(0, FlowingFluids.config.downwardPressureMaxColumn);
-        if (maxColumn > 0) {
-            int column = flowing_fluids$getColumnHeight(level, origin, sourceFluid, maxColumn);
-            if (column > 0) {
-                float columnWeight = Math.max(0.25f, FlowingFluids.config.downwardPressureStrength);
-                extraPressure = column * 8.0f * columnWeight;
-            }
-        }
-        cache.put(key, extraPressure);
-        return localAmount + extraPressure;
-    }
-
-    @Unique
-    private float flowing_fluids$getLateralPressureBias(Level level, BlockPos origin, Direction dir, Fluid sourceFluid,
-                                                        int targetAmount, float sourcePressureHead, float strength) {
-        if (strength <= 0f) {
+    private float flowing_fluids$getProfileTransferBias(Level level, BlockPos origin, Direction dir, FluidState fluidState,
+                                                        int sourceAmount, int targetAmount, int difference,
+                                                        @Nullable WaterFlowProfile waterProfile) {
+        if (!fluidState.is(FluidTags.WATER) || sourceAmount <= 0 || difference <= 0) {
             return 0f;
         }
-        float targetPressureHead = flowing_fluids$getPressureHead(level, origin.relative(dir), sourceFluid, targetAmount);
-        float delta = sourcePressureHead - targetPressureHead;
-        return Mth.clamp(delta / 8.0f, -1.0f, 2.0f) * strength;
+        WaterFlowProfile profile = waterProfile != null
+                ? waterProfile
+                : flowing_fluids$getWaterFlowProfile(level, origin, fluidState, sourceAmount);
+        float bias = profile.getDirectionalTransferBias();
+        if (targetAmount <= 0) {
+            bias += 0.1f;
+        }
+        if (difference >= 4) {
+            bias += 0.15f;
+        }
+        if (flowing_fluids$isRiverTransferZone(level, origin, origin.relative(dir))) {
+            bias += 0.05f;
+        }
+        return Mth.clamp(bias, 0.0f, 2.0f);
     }
 
     @Unique
@@ -1360,6 +1369,9 @@ public abstract class MixinFlowingFluid extends Fluid {
                                                                     int sourceAmount, BlockPos targetPos, int targetAmount, int difference,
                                                                     float pressureHeadDelta) {
         if (difference <= 0 || difference > 2) {
+            return false;
+        }
+        if (flowing_fluids$isRiverTransferZone(level, sourcePos, targetPos)) {
             return false;
         }
         boolean sourceBroadSurface = flowing_fluids$isBroadSurfaceWater(level, sourcePos, sourceState, sourceAmount);
@@ -1375,6 +1387,11 @@ public abstract class MixinFlowingFluid extends Fluid {
             }
             if (flowing_fluids$hasImmediateSurfaceEdge(level, sourcePos, sourceState.getType())
                     || flowing_fluids$hasImmediateSurfaceEdge(level, targetPos, sourceState.getType())) {
+                return false;
+            }
+            // 段差出口があるなら抑制しない
+            if (flowing_fluids$hasNearbyStepDownOutlet(level, sourcePos, sourceState.getType(), sourceAmount)
+                    || flowing_fluids$hasNearbyStepDownOutlet(level, targetPos, sourceState.getType(), Math.max(1, targetAmount))) {
                 return false;
             }
             return true;
@@ -1398,6 +1415,9 @@ public abstract class MixinFlowingFluid extends Fluid {
         if (!sourceState.is(FluidTags.WATER)) {
             return false;
         }
+        if (flowing_fluids$isRiverTransferZone(level, sourcePos, targetPos)) {
+            return false;
+        }
         if (minimumRetainedAmount > 0) {
             return false;
         }
@@ -1419,8 +1439,8 @@ public abstract class MixinFlowingFluid extends Fluid {
                     || flowing_fluids$hasImmediateSurfaceEdge(level, targetPos, sourceState.getType())) {
                 return false;
             }
-            if (flowing_fluids$hasImmediateDownwardOutlet(level, sourcePos, sourceState.getType(), sourceAmount)
-                    || flowing_fluids$hasImmediateDownwardOutlet(level, targetPos, sourceState.getType(), Math.max(1, targetAmount))) {
+            if (flowing_fluids$hasNearbyStepDownOutlet(level, sourcePos, sourceState.getType(), sourceAmount)
+                    || flowing_fluids$hasNearbyStepDownOutlet(level, targetPos, sourceState.getType(), Math.max(1, targetAmount))) {
                 return false;
             }
             return true;
@@ -1438,8 +1458,8 @@ public abstract class MixinFlowingFluid extends Fluid {
                 || flowing_fluids$hasFluidAbove(level, targetPos, sourceState.getType())) {
             return false;
         }
-        if (flowing_fluids$hasImmediateDownwardOutlet(level, sourcePos, sourceState.getType(), sourceAmount)
-                || flowing_fluids$hasImmediateDownwardOutlet(level, targetPos, sourceState.getType(), Math.max(1, targetAmount))) {
+        if (flowing_fluids$hasNearbyStepDownOutlet(level, sourcePos, sourceState.getType(), sourceAmount)
+                || flowing_fluids$hasNearbyStepDownOutlet(level, targetPos, sourceState.getType(), Math.max(1, targetAmount))) {
             return false;
         }
         if (FlowingFluids.config.flowInertiaStrength > 0f && FlowingFluids.config.flowInertiaMaxAgeTicks > 0) {
@@ -1459,36 +1479,24 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Unique
+    private boolean flowing_fluids$isRiverTransferZone(Level level, BlockPos sourcePos, BlockPos targetPos) {
+        return FFFluidUtils.isRiverBiome(level.getBiome(sourcePos))
+                || FFFluidUtils.isRiverBiome(level.getBiome(targetPos));
+    }
+
+    @Unique
     private boolean flowing_fluids$isBroadSurfaceWater(Level level, BlockPos pos, FluidState fluidState, int amount) {
-        if (!FlowingFluids.config.broadSurfaceSuppressionEnabled || !fluidState.is(FluidTags.WATER) || amount <= 0) {
-            return false;
-        }
-        var biome = level.getBiome(pos);
-        boolean oceanLikeBiome = FFFluidUtils.isOceanBiome(biome) || FFFluidUtils.isBeachBiome(biome);
-        boolean riverLikeBiome = FFFluidUtils.isRiverBiome(biome);
-        boolean hasFluidAbove = flowing_fluids$hasFluidAbove(level, pos, fluidState.getType());
-        boolean immediateDownwardOutlet = flowing_fluids$hasImmediateDownwardOutlet(level, pos, fluidState.getType(), amount);
+        return flowing_fluids$getWaterFlowProfile(level, pos, fluidState, amount).isBroadSurface();
+    }
 
-        BlockPos belowPos = pos.below();
-        BlockState belowState = level.getBlockState(belowPos);
-        FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
-        boolean supportedBelow = (belowFluid.getType().isSame(fluidState.getType()) && belowFluid.getAmount() >= amount)
-                || (!belowState.isAir() && !belowState.canBeReplaced(fluidState.getType()));
+    @Unique
+    private boolean flowing_fluids$isCalmBroadSurfaceInterior(Level level, BlockPos pos, FluidState fluidState, int amount) {
+        return flowing_fluids$getWaterFlowProfile(level, pos, fluidState, amount).isStillReservoir();
+    }
 
-        int lateralWaterNeighbors = 0;
-        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        for (Direction dir : Direction.Plane.HORIZONTAL) {
-            cursor.setWithOffset(pos, dir);
-            FluidState neighbor = FFFluidUtils.getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
-            if (neighbor.getType().isSame(fluidState.getType()) && neighbor.getAmount() > 0) {
-                lateralWaterNeighbors++;
-            }
-        }
-
-        int stableTicks = AdaptiveTickScheduler.getPoolStableTicks(level, pos, 20);
-        return FFFluidUtils.classifyBroadSurfaceWater(oceanLikeBiome, riverLikeBiome, lateralWaterNeighbors,
-                hasFluidAbove, supportedBelow, immediateDownwardOutlet, stableTicks,
-                FlowingFluids.config.broadSurfaceStableTicks);
+    @Unique
+    private int flowing_fluids$getBroadSurfaceInteriorDelay(Level level, BlockPos pos, FluidState fluidState, int baseDelay) {
+        return flowing_fluids$getWaterFlowProfile(level, pos, fluidState, fluidState.getAmount()).getStableInteriorDelay(baseDelay);
     }
 
     @Unique
@@ -1518,6 +1526,99 @@ public abstract class MixinFlowingFluid extends Fluid {
         return belowFluid.isEmpty() || !belowFluid.getType().isSame(sourceFluid) || belowFluid.getAmount() < sourceAmount;
     }
 
+    /**
+     * 軽量版: 下方向に流れられるかの簡易チェック
+     * canSpreadToOptionallySameOrEmpty の代わりに使用して高速化
+     */
+    @Unique
+    private boolean flowing_fluids$canFlowDownFast(BlockState belowState, FluidState belowFluid, Fluid sourceFluid, int sourceAmount) {
+        // 空気なら即OK
+        if (belowState.isAir()) return true;
+
+        // 流体が入れるか
+        if (belowFluid.isEmpty()) {
+            // リプレース可能なブロックか
+            return belowState.canBeReplaced(sourceFluid);
+        }
+
+        // 同じ流体で満水未満なら流れられる
+        if (belowFluid.getType().isSame(sourceFluid)) {
+            return belowFluid.getAmount() < sourceAmount;
+        }
+
+        return false;
+    }
+
+    /**
+     * 軽量版: 横方向に流れられるかの簡易チェック
+     */
+    @Unique
+    private boolean flowing_fluids$canFlowSideFast(BlockState sideState, FluidState sideFluid, Fluid sourceFluid, int sourceAmount) {
+        // 空気なら即OK
+        if (sideState.isAir()) return true;
+
+        // 流体状態をチェック
+        if (sideFluid.isEmpty()) {
+            return sideState.canBeReplaced(sourceFluid);
+        }
+
+        // 同じ流体で自分より少ないなら流れられる
+        if (sideFluid.getType().isSame(sourceFluid)) {
+            return sideFluid.getAmount() < sourceAmount;
+        }
+
+        return false;
+    }
+
+    @Unique
+    private boolean flowing_fluids$hasNearbyStepDownOutlet(Level level, BlockPos pos, Fluid sourceFluid, int sourceAmount) {
+        // 1. 真下チェック（最も一般的なケース - 軽量版）
+        BlockPos belowPos = pos.below();
+        BlockState belowState = level.getBlockState(belowPos);
+        FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
+
+        if (flowing_fluids$canFlowDownFast(belowState, belowFluid, sourceFluid, sourceAmount)) {
+            return true;
+        }
+
+        // 2. 設定に基づいた横方向チェック（1-3マス）
+        int searchDistance = Math.max(1, Math.min(3, FlowingFluids.config.stepDownSearchDistance));
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos cursorBelow = new BlockPos.MutableBlockPos();
+
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            cursor.set(pos);
+            int currentAmount = sourceAmount;
+
+            for (int step = 1; step <= searchDistance; step++) {
+                cursor.move(dir);
+                BlockState sideState = level.getBlockState(cursor);
+                FluidState sideFluid = FFFluidUtils.getEffectiveFluidState(level, cursor, sideState);
+
+                // 横に流れられるか（軽量チェック）
+                if (!flowing_fluids$canFlowSideFast(sideState, sideFluid, sourceFluid, currentAmount)) {
+                    break;  // この方向はブロックされた
+                }
+
+                // 横の下チェック
+                cursorBelow.set(cursor).move(Direction.DOWN);
+                BlockState sideBelowState = level.getBlockState(cursorBelow);
+                FluidState sideBelowFluid = FFFluidUtils.getEffectiveFluidState(level, cursorBelow, sideBelowState);
+
+                int reducedAmount = Math.max(1, currentAmount - 1);
+                if (flowing_fluids$canFlowDownFast(sideBelowState, sideBelowFluid, sourceFluid, reducedAmount)) {
+                    return true;  // 段差発見
+                }
+
+                // 次のステップ用に水量を減らす
+                currentAmount = reducedAmount;
+                if (currentAmount <= 0) break;
+            }
+        }
+
+        return false;
+    }
+
     @Unique
     private boolean flowing_fluids$shouldSuppressThinCapDrift(Level level, BlockPos pos, FluidState fluidState, int amount) {
         if (!fluidState.is(FluidTags.WATER)) {
@@ -1525,6 +1626,15 @@ public abstract class MixinFlowingFluid extends Fluid {
         }
         if (amount <= 0 || amount > getDropOff(level)) {
             return false;
+        }
+
+        // 段差へ落ちられる可能性があるなら止めない
+        if (flowing_fluids$hasNearbyStepDownOutlet(level, pos, fluidState.getType(), amount)) {
+            return false;
+        }
+
+        if (FFFluidUtils.isSmallSupportedThinSurfaceCluster(level, pos, fluidState.getType(), 3, getDropOff(level))) {
+            return true;
         }
         if (flowing_fluids$hasFluidAbove(level, pos, fluidState.getType())) {
             return false;
@@ -1554,6 +1664,24 @@ public abstract class MixinFlowingFluid extends Fluid {
         if (!fluidState.is(FluidTags.WATER)) {
             return false;
         }
+
+        if (amount > 0
+                && amount <= getDropOff(level)
+                && FFFluidUtils.isSmallSupportedThinSurfaceCluster(level, pos, fluidState.getType(), 3, getDropOff(level))) {
+            return true;
+        }
+
+        WaterFlowProfile waterProfile = flowing_fluids$getWaterFlowProfile(level, pos, fluidState, amount);
+        if (waterProfile.shouldSuppressExploratorySpread()) {
+            return true;
+        }
+        if (waterProfile.isPressureDriven()) {
+            return false;
+        }
+        if (FFFluidUtils.isRiverBiome(level.getBiome(pos))) {
+            return false;
+        }
+
         if (flowing_fluids$isBroadSurfaceWater(level, pos, fluidState, amount)) {
             if (AdaptiveTickScheduler.isFlowActiveNow(level, pos)) {
                 return false;
@@ -1561,8 +1689,9 @@ public abstract class MixinFlowingFluid extends Fluid {
             if (flowing_fluids$hasImmediateSurfaceEdge(level, pos, fluidState.getType())) {
                 return false;
             }
-            return !flowing_fluids$hasImmediateDownwardOutlet(level, pos, fluidState.getType(), amount);
+            return !flowing_fluids$hasNearbyStepDownOutlet(level, pos, fluidState.getType(), amount);
         }
+
         var biome = level.getBiome(pos);
         boolean broadWaterBiome = FFFluidUtils.isOceanBiome(biome) || FFFluidUtils.isBeachBiome(biome);
         int maxExploratoryAmount = broadWaterBiome && pos.getY() >= level.getSeaLevel() - 1 ? 6 : 4;
@@ -1572,7 +1701,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         if (flowing_fluids$hasFluidAbove(level, pos, fluidState.getType())) {
             return false;
         }
-        if (flowing_fluids$hasImmediateDownwardOutlet(level, pos, fluidState.getType(), amount)) {
+        if (flowing_fluids$hasNearbyStepDownOutlet(level, pos, fluidState.getType(), amount)) {
             return false;
         }
         if (AdaptiveTickScheduler.getPoolStableTicks(level, pos, 20) < 4) {
@@ -1587,17 +1716,42 @@ public abstract class MixinFlowingFluid extends Fluid {
             return false;
         }
 
-        int supportedNeighbors = 0;
+        int routeCount = flowing_fluids$countSpreadableHorizontalRoutes(level, pos, fluidState.getType(), amount);
+        if (routeCount >= 3) {
+            return true;
+        }
+
+        return routeCount == 2 && AdaptiveTickScheduler.getPoolStableTicks(level, pos, 20) >= 8;
+    }
+
+    @Unique
+    private int flowing_fluids$countSpreadableHorizontalRoutes(Level level, BlockPos pos, Fluid sourceFluid, int amount) {
+        BlockState stateAtPos = level.getBlockState(pos);
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        int routes = 0;
+
         for (Direction dir : Direction.Plane.HORIZONTAL) {
             cursor.setWithOffset(pos, dir);
-            FluidState neighbor = FFFluidUtils.getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
-            if (neighbor.getType().isSame(fluidState.getType()) && neighbor.getAmount() >= Math.max(1, amount - 1)) {
-                supportedNeighbors++;
+            BlockState sideState = level.getBlockState(cursor);
+            FluidState sideFluid = FFFluidUtils.getEffectiveFluidState(level, cursor, sideState);
+
+            if (flowing_fluids$canSpreadToOptionallySameOrEmpty(
+                    sourceFluid,
+                    Math.max(1, amount),
+                    level,
+                    pos,
+                    stateAtPos,
+                    dir,
+                    cursor,
+                    sideState,
+                    sideFluid,
+                    false
+            )) {
+                routes++;
             }
         }
-        int requiredNeighbors = broadWaterBiome && pos.getY() >= level.getSeaLevel() - 1 ? 3 : 2;
-        return supportedNeighbors >= requiredNeighbors;
+
+        return routes;
     }
 
     @Unique
@@ -1620,7 +1774,6 @@ public abstract class MixinFlowingFluid extends Fluid {
     @Unique
     private void flowing_fluids$invalidateFluidSampleCaches(BlockPos... positions) {
         Long2IntOpenHashMap waterCache = ff$getWaterAmountCache();
-        Long2FloatOpenHashMap pressureCache = ff$getPressureHeadCache();
         ff$getSectionSampleContext().invalidate(positions);
         for (BlockPos pos : positions) {
             if (pos == null) {
@@ -1628,7 +1781,6 @@ public abstract class MixinFlowingFluid extends Fluid {
             }
             long key = pos.asLong();
             waterCache.remove(key);
-            pressureCache.remove(key);
         }
     }
 
@@ -1711,8 +1863,31 @@ public abstract class MixinFlowingFluid extends Fluid {
             int internalAmount = FluidAmountConverter.toInternal(updated.getAmount());
             FluidTickBuffer.bufferFluidChange(levelAccessor, blockPos, internalAmount, true, updated.getType());
         }
-        ParallelFluidEqualizer.enqueue(levelAccessor, blockPos);
+        if (flowing_fluids$shouldQueueEqualizer(levelAccessor, blockPos, before, updated)) {
+            ParallelFluidEqualizer.enqueue(levelAccessor, blockPos);
+        }
         FluidTickBuffer.bufferSlopeCacheInvalidation(levelAccessor, blockPos);
+    }
+
+    @Unique
+    private boolean flowing_fluids$shouldQueueEqualizer(LevelAccessor levelAccessor, BlockPos blockPos, FluidState before, FluidState updated) {
+        if (!(levelAccessor instanceof Level level)) {
+            return true;
+        }
+        FluidState relevant = !updated.isEmpty() ? updated : before;
+        if (!relevant.is(FluidTags.WATER)) {
+            return true;
+        }
+
+        int beforeAmount = before.getType().isSame(relevant.getType()) ? before.getAmount() : 0;
+        int afterAmount = updated.getType().isSame(relevant.getType()) ? updated.getAmount() : 0;
+        WaterFlowProfile waterProfile = flowing_fluids$getWaterFlowProfile(level, blockPos, relevant, Math.max(beforeAmount, afterAmount));
+        return waterProfile.shouldQueueEqualizer(Math.abs(afterAmount - beforeAmount), before.isEmpty(), updated.isEmpty());
+    }
+
+    @Unique
+    private WaterFlowProfile flowing_fluids$getWaterFlowProfile(Level level, BlockPos pos, FluidState fluidState, int amount) {
+        return ff$getSectionSampleContext().waterProfile(level, pos, fluidState, amount, ff$SECTION_SAMPLE_THRESHOLD);
     }
 
 
@@ -1735,5 +1910,6 @@ public abstract class MixinFlowingFluid extends Fluid {
         //add extra fluid check for replacing into self
         return FFFluidUtils.canFluidFlowFromPosToDirection((FlowingFluid) sourceFluid, sourceAmount, blockGetter, blockPos, blockState, direction, blockPos2, blockState2, fluidState2);
     }
+    
 
 }

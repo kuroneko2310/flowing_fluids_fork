@@ -1,10 +1,13 @@
 package traben.flowing_fluids;
 
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
+import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -30,15 +33,8 @@ public class ParallelFluidTickManager {
     private static final int PARALLELISM = Math.max(2, Runtime.getRuntime().availableProcessors() - 1);
 
     private static volatile ForkJoinPool fluidWorkerPool = createWorkerPool();
-
-    private static final int CHUNK_ADJACENCY_DISTANCE = 1; // Consider chunks adjacent if within this distance
-
-    // OPTIMIZED: Pre-allocated direction offsets for O(1) neighbor lookup
-    private static final int[][] NEIGHBOR_OFFSETS = {
-        {-1, -1}, {-1, 0}, {-1, 1},
-        {0, -1},           {0, 1},
-        {1, -1},  {1, 0},  {1, 1}
-    };
+    private static final ConcurrentHashMap<DimensionKey, EnumMap<DelayBucket, LongOpenHashSet>> queuedStableTicks =
+        new ConcurrentHashMap<>();
 
     /**
      * Groups fluid tick positions by chunk and processes non-adjacent chunks in parallel.
@@ -65,6 +61,74 @@ public class ParallelFluidTickManager {
         return ticks.size();
     }
 
+    public static void queueDistantStableTick(LevelAccessor level, BlockPos pos, DelayBucket bucket) {
+        if (level == null || pos == null || bucket == null) {
+            return;
+        }
+        EnumMap<DelayBucket, LongOpenHashSet> dimensionQueues = queuedStableTicks.computeIfAbsent(
+            DimensionKey.of(level),
+            ignored -> {
+                EnumMap<DelayBucket, LongOpenHashSet> created = new EnumMap<>(DelayBucket.class);
+                for (DelayBucket value : DelayBucket.values()) {
+                    created.put(value, new LongOpenHashSet());
+                }
+                return created;
+            }
+        );
+        synchronized (dimensionQueues) {
+            dimensionQueues.get(bucket).add(pos.asLong());
+        }
+    }
+
+    public static int flushQueuedDistantStableTicks(ServerLevel level) {
+        EnumMap<DelayBucket, LongOpenHashSet> dimensionQueues = queuedStableTicks.get(DimensionKey.of(level));
+        if (dimensionQueues == null) {
+            return 0;
+        }
+
+        int scheduled = 0;
+        for (DelayBucket bucket : DelayBucket.values()) {
+            LongOpenHashSet positions;
+            synchronized (dimensionQueues) {
+                LongOpenHashSet queued = dimensionQueues.get(bucket);
+                if (queued == null || queued.isEmpty()) {
+                    continue;
+                }
+                positions = new LongOpenHashSet(queued);
+                queued.clear();
+            }
+
+            List<BlockPos> blockPositions = new ArrayList<>(positions.size());
+            for (long posKey : positions) {
+                blockPositions.add(BlockPos.of(posKey));
+            }
+            scheduled += scheduleRandomizedFluidTicks(level, blockPositions,
+                bucket.minDelayInclusive, bucket.maxDelayInclusive, bucket.salt);
+        }
+
+        boolean empty = true;
+        synchronized (dimensionQueues) {
+            for (DelayBucket bucket : DelayBucket.values()) {
+                LongOpenHashSet queued = dimensionQueues.get(bucket);
+                if (queued != null && !queued.isEmpty()) {
+                    empty = false;
+                    break;
+                }
+            }
+        }
+        if (empty) {
+            queuedStableTicks.remove(DimensionKey.of(level), dimensionQueues);
+        }
+        return scheduled;
+    }
+
+    public static void clearDimension(LevelAccessor level) {
+        if (level == null) {
+            return;
+        }
+        queuedStableTicks.remove(DimensionKey.of(level));
+    }
+
     private static FluidChunkSnapshot createSnapshot(ServerLevel level, ChunkPos chunkPos, List<BlockPos> positions) {
         if (positions == null || positions.isEmpty()) {
             return null;
@@ -83,7 +147,7 @@ public class ParallelFluidTickManager {
                 continue;
             }
 
-            FluidState fluidState = level.getFluidState(immutablePos);
+            FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, immutablePos);
             if (fluidState.isEmpty()) {
                 continue;
             }
@@ -209,6 +273,21 @@ public class ParallelFluidTickManager {
     private record ScheduledFluidTick(BlockPos pos, Fluid fluidType, int delay, boolean isSource, double priority) {
     }
 
+    public enum DelayBucket {
+        FAR(6, 12, 0x4c4f445f464152L),
+        DISTANT(12, 24, 0x4c4f445f444953L);
+
+        private final int minDelayInclusive;
+        private final int maxDelayInclusive;
+        private final long salt;
+
+        DelayBucket(int minDelayInclusive, int maxDelayInclusive, long salt) {
+            this.minDelayInclusive = minDelayInclusive;
+            this.maxDelayInclusive = maxDelayInclusive;
+            this.salt = salt;
+        }
+    }
+
     private record FluidEntry(BlockPos pos, net.minecraft.world.level.material.Fluid fluidType, boolean isSource) {
     }
 
@@ -242,54 +321,22 @@ public class ParallelFluidTickManager {
             return Collections.singletonList(new HashSet<>(chunks));
         }
 
-        // Build spatial hash for O(1) neighbor lookup
-        Map<Long, ChunkPos> chunkMap = new HashMap<>(chunks.size());
-        for (ChunkPos chunk : chunks) {
-            chunkMap.put(chunkPosToLong(chunk), chunk);
-        }
-
-        // Graph coloring - assign each chunk a color avoiding adjacent colors
-        Map<ChunkPos, Integer> colorMap = new HashMap<>(chunks.size());
-        int maxColor = 0;
-
-        for (ChunkPos chunk : chunks) {
-            // Find colors used by adjacent chunks (O(8) = O(1))
-            Set<Integer> usedColors = new HashSet<>();
-            for (int[] offset : NEIGHBOR_OFFSETS) {
-                long neighborKey = chunkPosToLong(chunk.x + offset[0], chunk.z + offset[1]);
-                ChunkPos neighbor = chunkMap.get(neighborKey);
-                if (neighbor != null) {
-                    Integer color = colorMap.get(neighbor);
-                    if (color != null) {
-                        usedColors.add(color);
-                    }
-                }
-            }
-
-            // Find the smallest unused color
-            int color = 0;
-            while (usedColors.contains(color)) {
-                color++;
-            }
-
-            colorMap.put(chunk, color);
-            maxColor = Math.max(maxColor, color);
-        }
-
-        // Build groups from colors
-        List<Set<ChunkPos>> groups = new ArrayList<>(maxColor + 1);
-        for (int i = 0; i <= maxColor; i++) {
+        List<Set<ChunkPos>> groups = new ArrayList<>(4);
+        for (int i = 0; i < 4; i++) {
             groups.add(new HashSet<>());
         }
-
-        for (Map.Entry<ChunkPos, Integer> entry : colorMap.entrySet()) {
-            groups.get(entry.getValue()).add(entry.getKey());
+        for (ChunkPos chunk : chunks) {
+            groups.get(getChunkGroupIndex(chunk)).add(chunk);
         }
-
-        // Remove empty groups (shouldn't happen but be safe)
         groups.removeIf(Set::isEmpty);
 
         return groups;
+    }
+
+    static int getChunkGroupIndex(ChunkPos chunk) {
+        int xParity = Math.floorMod(chunk.x, 2);
+        int zParity = Math.floorMod(chunk.z, 2);
+        return (xParity << 1) | zParity;
     }
 
     /**
@@ -321,6 +368,7 @@ public class ParallelFluidTickManager {
      * Shuts down the worker pool (call on server shutdown).
      */
     public static void shutdown() {
+        queuedStableTicks.clear();
         ForkJoinPool current;
         synchronized (ParallelFluidTickManager.class) {
             current = fluidWorkerPool;

@@ -10,6 +10,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.util.DimensionKey;
 
@@ -43,7 +44,7 @@ public class AdaptiveTickScheduler {
     private static final int STABILITY_THRESHOLD = 5; // More stable ticks needed to increase delay
     private static final int DEFAULT_RAIN_STABILIZATION_DELAY_TICKS = 3; // Delay BFS/equalization for freshly spawned rain water
     private static final int SURGE_RELAX_TICKS = 1; // Frames to ignore flow change spikes
-    private static final int SURGE_AMOUNT_THRESHOLD = 12; // Internal units considered a rapid increase
+    private static final int SURGE_AMOUNT_THRESHOLD = FluidAmountConverter.scaleLegacyInternal(12); // Internal units considered a rapid increase
     private static final int MIN_FORCED_RECHECK_STABLE_TICKS = 40; // Safety lower bound
 
     // Equilibrium thresholds
@@ -146,19 +147,28 @@ public class AdaptiveTickScheduler {
 
         // OPTIMIZED: Combined neighbor hash and height sampling in single loop
         // Both use the same 6 directions, so we can calculate both in one pass
-        int neighborHash = 0;
+        long neighborSignature = 0L;
         float totalNeighborHeight = 0;
         int neighborCount = 0;
+        boolean hasUnloadedNeighbor = false;
 
         // Use a reusable mutable position to avoid BlockPos allocations
         BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
 
         for (Direction dir : NEIGHBOR_HASH_DIRECTIONS) {
             neighborPos.setWithOffset(pos, dir);
-            int neighborAmount = FluidSpatialGrid.getFluidAmount(level, neighborPos);
+            boolean neighborLoaded = level.isLoaded(neighborPos);
+            int neighborAmount = neighborLoaded ? FluidSpatialGrid.getFluidAmount(level, neighborPos) : -1;
+            BlockState neighborState = neighborLoaded ? level.getBlockState(neighborPos) : null;
+            FluidState neighborFluid = neighborLoaded && neighborState != null
+                ? FFFluidUtils.getEffectiveFluidState(level, neighborPos, neighborState)
+                : Fluids.EMPTY.defaultFluidState();
+            boolean neighborEmpty = neighborLoaded && neighborFluid.isEmpty();
+            boolean neighborReplaceable = neighborLoaded && neighborState != null
+                && (neighborState.isAir() || neighborState.canBeReplaced());
 
-            // Hash calculation (for cache validation)
-            neighborHash = 31 * neighborHash + neighborAmount;
+            neighborSignature = mixNeighborSignature(neighborSignature, dir, neighborAmount, neighborLoaded, neighborEmpty, neighborReplaceable);
+            hasUnloadedNeighbor = hasUnloadedNeighbor || !neighborLoaded;
 
             // Height sampling (for equilibrium calculation)
             if (neighborAmount > 0) {
@@ -166,22 +176,20 @@ public class AdaptiveTickScheduler {
                 neighborCount++;
             } else if (dir != Direction.UP) {
                 // Treat only truly empty horizontal/down neighbors as height 0.
-                BlockState neighborState = level.getBlockState(neighborPos);
-                FluidState neighborFluid = FFFluidUtils.getEffectiveFluidState(level, neighborPos, neighborState);
-                if (neighborFluid.isEmpty() && (neighborState.isAir() || neighborState.canBeReplaced())) {
+                if (neighborLoaded && neighborEmpty && neighborReplaceable) {
                     neighborCount++;
                 }
             }
         }
 
         // Check if we can use cached value
-        if (data != null && data.neighborHash == neighborHash && data.lastAmount == fluidAmount) {
+        if (shouldReuseCachedEquilibrium(data, fluidAmount, neighborSignature, hasUnloadedNeighbor)) {
             Direction currentGradient = FluidSpatialGrid.getGradientDirection(level, pos);
             // Only recalculate if gradient changed
             if (data.lastGradient == currentGradient) {
                 if (FlowingFluids.LOG.isDebugEnabled()) {
-                    FlowingFluids.LOG.debug("[AdaptiveTickScheduler] Cache hit at {} (hash={}, gradient={}, eq={})",
-                        pos, neighborHash, currentGradient, data.lastEquilibriumIndex);
+                    FlowingFluids.LOG.debug("[AdaptiveTickScheduler] Cache hit at {} (signature={}, gradient={}, eq={})",
+                        pos, neighborSignature, currentGradient, data.lastEquilibriumIndex);
                 }
                 return data.lastEquilibriumIndex;
             }
@@ -225,17 +233,41 @@ public class AdaptiveTickScheduler {
         }
 
         if (FlowingFluids.LOG.isDebugEnabled()) {
-            FlowingFluids.LOG.debug("[AdaptiveTickScheduler] Recalculated E at {} -> diff={}, gradientChange={}, flowChange={}, eq={} (hash={})",
-                pos, heightDiff, gradientChange, flowChangeRate, equilibriumIndex, neighborHash);
+            FlowingFluids.LOG.debug("[AdaptiveTickScheduler] Recalculated E at {} -> diff={}, gradientChange={}, flowChange={}, eq={} (signature={}, unloaded={})",
+                pos, heightDiff, gradientChange, flowChangeRate, equilibriumIndex, neighborSignature, hasUnloadedNeighbor);
         }
 
         // Update stability data with cache
         data.lastGradient = currentGradient;
         data.lastEquilibriumIndex = equilibriumIndex;
-        data.neighborHash = neighborHash;
+        data.neighborSignature = neighborSignature;
+        data.hasUnloadedNeighbor = hasUnloadedNeighbor;
         data.lastAmount = fluidAmount;
 
         return equilibriumIndex;
+    }
+
+    private static boolean hasNearbyStepDown(Level level, BlockPos pos) {
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            cursor.setWithOffset(pos, dir);
+            BlockState sideState = level.getBlockState(cursor);
+            FluidState sideFluid = FFFluidUtils.getEffectiveFluidState(level, cursor, sideState);
+
+            boolean sidePassable = sideFluid.isEmpty() || sideState.isAir();
+            if (!sidePassable) continue;
+
+            BlockPos belowSide = cursor.below();
+            BlockState belowSideState = level.getBlockState(belowSide);
+            FluidState belowSideFluid = FFFluidUtils.getEffectiveFluidState(level, belowSide, belowSideState);
+
+            if (belowSideFluid.isEmpty() || belowSideState.canBeReplaced(Fluids.WATER)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -248,6 +280,9 @@ public class AdaptiveTickScheduler {
             return true;
         }
         if (FlowingFluids.config.forceTickWhenAdjacentAir && hasAdjacentAir(level, pos)) {
+            return true;
+        }
+        if (hasNearbyStepDown(level, pos)) {
             return true;
         }
         if (FlowingFluids.config.forceFlowLevelDifference > 0
@@ -449,6 +484,11 @@ public class AdaptiveTickScheduler {
         if (!(level instanceof Level lvl)) {
             return false;
         }
+        if (state.is(net.minecraft.tags.FluidTags.WATER)
+                && state.getAmount() <= 1
+                && FFFluidUtils.isSmallSupportedThinSurfaceCluster(lvl, pos, state.getType(), 3, 1)) {
+            return false;
+        }
         BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         Direction primaryDir = null;
         int sameCount = 0;
@@ -521,6 +561,10 @@ public class AdaptiveTickScheduler {
         getData(level).areaTypes.put(chunkPos, type);
     }
 
+    public static AreaType getAreaType(LevelAccessor level, ChunkPos chunkPos) {
+        return getData(level).areaTypes.getOrDefault(chunkPos, AreaType.NORMAL);
+    }
+
     /**
      * Auto-detects area type based on fluid density.
      * Call this periodically to classify chunks.
@@ -588,22 +632,22 @@ public class AdaptiveTickScheduler {
             return baseDelay;
         }
 
-        // Check equilibrium index - if stable, increase delay dramatically
-        if (data.lastEquilibriumIndex < EQUILIBRIUM_STABLE_THRESHOLD) {
-            // Extremely stable, use max delay
-            data.currentDelay = MAX_DELAY;
-        } else {
-            // Fluid is stable, increase counter
-            data.stabilityCounter++;
+        if (data.hasUnloadedNeighbor) {
+            data.stabilityCounter = 0;
+            data.currentDelay = baseDelay;
+            return baseDelay;
+        }
 
-            // Increase delay exponentially for stable fluids
+        int resolvedDelay = computeStableDelay(baseDelay, data.currentDelay, data.stabilityCounter, data.lastEquilibriumIndex);
+        if (resolvedDelay > baseDelay) {
+            data.stabilityCounter++;
             if (data.stabilityCounter >= STABILITY_THRESHOLD) {
-                int newDelay = Math.min(data.currentDelay * 2, MAX_DELAY);
-                if (newDelay != data.currentDelay) {
-                    data.currentDelay = newDelay;
-                    data.stabilityCounter = 0; // Reset counter after delay increase
-                }
+                data.currentDelay = resolvedDelay;
+                data.stabilityCounter = 0;
             }
+        } else {
+            data.stabilityCounter = 0;
+            data.currentDelay = baseDelay;
         }
 
         int boostedDelay = data.currentDelay;
@@ -628,6 +672,35 @@ public class AdaptiveTickScheduler {
         }
 
         return boostedDelay;
+    }
+
+    static long mixNeighborSignature(long currentSignature, Direction direction, int neighborAmount,
+                                     boolean neighborLoaded, boolean neighborEmpty, boolean neighborReplaceable) {
+        long sample = direction.ordinal() & 0x7L;
+        sample = (sample << 1) | (neighborLoaded ? 1L : 0L);
+        sample = (sample << 1) | (neighborEmpty ? 1L : 0L);
+        sample = (sample << 1) | (neighborReplaceable ? 1L : 0L);
+        sample = (sample << 10) | ((neighborAmount + 1L) & 0x3FFL);
+        return currentSignature * 1315423911L + sample;
+    }
+
+    static boolean shouldReuseCachedEquilibrium(FluidStabilityData data, int fluidAmount,
+                                                long neighborSignature, boolean hasUnloadedNeighbor) {
+        return !hasUnloadedNeighbor
+            && data != null
+            && !data.hasUnloadedNeighbor
+            && data.lastAmount == fluidAmount
+            && data.neighborSignature == neighborSignature;
+    }
+
+    static int computeStableDelay(int baseDelay, int currentDelay, int stabilityCounter, float equilibriumIndex) {
+        if (equilibriumIndex > EQUILIBRIUM_STABLE_THRESHOLD) {
+            return baseDelay;
+        }
+        if (stabilityCounter + 1 < STABILITY_THRESHOLD) {
+            return Math.max(baseDelay, currentDelay);
+        }
+        return Math.min(Math.max(baseDelay, Math.max(baseDelay, currentDelay) * 2), MAX_DELAY);
     }
 
     /**
@@ -1034,7 +1107,8 @@ public class AdaptiveTickScheduler {
         int currentDelay;
         Direction lastGradient; // For gradient change detection
         float lastEquilibriumIndex; // Cached equilibrium index
-        int neighborHash; // Hash of neighbor states for cache validation
+        long neighborSignature; // Signature of neighbor states for cache validation
+        boolean hasUnloadedNeighbor; // Avoid over-stabilizing chunk borders
         int rainBornCooldown; // Ticks to skip BFS/equalization after rain generation
         int surgeRelaxTicks; // Temporary relaxation when large inflow detected
         int stableTicks; // Consecutive stable evaluations
@@ -1053,7 +1127,8 @@ public class AdaptiveTickScheduler {
             this.currentDelay = currentDelay;
             this.lastGradient = null;
             this.lastEquilibriumIndex = 1.0f; // Start with high index (unstable)
-            this.neighborHash = 0;
+            this.neighborSignature = 0L;
+            this.hasUnloadedNeighbor = false;
             this.rainBornCooldown = 0;
             this.surgeRelaxTicks = 0;
             this.stableTicks = 0;
