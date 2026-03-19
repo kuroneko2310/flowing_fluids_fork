@@ -36,9 +36,9 @@ public final class FlowingFluids {
     private static final DateTimeFormatter CONFIG_BACKUP_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     public final static Logger LOG = LoggerFactory.getLogger("FlowingFluids");
-    public static boolean isManeuveringFluids = false;
-    public static boolean pistonTick = false;
-    public static long debug_killFluidUpdatesUntilTime = 0;
+    public static volatile boolean isManeuveringFluids = false;
+    public static volatile boolean pistonTick = false;
+    public static volatile long debug_killFluidUpdatesUntilTime = 0;
     public static int waterPluggedThisSession = 0;
 
     public static Set<Pair<Fluid, TagKey<Block>>> nonDisplacerTags = new HashSet<>();
@@ -128,6 +128,7 @@ public final class FlowingFluids {
             config = new FFConfig();
         }
         config.ensureCollections();
+        config.sanitizeRanges();
         rebuildInfiniteBiomeDefaults();
         RainWaterSystem.reloadConfig();
     }
@@ -151,7 +152,9 @@ public final class FlowingFluids {
         FluidActivityTracker.clearDimension(level);
         FluidTickBuffer.clearDimension(level);
         ParallelFluidEqualizer.clearDimension(level);
+        ParallelFluidTickManager.clearDimension(level);
         ExtendedWaterlogStore.clearDimension(level);
+        traben.flowing_fluids.optimization.HierarchicalDistanceManager.getInstance().clearDimension(level);
     }
 
     private static void backupBrokenConfig(File configFile) {

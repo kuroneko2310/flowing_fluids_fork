@@ -52,7 +52,7 @@ public final class RainWaterSystem {
 
     private static final ConcurrentHashMap<ResourceKey<Level>, Long> lastRunTick = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Level>, Long> lastCacheMaintenanceTick = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ChunkCacheKey, ChunkBiomeCache> chunkCache = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, ChunkBiomeCache> chunkCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Biome>, Float> PRECIP_MUL = new ConcurrentHashMap<>();
     private static final RainWetnessCache WETNESS_CACHE = new RainWetnessCache();
 
@@ -76,6 +76,7 @@ public final class RainWaterSystem {
             {-1, 1},
             {-1, -1}
     };
+    private static final int MIN_PLACEMENT_QUEUE_CAPACITY = 1;
 
     private static ForkJoinPool executorService = null;
     private static final long FALLBACK_CACHE_RESYNC_TICKS = 20L * 60L * 5L;
@@ -196,7 +197,7 @@ public final class RainWaterSystem {
         final ResourceKey<Level> levelKey = level.dimension();
         lastRunTick.remove(levelKey);
         lastCacheMaintenanceTick.remove(levelKey);
-        chunkCache.keySet().removeIf(key -> key.level.equals(levelKey));
+        clearChunkCacheForLevel(levelKey);
         WETNESS_CACHE.clearLevel(levelKey);
         purgeQueuedPlacements(levelKey);
 
@@ -210,7 +211,7 @@ public final class RainWaterSystem {
     public static String describeRuntimeState(ServerLevel level) {
         ResourceKey<Level> levelKey = level.dimension();
         long wetnessEntries = WETNESS_CACHE.countLevel(levelKey);
-        long cachedChunks = chunkCache.keySet().stream().filter(key -> key.level.equals(levelKey)).count();
+        long cachedChunks = countChunkCacheEntries(levelKey);
         BlockPos referencePos = level.players().isEmpty() ? level.getSharedSpawnPos() : level.players().get(0).blockPosition();
         RainIntensityStage stage = RainMath.chooseRainIntensityStage(
                 level.isThundering(),
@@ -529,15 +530,11 @@ public final class RainWaterSystem {
     }
 
     private static boolean tryEnqueuePlacementTask(RainPlacementTask task, int maxQueueSize) {
-        if (maxQueueSize <= 0) {
-            placementQueue.offer(task);
-            placementQueueSize.incrementAndGet();
-            return true;
-        }
+        final int effectiveMaxQueueSize = Math.max(MIN_PLACEMENT_QUEUE_CAPACITY, maxQueueSize);
 
         while (true) {
             int current = placementQueueSize.get();
-            if (current >= maxQueueSize) {
+            if (current >= effectiveMaxQueueSize) {
                 return false;
             }
             if (placementQueueSize.compareAndSet(current, current + 1)) {
@@ -548,12 +545,10 @@ public final class RainWaterSystem {
     }
 
     private static float calculateQueueCongestionMultiplier(int maxQueueSize) {
-        if (maxQueueSize <= 0) {
-            return 1.0f;
-        }
+        final int effectiveMaxQueueSize = Math.max(MIN_PLACEMENT_QUEUE_CAPACITY, maxQueueSize);
 
         final int currentSize = placementQueueSize.get();
-        final float fillRatio = currentSize / (float) maxQueueSize;
+        final float fillRatio = currentSize / (float) effectiveMaxQueueSize;
         final float softCap = Math.max(0.0f, Math.min(1.0f, FlowingFluids.config.rainQueueSoftCapRatio));
         final float minimumMultiplier = Math.max(0.0f, Math.min(1.0f, FlowingFluids.config.rainQueueMinChanceMultiplier));
 
@@ -571,8 +566,8 @@ public final class RainWaterSystem {
             return;
         }
 
-        final int configuredLimit = FlowingFluids.config.rainPlacementQueueSize;
-        final int maxProcessPerTick = configuredLimit <= 0 ? Integer.MAX_VALUE : configuredLimit;
+        final int configuredLimit = Math.max(MIN_PLACEMENT_QUEUE_CAPACITY, FlowingFluids.config.rainPlacementQueueSize);
+        final int maxProcessPerTick = configuredLimit;
         int processed = 0;
         final Map<ResourceKey<Level>, PlacementAggregation> aggregated = new HashMap<>();
 
@@ -657,7 +652,7 @@ public final class RainWaterSystem {
 
     private static ChunkBiomeCache getOrCreateChunkCache(ServerLevel level, long packedChunkPos, long currentTime) {
         final ResourceKey<Level> levelKey = level.dimension();
-        final ChunkCacheKey cacheKey = new ChunkCacheKey(levelKey, packedChunkPos);
+        final String cacheKey = buildChunkCacheKey(levelKey, packedChunkPos);
 
         if (FlowingFluids.config.rainEnableChunkCaching) {
             ChunkBiomeCache cached = chunkCache.get(cacheKey);
@@ -729,11 +724,29 @@ public final class RainWaterSystem {
         final long fallbackTicks = Math.max(Math.max(FALLBACK_CACHE_RESYNC_TICKS, FlowingFluids.config.rainCacheDurationTicks), wetnessPersistTicks);
         if ((now - lastMaintenance) >= fallbackTicks) {
             if (FlowingFluids.config.rainEnableChunkCaching) {
-                chunkCache.keySet().removeIf(key -> key.level.equals(levelKey));
+                clearChunkCacheForLevel(levelKey);
             }
             WETNESS_CACHE.purgeExpired(levelKey, now);
             lastCacheMaintenanceTick.put(levelKey, now);
         }
+    }
+
+    private static String buildChunkCacheKey(ResourceKey<Level> levelKey, long packedChunkPos) {
+        return levelKey.location() + "|" + packedChunkPos;
+    }
+
+    private static String getChunkCachePrefix(ResourceKey<Level> levelKey) {
+        return levelKey.location() + "|";
+    }
+
+    private static void clearChunkCacheForLevel(ResourceKey<Level> levelKey) {
+        final String prefix = getChunkCachePrefix(levelKey);
+        chunkCache.keySet().removeIf(key -> key.startsWith(prefix));
+    }
+
+    private static long countChunkCacheEntries(ResourceKey<Level> levelKey) {
+        final String prefix = getChunkCachePrefix(levelKey);
+        return chunkCache.keySet().stream().filter(key -> key.startsWith(prefix)).count();
     }
 
     private static boolean findRainLandingMutable(ServerLevel level, int x, int z,
@@ -843,9 +856,6 @@ public final class RainWaterSystem {
     }
 
     private record ChunkProcessingData(long packedPos, ChunkBiomeCache cache) {
-    }
-
-    private record ChunkCacheKey(ResourceKey<Level> level, long chunkPos) {
     }
 
     private record ChunkBiomeCache(ResourceKey<Biome> biomeKey, float precipMul,

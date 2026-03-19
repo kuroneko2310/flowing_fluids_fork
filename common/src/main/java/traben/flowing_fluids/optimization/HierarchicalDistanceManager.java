@@ -2,9 +2,15 @@ package traben.flowing_fluids.optimization;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FluidState;
+import traben.flowing_fluids.AdaptiveTickScheduler;
+import traben.flowing_fluids.FFFluidUtils;
+import traben.flowing_fluids.ParallelFluidTickManager;
 import traben.flowing_fluids.config.FFConfig;
+import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,8 +49,9 @@ public class HierarchicalDistanceManager {
 
     // Spatial grid for player position caching (reduces O(n×p) to O(1))
     private static final int GRID_CELL_SIZE = 32; // Same as PLAYER_PROXIMITY_BOOST for efficiency
-    private static final Map<Long, List<PlayerCacheEntry>> playerGridCache = new ConcurrentHashMap<>();
-    private static long lastPlayerCacheUpdate = 0;
+    private static final Map<DimensionKey, Map<Long, List<PlayerCacheEntry>>> playerGridCache = new ConcurrentHashMap<>();
+    private static final Map<DimensionKey, Map<ChunkPos, TerrainCacheEntry>> terrainTypeCache = new ConcurrentHashMap<>();
+    private static final Map<DimensionKey, Long> lastPlayerCacheUpdate = new ConcurrentHashMap<>();
     private static final long PLAYER_CACHE_REFRESH_INTERVAL = 1000; // Update every 1 second (20 ticks)
 
     private HierarchicalDistanceManager() {
@@ -79,7 +86,74 @@ public class HierarchicalDistanceManager {
         int updateInterval = getUpdateInterval(flowDistance);
 
         // Check if this tick matches the update interval
-        return (currentTick % updateInterval) == (hashPosition(pos) % updateInterval);
+        return Math.floorMod(currentTick, updateInterval) == Math.floorMod(hashPosition(pos), updateInterval);
+    }
+
+    public int alignDelayToUpdateInterval(BlockPos pos, Level level, long currentTick, int flowDistance,
+                                          int desiredDelay, FFConfig config) {
+        int safeDelay = Math.max(1, desiredDelay);
+        if (!config.enableDistanceBasedOptimization || isPlayerNearby(pos, level)) {
+            return safeDelay;
+        }
+
+        int updateInterval = getUpdateInterval(flowDistance);
+        if (updateInterval <= 1) {
+            return safeDelay;
+        }
+
+        long slot = Math.floorMod(hashPosition(pos), (long) updateInterval);
+        long targetTick = currentTick + safeDelay;
+        long remainder = Math.floorMod(targetTick - slot, (long) updateInterval);
+        if (remainder == 0L) {
+            return safeDelay;
+        }
+        return safeDelay + (int) ((long) updateInterval - remainder);
+    }
+
+    public RangeTier getSimulationTier(BlockPos pos, Level level) {
+        if (level == null || pos == null) {
+            return RangeTier.DISTANT;
+        }
+
+        Player nearest = level.getNearestPlayer(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 128.0D, false);
+        if (nearest == null) {
+            return RangeTier.DISTANT;
+        }
+
+        double distanceSq = nearest.distanceToSqr(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
+        if (distanceSq <= 16.0D * 16.0D) {
+            return RangeTier.NEAR;
+        }
+        if (distanceSq <= 48.0D * 48.0D) {
+            return RangeTier.MID;
+        }
+        if (distanceSq <= 128.0D * 128.0D) {
+            return RangeTier.FAR;
+        }
+        return RangeTier.DISTANT;
+    }
+
+    public boolean shouldUseMacroFluidModel(RangeTier tier) {
+        return tier == RangeTier.FAR || tier == RangeTier.DISTANT;
+    }
+
+    public boolean shouldUseCostFieldFallback(RangeTier tier) {
+        return tier == RangeTier.NEAR || tier == RangeTier.MID;
+    }
+
+    public int getCorridorSearchClamp(RangeTier tier) {
+        return switch (tier) {
+            case NEAR -> 8;
+            case MID -> 6;
+            case FAR -> 4;
+            case DISTANT -> 3;
+        };
+    }
+
+    public ParallelFluidTickManager.DelayBucket getParallelDelayBucket(RangeTier tier) {
+        return tier == RangeTier.DISTANT
+            ? ParallelFluidTickManager.DelayBucket.DISTANT
+            : ParallelFluidTickManager.DelayBucket.FAR;
     }
 
     /**
@@ -137,48 +211,63 @@ public class HierarchicalDistanceManager {
      * Estimates terrain type based on surrounding blocks.
      */
     public TerrainType estimateTerrainType(BlockPos pos, Level level) {
-        // Simple heuristic: check height variance in nearby blocks
-        int minY = pos.getY();
-        int maxY = pos.getY();
-        int waterCount = 0;
+        ChunkPos chunkPos = new ChunkPos(pos);
+        AdaptiveTickScheduler.AreaType areaType = AdaptiveTickScheduler.getAreaType(level, chunkPos);
+        Map<ChunkPos, TerrainCacheEntry> dimensionCache =
+            terrainTypeCache.computeIfAbsent(DimensionKey.of(level), ignored -> new ConcurrentHashMap<>());
 
-        // Sample nearby blocks
+        TerrainCacheEntry cached = dimensionCache.get(chunkPos);
+        if (cached != null && cached.areaType == areaType) {
+            return cached.terrainType;
+        }
+
+        TerrainType computed = classifyTerrainType(pos, level, areaType);
+        dimensionCache.put(chunkPos, new TerrainCacheEntry(areaType, computed));
+        return computed;
+    }
+
+    private TerrainType classifyTerrainType(BlockPos pos, Level level, AdaptiveTickScheduler.AreaType areaType) {
+        var biome = level.getBiome(pos);
+        if (areaType == AdaptiveTickScheduler.AreaType.OCEAN
+                || FFFluidUtils.isOceanBiome(biome)
+                || FFFluidUtils.isBeachBiome(biome)) {
+            return TerrainType.OCEAN;
+        }
+        if (FFFluidUtils.isRiverBiome(biome)) {
+            return TerrainType.RIVER;
+        }
+
+        int heightVariance = sampleHeightVariance(pos, level);
+        if (areaType == AdaptiveTickScheduler.AreaType.HIGH_ACTIVITY) {
+            if (heightVariance <= 3) {
+                return TerrainType.CANAL;
+            }
+            return heightVariance > 10 ? TerrainType.MOUNTAIN : TerrainType.RIVER;
+        }
+
+        if (heightVariance > 10) {
+            return TerrainType.MOUNTAIN;
+        }
+        return TerrainType.FLAT;
+    }
+
+    private int sampleHeightVariance(BlockPos pos, Level level) {
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+
         for (int dx = -4; dx <= 4; dx += 4) {
             for (int dz = -4; dz <= 4; dz += 4) {
-                BlockPos samplePos = pos.offset(dx, 0, dz);
-
-                // Check height variance
-                for (int dy = -4; dy <= 4; dy++) {
-                    BlockPos checkPos = samplePos.offset(0, dy, 0);
-                    if (!level.isEmptyBlock(checkPos)) {
-                        minY = Math.min(minY, checkPos.getY());
-                        maxY = Math.max(maxY, checkPos.getY());
-                    }
-
-                    // Count water blocks
-                    FluidState fluidState = level.getFluidState(checkPos);
-                    if (!fluidState.isEmpty()) {
-                        waterCount++;
-                    }
-                }
+                int sampleY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                    pos.getX() + dx, pos.getZ() + dz);
+                minY = Math.min(minY, sampleY);
+                maxY = Math.max(maxY, sampleY);
             }
         }
 
-        int heightVariance = maxY - minY;
-
-        // Classify terrain
-        if (waterCount > 50) {
-            return TerrainType.OCEAN;
-        } else if (heightVariance < 3) {
-            // Flat terrain - could be canal if water is present
-            return waterCount > 10 ? TerrainType.CANAL : TerrainType.FLAT;
-        } else if (heightVariance > 10) {
-            return TerrainType.MOUNTAIN;
-        } else if (waterCount > 5 && heightVariance < 8) {
-            return TerrainType.RIVER;
-        } else {
-            return TerrainType.FLAT;
+        if (minY == Integer.MAX_VALUE) {
+            return 0;
         }
+        return maxY - minY;
     }
 
     /**
@@ -186,11 +275,18 @@ public class HierarchicalDistanceManager {
      * OPTIMIZED: Uses spatial grid cache to reduce from O(n×p) to O(1).
      */
     private boolean isPlayerNearby(BlockPos pos, Level level) {
+        DimensionKey dimensionKey = DimensionKey.of(level);
         // Update player cache if needed
         long currentTime = System.currentTimeMillis();
-        if (currentTime - lastPlayerCacheUpdate > PLAYER_CACHE_REFRESH_INTERVAL) {
+        long lastUpdate = lastPlayerCacheUpdate.getOrDefault(dimensionKey, 0L);
+        if (currentTime - lastUpdate > PLAYER_CACHE_REFRESH_INTERVAL) {
             updatePlayerCache(level);
-            lastPlayerCacheUpdate = currentTime;
+            lastPlayerCacheUpdate.put(dimensionKey, currentTime);
+        }
+
+        Map<Long, List<PlayerCacheEntry>> dimensionPlayerCache = playerGridCache.get(dimensionKey);
+        if (dimensionPlayerCache == null || dimensionPlayerCache.isEmpty()) {
+            return false;
         }
 
         // Check surrounding grid cells (3x3x3 = 27 cells)
@@ -204,7 +300,7 @@ public class HierarchicalDistanceManager {
             for (int dy = -1; dy <= 1; dy++) {
                 for (int dz = -1; dz <= 1; dz++) {
                     long gridKey = getGridKey(cellX + dx, cellY + dy, cellZ + dz);
-                    List<PlayerCacheEntry> players = playerGridCache.get(gridKey);
+                    List<PlayerCacheEntry> players = dimensionPlayerCache.get(gridKey);
 
                     if (players != null) {
                         for (PlayerCacheEntry player : players) {
@@ -225,7 +321,8 @@ public class HierarchicalDistanceManager {
      * Updates the player grid cache with current player positions.
      */
     private static void updatePlayerCache(Level level) {
-        playerGridCache.clear();
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        Map<Long, List<PlayerCacheEntry>> dimensionPlayerCache = new ConcurrentHashMap<>();
 
         for (Player player : level.players()) {
             BlockPos playerPos = player.blockPosition();
@@ -234,9 +331,10 @@ public class HierarchicalDistanceManager {
             int cellZ = playerPos.getZ() / GRID_CELL_SIZE;
 
             long gridKey = getGridKey(cellX, cellY, cellZ);
-            playerGridCache.computeIfAbsent(gridKey, k -> new ArrayList<>())
+            dimensionPlayerCache.computeIfAbsent(gridKey, k -> new ArrayList<>())
                 .add(new PlayerCacheEntry(playerPos));
         }
+        playerGridCache.put(dimensionKey, dimensionPlayerCache);
     }
 
     /**
@@ -276,6 +374,30 @@ public class HierarchicalDistanceManager {
         };
     }
 
+    public void clearChunk(Level level, ChunkPos chunkPos) {
+        if (level == null || chunkPos == null) {
+            return;
+        }
+        Map<ChunkPos, TerrainCacheEntry> dimensionCache = terrainTypeCache.get(DimensionKey.of(level));
+        if (dimensionCache == null) {
+            return;
+        }
+        dimensionCache.remove(chunkPos);
+        if (dimensionCache.isEmpty()) {
+            terrainTypeCache.remove(DimensionKey.of(level), dimensionCache);
+        }
+    }
+
+    public void clearDimension(Level level) {
+        if (level == null) {
+            return;
+        }
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        terrainTypeCache.remove(dimensionKey);
+        playerGridCache.remove(dimensionKey);
+        lastPlayerCacheUpdate.remove(dimensionKey);
+    }
+
     /**
      * Terrain classification for adaptive optimization.
      */
@@ -287,6 +409,13 @@ public class HierarchicalDistanceManager {
         FLAT        // Flat terrain, standard flow
     }
 
+    public enum RangeTier {
+        NEAR,
+        MID,
+        FAR,
+        DISTANT
+    }
+
     /**
      * Cache entry for player position in spatial grid.
      */
@@ -295,6 +424,16 @@ public class HierarchicalDistanceManager {
 
         PlayerCacheEntry(BlockPos blockPos) {
             this.blockPos = blockPos;
+        }
+    }
+
+    private static class TerrainCacheEntry {
+        final AdaptiveTickScheduler.AreaType areaType;
+        final TerrainType terrainType;
+
+        private TerrainCacheEntry(AdaptiveTickScheduler.AreaType areaType, TerrainType terrainType) {
+            this.areaType = areaType;
+            this.terrainType = terrainType;
         }
     }
 

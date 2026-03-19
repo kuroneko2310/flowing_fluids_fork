@@ -158,6 +158,73 @@ public class FFFluidUtils {
         return getStateForFluidByAmount(fluid, amount).createLegacyBlock();
     }
 
+    public record DiscreteFlowBalance(int sourceAmount, int destinationAmount) {
+    }
+
+    public static DiscreteFlowBalance resolveDiscreteFlowBalance(int sourceAmount, int destinationAmount,
+                                                                 int minSourceAmount, float destinationBiasLevels) {
+        int clampedSource = Math.max(0, Math.min(8, sourceAmount));
+        int clampedDestination = Math.max(0, Math.min(8, destinationAmount));
+        int totalLevels = clampedSource + clampedDestination;
+        if (totalLevels <= 0) {
+            return new DiscreteFlowBalance(0, 0);
+        }
+
+        int minSource = Math.max(0, Math.min(8, minSourceAmount));
+        int minCandidateSource = Math.max(minSource, Math.max(0, totalLevels - 8));
+        int maxCandidateSource = Math.min(8, totalLevels);
+        if (minCandidateSource > maxCandidateSource) {
+            minCandidateSource = maxCandidateSource;
+        }
+
+        int sourceInternal = FluidAmountConverter.toInternal(clampedSource);
+        int destinationInternal = FluidAmountConverter.toInternal(clampedDestination);
+        int totalInternal = sourceInternal + destinationInternal;
+        int targetDestinationInternal = (totalInternal + 1) / 2;
+        int biasInternal = Math.round(destinationBiasLevels * (FluidAmountConverter.getMaxInternal() / 8.0f));
+        int minDestination = totalLevels - maxCandidateSource;
+        int maxDestination = Math.min(8, totalLevels - minCandidateSource);
+        targetDestinationInternal = Math.max(FluidAmountConverter.toInternal(minDestination),
+                Math.min(FluidAmountConverter.toInternal(maxDestination), targetDestinationInternal + biasInternal));
+        int targetSourceInternal = totalInternal - targetDestinationInternal;
+
+        int bestSource = clampedSource;
+        int bestDestination = clampedDestination;
+        long bestScore = Long.MAX_VALUE;
+        int bestMovement = Integer.MAX_VALUE;
+        boolean preferHigherDestination = destinationBiasLevels >= 0.0f;
+
+        for (int candidateSource = minCandidateSource; candidateSource <= maxCandidateSource; candidateSource++) {
+            int candidateDestination = totalLevels - candidateSource;
+            if (candidateDestination < 0 || candidateDestination > 8) {
+                continue;
+            }
+
+            long score = Math.abs(FluidAmountConverter.toInternal(candidateSource) - targetSourceInternal)
+                    + Math.abs(FluidAmountConverter.toInternal(candidateDestination) - targetDestinationInternal);
+            int movement = Math.abs(candidateSource - clampedSource) + Math.abs(candidateDestination - clampedDestination);
+            boolean better = score < bestScore;
+            if (!better && score == bestScore) {
+                if (preferHigherDestination && candidateDestination > bestDestination) {
+                    better = true;
+                } else if (!preferHigherDestination && candidateDestination < bestDestination) {
+                    better = true;
+                } else if (movement < bestMovement) {
+                    better = true;
+                }
+            }
+
+            if (better) {
+                bestScore = score;
+                bestMovement = movement;
+                bestSource = candidateSource;
+                bestDestination = candidateDestination;
+            }
+        }
+
+        return new DiscreteFlowBalance(bestSource, bestDestination);
+    }
+
     public static boolean isExtendedWaterloggable(LevelAccessor level, BlockState state) {
         if (!FlowingFluids.config.enableExtendedWaterlogging || !FlowingFluids.config.extendedWaterloggingAllowFences) {
             return false;
@@ -197,6 +264,132 @@ public class FFFluidUtils {
         return isExtendedWaterloggable(level, state) || isPassThroughFluidBlock(level, state, null);
     }
 
+    public static boolean isVanillaWaterloggable(BlockState state) {
+        return state.getBlock() instanceof LiquidBlockContainer && state.getBlock() instanceof BucketPickup;
+    }
+
+    public static boolean canStorePartialFluidAmount(LevelAccessor levelAccessor, BlockPos pos, BlockState blockState, Fluid fluid) {
+        if (supportsVirtualFluidState(levelAccessor, blockState)) {
+            return true;
+        }
+        if (isVanillaWaterloggable(blockState)) {
+            return false;
+        }
+        FluidState existingState = getEffectiveFluidState(levelAccessor, pos, blockState);
+        if (!existingState.isEmpty() && !existingState.getType().isSame(fluid)) {
+            return false;
+        }
+        return existingState.getType().isSame(fluid) || blockState.isAir() || blockState.canBeReplaced(fluid);
+    }
+
+    public static boolean isSmallSupportedThinSurfaceCluster(LevelAccessor levelAccessor, BlockPos origin, Fluid fluid,
+                                                             int maxClusterSize, int maxFluidAmount) {
+        if (!(levelAccessor instanceof Level level)
+                || origin == null
+                || fluid == null
+                || maxClusterSize <= 0
+                || maxFluidAmount <= 0) {
+            return false;
+        }
+
+        FluidState originState = getEffectiveFluidState(level, origin);
+        if (!originState.getType().isSame(fluid) || originState.getAmount() <= 0 || originState.getAmount() > maxFluidAmount) {
+            return false;
+        }
+
+        long[] queue = new long[Math.max(4, maxClusterSize + 1)];
+        long[] visited = new long[Math.max(4, maxClusterSize + 1)];
+        int head = 0;
+        int tail = 0;
+        int visitedCount = 0;
+        long originKey = origin.asLong();
+        queue[tail++] = originKey;
+        visited[visitedCount++] = originKey;
+
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos belowPos = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos abovePos = new BlockPos.MutableBlockPos();
+
+        while (head < tail) {
+            long currentKey = queue[head++];
+            cursor.set(BlockPos.getX(currentKey), BlockPos.getY(currentKey), BlockPos.getZ(currentKey));
+
+            BlockState currentBlockState = level.getBlockState(cursor);
+            FluidState currentState = getEffectiveFluidState(level, cursor, currentBlockState);
+            int currentAmount = currentState.getAmount();
+            if (!currentState.getType().isSame(fluid) || currentAmount <= 0 || currentAmount > maxFluidAmount) {
+                return false;
+            }
+
+            abovePos.set(cursor).move(Direction.UP);
+            FluidState aboveFluid = getEffectiveFluidState(level, abovePos, level.getBlockState(abovePos));
+            if (aboveFluid.getType().isSame(fluid) && aboveFluid.getAmount() > 0) {
+                return false;
+            }
+
+            belowPos.set(cursor).move(Direction.DOWN);
+            BlockState belowState = level.getBlockState(belowPos);
+            FluidState belowFluid = getEffectiveFluidState(level, belowPos, belowState);
+            boolean supportedBelow = (belowFluid.getType().isSame(fluid) && belowFluid.getAmount() >= currentAmount)
+                    || (!belowState.isAir() && !belowState.canBeReplaced(fluid));
+            if (!supportedBelow) {
+                return false;
+            }
+
+            if (fluid instanceof FlowingFluid flowingFluid
+                    && canFluidFlowFromPosToDirection(flowingFluid, Math.max(1, currentAmount), level, cursor, currentBlockState,
+                    Direction.DOWN, belowPos, belowState, belowFluid)
+                    && (belowFluid.isEmpty() || !belowFluid.getType().isSame(fluid) || belowFluid.getAmount() < currentAmount)) {
+                return false;
+            }
+
+            for (Direction direction : Direction.Plane.HORIZONTAL) {
+                neighborPos.set(cursor).move(direction);
+                FluidState neighborFluid = getEffectiveFluidState(level, neighborPos, level.getBlockState(neighborPos));
+                if (!neighborFluid.getType().isSame(fluid) || neighborFluid.getAmount() <= 0) {
+                    continue;
+                }
+                if (neighborFluid.getAmount() > maxFluidAmount) {
+                    return false;
+                }
+                long neighborKey = neighborPos.asLong();
+                boolean seen = false;
+                for (int i = 0; i < visitedCount; i++) {
+                    if (visited[i] == neighborKey) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (seen) {
+                    continue;
+                }
+                if (visitedCount >= maxClusterSize) {
+                    return false;
+                }
+                visited[visitedCount++] = neighborKey;
+                queue[tail++] = neighborKey;
+            }
+        }
+
+        return visitedCount > 0 && visitedCount <= maxClusterSize;
+    }
+
+    private static int normalizeRequestedFluidAmount(LevelAccessor levelAccessor, BlockPos pos, BlockState blockState,
+                                                     Fluid fluid, int requestedAmount) {
+        int clampedAmount = Math.max(0, Math.min(8, requestedAmount));
+        if (clampedAmount <= 0) {
+            return 0;
+        }
+        if (supportsVirtualFluidState(levelAccessor, blockState)) {
+            return clampedAmount;
+        }
+        if (isVanillaWaterloggable(blockState)) {
+            return clampedAmount >= 8 ? 8 : 0;
+        }
+        return clampedAmount;
+    }
+
     private static boolean clearStoredVirtualFluidState(LevelAccessor levelAccessor, BlockPos pos) {
         if (!ExtendedWaterlogStore.has(levelAccessor, pos)) {
             return false;
@@ -229,73 +422,122 @@ public class FFFluidUtils {
         ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
         int clamped = Math.max(0, Math.min(8, newAmount));
         FluidSpatialGrid.setFluidAt(levelAccessor, pos, clamped > 0, FluidAmountConverter.toInternal(clamped));
+        invalidateConnectedFluidComponents(levelAccessor, pos);
+    }
+
+    private static void invalidateConnectedFluidComponents(LevelAccessor levelAccessor, BlockPos pos) {
+        if (levelAccessor == null || pos == null || FlowingFluids.config == null) {
+            return;
+        }
+        int baseDistance = Math.max(1, FlowingFluids.config.waterFlowDistance);
+        int radius = Math.max(8, Math.min(32, baseDistance * 2));
+        FluidSpatialGrid.invalidateComponentsInRegion(levelAccessor, pos, radius);
     }
 
 
     public static boolean setFluidStateAtPosToNewAmount(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid, int newAmount) {
-        int clampedAmount = Math.max(0, Math.min(8, newAmount));
-        FluidState existingState = getEffectiveFluidState(levelAccessor, pos);
-        if (clampedAmount == 0) {
+        BlockState blockState = levelAccessor.getBlockState(pos);
+        int normalizedAmount = normalizeRequestedFluidAmount(levelAccessor, pos, blockState, fluid, newAmount);
+        FluidState existingState = getEffectiveFluidState(levelAccessor, pos, blockState);
+        if (normalizedAmount == 0) {
             if (existingState.isEmpty()) {
                 return true;
             }
-        } else if (existingState.getType().isSame(fluid) && existingState.getAmount() == clampedAmount) {
+        } else if (existingState.getType().isSame(fluid) && existingState.getAmount() == normalizedAmount) {
             return true;
         }
 
-        if (newAmount < 1) {
+        if (normalizedAmount < 1) {
             return removeAllFluidAtPos(levelAccessor, pos, fluid);
         }
 
-        //check if we are dealing with a waterlogged block
-        var blockState = levelAccessor.getBlockState(pos);
-        boolean virtualFluidState = supportsVirtualFluidState(levelAccessor, blockState);
-        if (virtualFluidState) {
-            if (newAmount <= 0) {
-                ExtendedWaterlogStore.remove(levelAccessor, pos);
-                AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
-                ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
-                FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
-                return true;
-            }
-            ExtendedWaterlogStore.set(levelAccessor, pos, fluid, Math.min(newAmount, 8));
-            notifyCaches(levelAccessor, pos, newAmount);
+        if (supportsVirtualFluidState(levelAccessor, blockState)) {
+            ExtendedWaterlogStore.set(levelAccessor, pos, fluid, normalizedAmount);
+            notifyCaches(levelAccessor, pos, normalizedAmount);
             return true;
         }
-        if (blockState.getBlock() instanceof LiquidBlockContainer liquidBlockContainer) {
-            if (newAmount == 8) {
-                boolean result = liquidBlockContainer.placeLiquid(levelAccessor, pos, blockState, getStateForFluidByAmount(fluid, newAmount));
+        if (isVanillaWaterloggable(blockState)) {
+            LiquidBlockContainer liquidBlockContainer = (LiquidBlockContainer) blockState.getBlock();
+            if (normalizedAmount == 8) {
+                boolean result = liquidBlockContainer.placeLiquid(levelAccessor, pos, blockState, getStateForFluidByAmount(fluid, normalizedAmount));
                 if (result) {
-                    AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
-                    ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
-                    FluidSpatialGrid.setFluidAt(levelAccessor, pos, true, FluidAmountConverter.toInternal(newAmount));
+                    notifyCaches(levelAccessor, pos, normalizedAmount);
                 }
                 return result;
-            }else if (blockState.getBlock() instanceof BucketPickup bucketPickup) {
-                //always drain the water loggable block if it's not full
-                bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
-                AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
-                ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
-                FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
-                return true;
             }
-            //if we cant fill or drain it check if we can just replace it with the new fluid level by itself
+            BucketPickup bucketPickup = (BucketPickup) blockState.getBlock();
+            bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
+            AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
+            ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
+            FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
+            return true;
+        }
+        if (blockState.getBlock() instanceof LiquidBlockContainer) {
             if (!blockState.canBeReplaced(fluid)) {
-                return false;//todo infinite source block possible???
+                return false;
             }
         }
 
         if (!blockState.isAir() && fluid instanceof FlowingFluid flowingFluid) {
             flowingFluid.beforeDestroyingBlock(levelAccessor, pos, blockState);
         }
-        //else place fluid block
-        boolean result = levelAccessor.setBlock(pos, getStateForFluidByAmount(fluid, newAmount).createLegacyBlock(), 3);
+        boolean result = levelAccessor.setBlock(pos, getStateForFluidByAmount(fluid, normalizedAmount).createLegacyBlock(), 3);
         if (result) {
-            AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
-            ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
-            FluidSpatialGrid.setFluidAt(levelAccessor, pos, true, FluidAmountConverter.toInternal(newAmount));
+            notifyCaches(levelAccessor, pos, normalizedAmount);
         }
         return result;
+    }
+
+    public static int transferFluidAmount(LevelAccessor levelAccessor, BlockPos fromPos, BlockPos toPos,
+                                          Fluid fluid, int requestedTransfer, int minSourceAmount) {
+        if (requestedTransfer <= 0) {
+            return 0;
+        }
+
+        FluidState sourceState = getEffectiveFluidState(levelAccessor, fromPos);
+        if (!sourceState.getType().isSame(fluid)) {
+            return 0;
+        }
+
+        int sourceAmount = sourceState.getAmount();
+        int removable = Math.max(0, sourceAmount - Math.max(0, minSourceAmount));
+        if (removable <= 0) {
+            return 0;
+        }
+
+        BlockState targetBlockState = levelAccessor.getBlockState(toPos);
+        FluidState targetState = getEffectiveFluidState(levelAccessor, toPos, targetBlockState);
+        if (!targetState.isEmpty() && !targetState.getType().isSame(fluid)) {
+            return 0;
+        }
+
+        int targetAmount = targetState.getType().isSame(fluid) ? targetState.getAmount() : 0;
+        int capacity = Math.max(0, 8 - targetAmount);
+        if (capacity <= 0) {
+            return 0;
+        }
+
+        boolean partialTarget = canStorePartialFluidAmount(levelAccessor, toPos, targetBlockState, fluid);
+        int transfer = Math.min(requestedTransfer, Math.min(removable, capacity));
+        if (!partialTarget && targetAmount + transfer < 8) {
+            return 0;
+        }
+
+        int newTargetAmount = partialTarget ? targetAmount + transfer : 8;
+        int actualTransferred = newTargetAmount - targetAmount;
+        if (actualTransferred <= 0) {
+            return 0;
+        }
+
+        int newSourceAmount = sourceAmount - actualTransferred;
+        if (!setFluidStateAtPosToNewAmount(levelAccessor, fromPos, fluid, newSourceAmount)) {
+            return 0;
+        }
+        if (!setFluidStateAtPosToNewAmount(levelAccessor, toPos, fluid, newTargetAmount)) {
+            setFluidStateAtPosToNewAmount(levelAccessor, fromPos, fluid, sourceAmount);
+            return 0;
+        }
+        return actualTransferred;
     }
 
     public static boolean changeFluidAmountAtPos(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid, int delta) {
@@ -306,6 +548,45 @@ public class FFFluidUtils {
 
         int currentAmount = state.isEmpty() ? 0 : state.getAmount();
         int targetAmount = Math.max(0, Math.min(8, currentAmount + delta));
+        return setFluidStateAtPosToNewAmount(levelAccessor, pos, fluid, targetAmount);
+    }
+
+    public static boolean applyConnectedFluidAmountDelta(LevelAccessor levelAccessor, BlockPos pos, FlowingFluid fluid,
+                                                         int delta, int depth, boolean doUp, boolean doDown) {
+        if (delta == 0) {
+            return true;
+        }
+        if (delta > 0) {
+            Pair<Integer, Runnable> result = placeConnectedFluidAmountAndPlaceAction(levelAccessor, pos, delta, fluid, depth, doUp, doDown);
+            if (result.first() == delta || result.second() == null) {
+                return false;
+            }
+            result.second().run();
+            return true;
+        }
+
+        int amountToRemove = Math.abs(delta);
+        Pair<Integer, Runnable> result = collectConnectedFluidAmountAndRemoveAction(levelAccessor, pos, amountToRemove, amountToRemove, fluid, depth);
+        if (result.first() < amountToRemove || result.second() == null) {
+            return false;
+        }
+        result.second().run();
+        return true;
+    }
+
+    public static boolean applyLocalFluidAmountDelta(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid, int delta) {
+        if (delta == 0) {
+            return true;
+        }
+        FluidState state = getEffectiveFluidState(levelAccessor, pos);
+        if (!state.isEmpty() && !state.getType().isSame(fluid)) {
+            return false;
+        }
+        int currentAmount = state.isEmpty() ? 0 : state.getAmount();
+        int targetAmount = Math.max(0, Math.min(8, currentAmount + delta));
+        if (targetAmount == currentAmount) {
+            return false;
+        }
         return setFluidStateAtPosToNewAmount(levelAccessor, pos, fluid, targetAmount);
     }
 
@@ -324,7 +605,7 @@ public class FFFluidUtils {
             return true;
         }
 
-        if (!blockState.isAir() && fluid instanceof FlowingFluid flowingFluid) {//todo needed for remove??
+        if (!blockState.isAir() && fluid instanceof FlowingFluid flowingFluid) {
             flowingFluid.beforeDestroyingBlock(levelAccessor, pos, blockState);
         }
 
@@ -907,8 +1188,9 @@ public class FFFluidUtils {
                         amountRemaining = addAmountToFluidAtPosWithRemainder(level, offset, flowSource, amountRemaining);
                         if (amountRemaining == 0) break;
                     } else if (offsetState.isAir()) {
-                        setFluidStateAtPosToNewAmount(level, offset, flowSource, originalState.getFluidState().getAmount());
-                        amountRemaining = 0;
+                        if (setFluidStateAtPosToNewAmount(level, offset, flowSource, amountRemaining)) {
+                            amountRemaining = 0;
+                        }
                         break;
                     }
                 }
@@ -928,8 +1210,9 @@ public class FFFluidUtils {
                         if (offsetState.getFluidState().getType() instanceof FlowingFluid) {
                             amountRemaining = addAmountToFluidAtPosWithRemainder(level, posTraversing, flowSource, amountRemaining);
                         } else if (offsetState.isAir()) {
-                            setFluidStateAtPosToNewAmount(level, posTraversing, flowSource, originalState.getFluidState().getAmount());
-                            amountRemaining = 0;
+                            if (setFluidStateAtPosToNewAmount(level, posTraversing, flowSource, amountRemaining)) {
+                                amountRemaining = 0;
+                            }
                         } else {
                             break;
                         }
@@ -967,6 +1250,12 @@ public class FFFluidUtils {
 
     public static boolean isInfiniteBiomeSurfaceDrainEnabled() {
         return FlowingFluids.config != null && FlowingFluids.config.infiniteWaterBiomeDrainSurfaceChance > 0.0f;
+    }
+
+    public static boolean isInfiniteBiomeFlowingRefillEnabled() {
+        return FlowingFluids.config != null
+                && FlowingFluids.config.infiniteWaterBiomeFlowingRefillChance > 0.0f
+                && FlowingFluids.config.infiniteWaterBiomeFlowingRefillMaxAmount > 0;
     }
 
     public static boolean isWithinInfiniteBiomeRefillBand(Level level, BlockPos pos) {
@@ -1063,6 +1352,59 @@ public class FFFluidUtils {
         return 0;
     }
 
+    public static boolean shouldAttemptInfiniteBiomeFlowingRefill(LevelAccessor level, BlockPos pos, Fluid fluid,
+                                                                  int originalAmount, int currentAmount) {
+        if (!(level instanceof Level world) || FlowingFluids.config == null) {
+            return false;
+        }
+        if (!isInfiniteBiomeFlowingRefillEnabled()) {
+            return false;
+        }
+        if (currentAmount <= 0 || currentAmount >= 8 || currentAmount >= originalAmount) {
+            return false;
+        }
+        if (!isWithinInfiniteBiomeRefillBand(world, pos) || pos.getY() == world.getSeaLevel()) {
+            return false;
+        }
+        if (AdaptiveTickScheduler.isFlowActiveNow(level, pos)) {
+            return false;
+        }
+        boolean riverLikeBiome = isRiverBiome(world.getBiome(pos));
+        if (riverLikeBiome) {
+            if (currentAmount <= 4) {
+                return false;
+            }
+            if (AdaptiveTickScheduler.getPoolStableTicks(level, pos, 20) < 4) {
+                return false;
+            }
+        }
+
+        int interval = Math.max(1, FlowingFluids.config.infiniteWaterBiomeFlowingRefillInterval);
+        int stagger = Math.floorMod(Long.hashCode(pos.asLong()), interval);
+        if (Math.floorMod(world.getGameTime(), interval) != stagger) {
+            return false;
+        }
+
+        int deficit = Math.max(1, originalAmount - currentAmount);
+        int room = Math.max(1, 8 - currentAmount);
+        float chance = FlowingFluids.config.infiniteWaterBiomeFlowingRefillChance;
+        if (riverLikeBiome) {
+            chance *= 0.35f;
+        }
+        float deficitBoost = 1.0f + Math.min(1.5f, (deficit - 1) * 0.35f);
+        float roomBoost = 1.0f + Math.min(1.0f, (room - 1) * 0.1f);
+        float adjustedChance = Math.min(1.0f, chance * deficitBoost * roomBoost);
+        return world.getRandom().nextFloat() < adjustedChance;
+    }
+
+    public static int getInfiniteBiomeFlowingRefillAmount(LevelAccessor level, BlockPos pos, Fluid fluid, int amount) {
+        int refill = getInfiniteBiomeRefillAmount(level, pos, fluid, amount, true);
+        if (refill <= 0 || FlowingFluids.config == null) {
+            return 0;
+        }
+        return Math.min(refill, Math.max(1, FlowingFluids.config.infiniteWaterBiomeFlowingRefillMaxAmount));
+    }
+
     public static boolean classifyBroadSurfaceWater(boolean oceanLikeBiome, boolean riverLikeBiome, int lateralWaterNeighbors,
                                                     boolean hasFluidAbove, boolean supportedBelow,
                                                     boolean immediateDownwardOutlet, int stableTicks,
@@ -1086,6 +1428,9 @@ public class FFFluidUtils {
             return false;
         }
         if (amount <= 0 || amount >= 8 || pos.getY() != world.getSeaLevel()) {
+            return false;
+        }
+        if (isProtectedInfiniteBiomeWater(level, pos, fluid, amount)) {
             return false;
         }
 
@@ -1114,6 +1459,51 @@ public class FFFluidUtils {
         }
 
         return lateralWaterNeighbors < 2 || supportedNeighbors < 2;
+    }
+
+    public static boolean isProtectedInfiniteBiomeWater(LevelAccessor level, BlockPos pos, Fluid fluid, int amount) {
+        if (!(level instanceof Level world) || pos == null || fluid == null || amount <= 0) {
+            return false;
+        }
+        Holder<Biome> biome = world.getBiome(pos);
+        if (!matchInfiniteBiomes(biome)) {
+            return false;
+        }
+        if (isRiverBiome(biome)) {
+            return true;
+        }
+
+        FluidState above = getEffectiveFluidState(level, pos.above(), level.getBlockState(pos.above()));
+        if (above.getType().isSame(fluid) && above.getAmount() > 0) {
+            return true;
+        }
+
+        FluidState below = getEffectiveFluidState(level, pos.below(), level.getBlockState(pos.below()));
+        boolean supportedBelow = (below.getType().isSame(fluid) && below.getAmount() >= Math.max(amount, 4))
+            || (!world.getBlockState(pos.below()).isAir() && !world.getBlockState(pos.below()).canBeReplaced(fluid));
+
+        int lateralWaterNeighbors = 0;
+        int supportedNeighbors = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            cursor.setWithOffset(pos, direction);
+            FluidState neighbor = getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
+            if (!neighbor.getType().isSame(fluid) || neighbor.getAmount() <= 0) {
+                continue;
+            }
+            lateralWaterNeighbors++;
+            if (neighbor.getAmount() >= Math.max(2, amount - 1)) {
+                supportedNeighbors++;
+            }
+        }
+
+        if (supportedBelow && lateralWaterNeighbors >= 2) {
+            return true;
+        }
+        if (amount >= 4 && lateralWaterNeighbors >= 1) {
+            return true;
+        }
+        return pos.getY() >= world.getSeaLevel() - 1 && supportedNeighbors >= 2;
     }
 
     public static boolean isOceanBiome(Holder<Biome> biome) {

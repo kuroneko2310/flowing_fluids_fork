@@ -2,64 +2,64 @@ package traben.flowing_fluids;
 
 /**
  * Converts between Minecraft's 0-8 fluid amount (BlockState) and
- * internal 0-255 high-precision amount.
+ * internal 0-63 medium-precision amount.
  *
- * Benefits of 0-255 internal precision:
- * - Eliminates unnatural water surface stepping
- * - Smoother equalization between blocks
- * - More accurate fall-off calculations
- * - Natural-looking rivers and lakes
+ * Benefits of 0-63 internal precision:
+ * - Keeps sub-block smoothing without tracking ultra-fine noise
+ * - Reduces churn in equalization and pressure heuristics
+ * - Preserves clean 8-level mapping for vanilla block states
  *
  * Conversion:
  * - BlockState 0 = Internal 0 (no fluid)
- * - BlockState 1 = Internal 32 (1/8 full)
- * - BlockState 2 = Internal 64 (2/8 full)
- * - BlockState 3 = Internal 96 (3/8 full)
- * - BlockState 4 = Internal 128 (4/8 full)
- * - BlockState 5 = Internal 160 (5/8 full)
- * - BlockState 6 = Internal 192 (6/8 full)
- * - BlockState 7 = Internal 224 (7/8 full)
- * - BlockState 8 = Internal 255 (8/8 full, source)
+ * - BlockState 1 = Internal 8 (1/8 full)
+ * - BlockState 2 = Internal 16 (2/8 full)
+ * - BlockState 3 = Internal 24 (3/8 full)
+ * - BlockState 4 = Internal 32 (4/8 full)
+ * - BlockState 5 = Internal 40 (5/8 full)
+ * - BlockState 6 = Internal 48 (6/8 full)
+ * - BlockState 7 = Internal 56 (7/8 full)
+ * - BlockState 8 = Internal 63 (8/8 full, source)
  */
 public class FluidAmountConverter {
 
-    private static final int INTERNAL_MAX = 255;
+    private static final int INTERNAL_MAX = 63;
     private static final int BLOCKSTATE_MAX = 8;
+    private static final int LEGACY_INTERNAL_MAX = 255;
 
     // Pre-computed conversion tables for accuracy and performance
     private static final int[] TO_INTERNAL_TABLE = {
         0,    // 0 -> 0
-        32,   // 1 -> 32
-        64,   // 2 -> 64
-        96,   // 3 -> 96
-        128,  // 4 -> 128
-        160,  // 5 -> 160
-        192,  // 6 -> 192
-        224,  // 7 -> 224
-        255   // 8 -> 255
+        8,    // 1 -> 8
+        16,   // 2 -> 16
+        24,   // 3 -> 24
+        32,   // 4 -> 32
+        40,   // 5 -> 40
+        48,   // 6 -> 48
+        56,   // 7 -> 56
+        63    // 8 -> 63
     };
 
-    private static final int[] TO_BLOCKSTATE_TABLE = new int[256];
+    private static final int[] TO_BLOCKSTATE_TABLE = new int[INTERNAL_MAX + 1];
 
     // Initialize reverse lookup table
     static {
-        for (int i = 0; i < 256; i++) {
+        for (int i = 0; i <= INTERNAL_MAX; i++) {
             // Map internal amount to nearest BlockState amount
             if (i == 0) {
                 TO_BLOCKSTATE_TABLE[i] = 0;
-            } else if (i <= 32) {
+            } else if (i <= 8) {
                 TO_BLOCKSTATE_TABLE[i] = 1;
-            } else if (i <= 64) {
+            } else if (i <= 16) {
                 TO_BLOCKSTATE_TABLE[i] = 2;
-            } else if (i <= 96) {
+            } else if (i <= 24) {
                 TO_BLOCKSTATE_TABLE[i] = 3;
-            } else if (i <= 128) {
+            } else if (i <= 32) {
                 TO_BLOCKSTATE_TABLE[i] = 4;
-            } else if (i <= 160) {
+            } else if (i <= 40) {
                 TO_BLOCKSTATE_TABLE[i] = 5;
-            } else if (i <= 192) {
+            } else if (i <= 48) {
                 TO_BLOCKSTATE_TABLE[i] = 6;
-            } else if (i <= 224) {
+            } else if (i <= 56) {
                 TO_BLOCKSTATE_TABLE[i] = 7;
             } else {
                 TO_BLOCKSTATE_TABLE[i] = 8;
@@ -68,12 +68,12 @@ public class FluidAmountConverter {
     }
 
     /**
-     * Converts BlockState amount (0-8) to internal amount (0-255).
+     * Converts BlockState amount (0-8) to internal amount (0-63).
      *
      * OPTIMIZED: Uses pre-computed table for perfect accuracy and O(1) performance.
      *
      * @param blockStateAmount Minecraft BlockState fluid amount (0-8)
-     * @return Internal high-precision amount (0-255)
+     * @return Internal medium-precision amount (0-63)
      */
     public static int toInternal(int blockStateAmount) {
         if (blockStateAmount < 0) return 0;
@@ -82,11 +82,11 @@ public class FluidAmountConverter {
     }
 
     /**
-     * Converts internal amount (0-255) to BlockState amount (0-8).
+     * Converts internal amount (0-63) to BlockState amount (0-8).
      *
      * OPTIMIZED: Uses pre-computed table for perfect accuracy and O(1) performance.
      *
-     * @param internalAmount Internal high-precision amount (0-255)
+     * @param internalAmount Internal medium-precision amount (0-63)
      * @return Minecraft BlockState fluid amount (0-8)
      */
     public static int toBlockState(int internalAmount) {
@@ -96,11 +96,21 @@ public class FluidAmountConverter {
     }
 
     /**
+     * Scales a legacy 0-255 tuned threshold into the active internal precision range.
+     */
+    public static int scaleLegacyInternal(int legacyAmount) {
+        if (legacyAmount <= 0) {
+            return 0;
+        }
+        return Math.max(1, Math.round((legacyAmount / (float) LEGACY_INTERNAL_MAX) * INTERNAL_MAX));
+    }
+
+    /**
      * Calculates the average of two internal amounts.
      * Used for equalization between adjacent fluid blocks.
      *
-     * @param amount1 First internal amount (0-255)
-     * @param amount2 Second internal amount (0-255)
+     * @param amount1 First internal amount (0-63)
+     * @param amount2 Second internal amount (0-63)
      * @return Average internal amount
      */
     public static int average(int amount1, int amount2) {
@@ -184,7 +194,7 @@ public class FluidAmountConverter {
     }
 
     /**
-     * Clamps internal amount to valid range (0-255).
+     * Clamps internal amount to valid range (0-63).
      *
      * @param amount Amount to clamp
      * @return Clamped amount
@@ -194,7 +204,7 @@ public class FluidAmountConverter {
     }
 
     /**
-     * Gets the maximum internal amount (255).
+     * Gets the maximum internal amount (63).
      */
     public static int getMaxInternal() {
         return INTERNAL_MAX;

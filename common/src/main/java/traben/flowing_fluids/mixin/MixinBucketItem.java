@@ -93,8 +93,6 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
         ) {//not empty and is flowing
             ItemStack heldBucket = player.getItemInHand(interactionHand);
 
-            //todo infinite logic
-
             BlockHitResult blockHitResult = getPlayerPOVHitResult(level, player, ClipContext.Fluid.ANY);
             if (blockHitResult.getType() == HitResult.Type.MISS || blockHitResult.getType() != HitResult.Type.BLOCK) {
                 cir.setReturnValue(
