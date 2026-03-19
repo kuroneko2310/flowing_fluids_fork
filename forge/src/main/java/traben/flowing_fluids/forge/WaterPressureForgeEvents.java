@@ -20,12 +20,18 @@ public final class WaterPressureForgeEvents {
         if (event.phase != TickEvent.Phase.END || !(event.level instanceof ServerLevel level)) {
             return;
         }
+        if (!FlowingFluids.config.enableMod || !FlowingFluids.config.enableWaterPressure) {
+            return;
+        }
         WaterPressureSystem.handleLevelTick(level);
     }
 
     @SubscribeEvent(priority = EventPriority.NORMAL)
     public static void onNeighborNotify(BlockEvent.NeighborNotifyEvent event) {
         if (!(event.getLevel() instanceof ServerLevel level)) {
+            return;
+        }
+        if (!FlowingFluids.config.enableMod || !FlowingFluids.config.enableWaterPressure) {
             return;
         }
         BlockPos pos = event.getPos();
@@ -35,6 +41,9 @@ public final class WaterPressureForgeEvents {
     @SubscribeEvent(priority = EventPriority.NORMAL)
     public static void onFluidPlaced(BlockEvent.FluidPlaceBlockEvent event) {
         if (!(event.getLevel() instanceof ServerLevel level)) {
+            return;
+        }
+        if (!FlowingFluids.config.enableMod || !FlowingFluids.config.enableWaterPressure) {
             return;
         }
         BlockPos pos = event.getPos();

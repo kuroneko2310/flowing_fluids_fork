@@ -35,7 +35,7 @@ public final class FluidSectionDataCache {
         if (!section.loaded()) {
             return 0;
         }
-        return section.amounts()[sectionIndex(x, y, z)] & 0xFFFF;
+        return FluidAmountConverter.toBlockState(section.amounts()[sectionIndex(x, y, z)] & 0xFFFF);
     }
 
     public int amountIfFluid(BlockPos pos, Fluid fluid) {
@@ -56,6 +56,10 @@ public final class FluidSectionDataCache {
             return 0;
         }
         return section.amounts()[sectionIndex(x, y, z)];
+    }
+
+    public int internalAmount(int x, int y, int z) {
+        return rawAmount(x, y, z) & 0xFFFF;
     }
 
     byte flags(int x, int y, int z) {
@@ -81,6 +85,14 @@ public final class FluidSectionDataCache {
     public boolean canAcceptFluid(BlockPos pos) {
         byte flags = flags(pos.getX(), pos.getY(), pos.getZ());
         return (flags & AIR) != 0 || (flags & REPLACEABLE) != 0 || (flags & HAS_FLUID) != 0;
+    }
+
+    public boolean isAir(int x, int y, int z) {
+        return (flags(x, y, z) & AIR) != 0;
+    }
+
+    public boolean isReplaceable(int x, int y, int z) {
+        return (flags(x, y, z) & REPLACEABLE) != 0;
     }
 
     public int supportScore(BlockPos pos, Fluid fallbackFluid, Direction[] horizontalDirections) {

@@ -9,15 +9,21 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.util.DimensionKey;
+import traben.flowing_fluids.optimization.WaterFlowProfile;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +60,7 @@ public final class ParallelFluidEqualizer {
     private static final int MAX_SELECTION_BUCKET_SIZE = 12;
     private static final int MAX_BUCKET_REPRESENTATIVES = 3;
     private static final int SYNC_REQUEST_THRESHOLD = 2;
+    private static final int CALM_SURFACE_MAX_NODES = 384;
 
     private static final ThreadLocal<Map<Vec3i, Direction[]>> DIRECTION_CACHE = ThreadLocal.withInitial(() ->
         new LinkedHashMap<Vec3i, Direction[]>(128, 0.75f, true) {
@@ -107,6 +114,7 @@ public final class ParallelFluidEqualizer {
         if (requests.size() <= SYNC_REQUEST_THRESHOLD) {
             for (Request request : requests) {
                 Result result = computeResult(request);
+                cacheComponentMembership(level, result.componentPositions());
                 if (!result.targets().isEmpty()) {
                     mergedByFluid.computeIfAbsent(result.fluidType(), ignored -> new LongOpenHashSet()).addAll(result.targets());
                 }
@@ -126,6 +134,7 @@ public final class ParallelFluidEqualizer {
                     FlowingFluids.error("Parallel equalization failed: " + cause.getMessage());
                     result = computeResult(requests.get(i));
                 }
+                cacheComponentMembership(level, result.componentPositions());
                 if (!result.targets().isEmpty()) {
                     mergedByFluid.computeIfAbsent(result.fluidType(), ignored -> new LongOpenHashSet()).addAll(result.targets());
                 }
@@ -227,6 +236,7 @@ public final class ParallelFluidEqualizer {
         int horizontalBucketSize = getSelectionBucketSize();
         int verticalBucketSize = Math.max(4, horizontalBucketSize / 2);
         Map<Fluid, Long2ObjectOpenHashMap<List<ScanCandidate>>> bucketsByFluid = new LinkedHashMap<>();
+        Map<Fluid, Set<Integer>> seenComponentsByFluid = new LinkedHashMap<>();
         int candidateCount = 0;
 
         for (long posKey : queued) {
@@ -236,6 +246,13 @@ public final class ParallelFluidEqualizer {
             ScanCandidate candidate = scanCandidate(level, posKey);
             if (candidate == null) {
                 continue;
+            }
+            if (candidate.componentId() > 0) {
+                Set<Integer> seenComponents = seenComponentsByFluid
+                    .computeIfAbsent(candidate.fluidType(), ignored -> new HashSet<>());
+                if (!seenComponents.add(candidate.componentId())) {
+                    continue;
+                }
             }
 
             long bucketKey = packSelectionBucket(candidate.pos(), horizontalBucketSize, verticalBucketSize);
@@ -268,7 +285,7 @@ public final class ParallelFluidEqualizer {
         if (!level.isLoaded(pos)) {
             return null;
         }
-        FluidState startFluid = level.getFluidState(pos);
+        FluidState startFluid = FFFluidUtils.getEffectiveFluidState(level, pos);
         if (startFluid.isEmpty()) {
             return null;
         }
@@ -277,8 +294,9 @@ public final class ParallelFluidEqualizer {
         if (startAmount <= 0) {
             startAmount = FluidAmountConverter.toInternal(startFluid.getAmount());
         }
+        int componentId = FluidSpatialGrid.getComponentId(level, pos);
         return new ScanCandidate(pos.immutable(), startFluid.getType(), startAmount,
-            AdaptiveTickScheduler.hasForcedRecheck(level, pos));
+            AdaptiveTickScheduler.hasForcedRecheck(level, pos), componentId);
     }
 
     private static void selectBucketRepresentatives(List<ScanCandidate> bucketCandidates, List<ScanCandidate> selected,
@@ -384,13 +402,29 @@ public final class ParallelFluidEqualizer {
             maxNodes = Math.max(128, Math.round(maxNodes * factor));
         }
 
-        float distanceLoadFactor = getDistanceLoadSheddingFactor();
-        maxNodes = Math.max(256, Math.round(maxNodes * distanceLoadFactor));
-        maxDepth = Math.min(Math.max(8, FlowingFluids.config.bfsMaxSearchDistance), maxDepth);
-        maxDepth = Math.max(8, Math.round(maxDepth * Math.max(0.6f, distanceLoadFactor)));
+        FluidState startState = FFFluidUtils.getEffectiveFluidState(level, startPos);
+        int profileAmount = !startState.isEmpty()
+            ? startState.getAmount()
+            : FluidAmountConverter.toBlockState(candidate.amount());
+        WaterFlowProfile flowProfile = WaterFlowProfile.analyze(level, startPos, startState, profileAmount, captureCache);
+        float distanceLoadFactor = flowProfile.adjustEqualizerLoadFactor(getDistanceLoadSheddingFactor());
+        if (!forcedRecheck && flowProfile.isInletZone()) {
+            maxDepth = Math.min(maxDepth, 6);
+            maxNodes = Math.min(maxNodes, 256);
+        }
+        if (!forcedRecheck && flowProfile.isCalmInterior()) {
+            maxNodes = Math.min(maxNodes, CALM_SURFACE_MAX_NODES);
+        }
+        maxDepth = flowProfile.clampEqualizerDepth(maxDepth, FlowingFluids.config.bfsMaxSearchDistance);
+        maxNodes = flowProfile.clampEqualizerNodes(maxNodes);
+        int minDepth = flowProfile.getMinimumEqualizerDepth();
+        maxNodes = Math.max(flowProfile.getMinimumEqualizerNodes(), Math.round(maxNodes * distanceLoadFactor));
+        maxDepth = Math.min(Math.max(minDepth, FlowingFluids.config.bfsMaxSearchDistance), maxDepth);
+        maxDepth = Math.max(minDepth, Math.round(maxDepth * Math.max(0.6f, distanceLoadFactor)));
 
         int snapshotRadius = Math.max(maxDepth, Math.max(8, FlowingFluids.config.inletProbeMaxSteps));
         snapshotRadius = Math.max(snapshotRadius, Math.max(8, FlowingFluids.config.horizontalSupplementDepth));
+        snapshotRadius = flowProfile.clampSnapshotRadius(snapshotRadius);
 
         return new Request(
             startPos.immutable(),
@@ -401,7 +435,8 @@ public final class ParallelFluidEqualizer {
             distanceLoadFactor,
             FluidSpatialGrid.getGradientDirection(level, startPos),
             ChunkLocalSlopeCache.getGradientVector(level, new ChunkPos(startPos), startPos),
-            Snapshot.capture(level, startPos, snapshotRadius, candidate.fluidType(), captureCache)
+            Snapshot.capture(level, startPos, snapshotRadius, candidate.fluidType(), captureCache),
+            flowProfile
         );
     }
 
@@ -409,7 +444,7 @@ public final class ParallelFluidEqualizer {
         return new Result(request.fluidType(), compute(request));
     }
 
-    private static LongArrayList compute(Request request) {
+    private static ComputationResult compute(Request request) {
         try {
             return computeInternal(request);
         } finally {
@@ -417,7 +452,7 @@ public final class ParallelFluidEqualizer {
         }
     }
 
-    private static LongArrayList computeInternal(Request request) {
+    private static ComputationResult computeInternal(Request request) {
         LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
         IntArrayFIFOQueue depthQueue = new IntArrayFIFOQueue();
         LongOpenHashSet visited = new LongOpenHashSet(Math.max(64, request.maxNodes()));
@@ -435,6 +470,7 @@ public final class ParallelFluidEqualizer {
         int nodesExplored = 0;
         int momentumBudget = 0;
         int momentumCap = Math.round(getDistanceScaledMomentumCap() * Math.max(0.7f, request.distanceLoadFactor()));
+        momentumCap = request.flowProfile().clampMomentumCap(momentumCap);
         int minVisitedAmount = request.startAmount();
         int maxVisitedAmount = request.startAmount();
         boolean dropEncountered = false;
@@ -496,16 +532,23 @@ public final class ParallelFluidEqualizer {
             }
         }
 
-        int inletSteps = Math.max(0, Math.round(FlowingFluids.config.inletProbeMaxSteps * request.distanceLoadFactor()));
+        int inletSteps = request.flowProfile().shouldRunInletProbe()
+            ? Math.max(0, Math.round(FlowingFluids.config.inletProbeMaxSteps * request.distanceLoadFactor()))
+            : 0;
         if (inletSteps > 0) {
             runInletProbe(request, visited, visitedOrder, targets, targetKeys, context, inletSteps);
         }
-        if (dropEncountered || maxVisitedAmount - minVisitedAmount >= 2) {
+        boolean shouldPromoteVisited = dropEncountered
+            || maxVisitedAmount - minVisitedAmount >= request.flowProfile().getVisitedPromotionVarianceThreshold();
+        if (shouldPromoteVisited) {
             for (int i = 0; i < visitedOrder.size(); i++) {
                 addTarget(targets, targetKeys, visitedOrder.getLong(i));
             }
         }
-        return targets;
+        LongArrayList componentPositions = new LongArrayList(visitedOrder.size() + 1);
+        componentPositions.add(startKey);
+        componentPositions.addAll(visitedOrder);
+        return new ComputationResult(targets, componentPositions);
     }
 
     private static void runInletProbe(Request request, LongOpenHashSet visited, LongArrayList visitedOrder,
@@ -541,6 +584,19 @@ public final class ParallelFluidEqualizer {
     private static void addTarget(LongArrayList targets, LongOpenHashSet keys, long posKey) {
         if (keys.add(posKey)) {
             targets.add(posKey);
+        }
+    }
+
+    private static void cacheComponentMembership(Level level, LongArrayList componentPositions) {
+        if (componentPositions == null || componentPositions.isEmpty()) {
+            return;
+        }
+        int componentId = FluidSpatialGrid.allocateComponentId();
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        for (int i = 0; i < componentPositions.size(); i++) {
+            long posKey = componentPositions.getLong(i);
+            mutablePos.set(BlockPos.getX(posKey), BlockPos.getY(posKey), BlockPos.getZ(posKey));
+            FluidSpatialGrid.setComponentId(level, mutablePos, componentId);
         }
     }
 
@@ -607,13 +663,24 @@ public final class ParallelFluidEqualizer {
     }
 
     private record Request(BlockPos startPos, Fluid fluidType, int startAmount, int maxDepth, int maxNodes,
-                           float distanceLoadFactor, Direction inletGradient, Vec3i gradientVector, Snapshot snapshot) {
+                           float distanceLoadFactor, Direction inletGradient, Vec3i gradientVector, Snapshot snapshot,
+                           WaterFlowProfile flowProfile) {
     }
 
-    private record Result(Fluid fluidType, LongArrayList targets) {
+    private record Result(Fluid fluidType, ComputationResult computation) {
+        private LongArrayList targets() {
+            return computation.targets();
+        }
+
+        private LongArrayList componentPositions() {
+            return computation.componentPositions();
+        }
     }
 
-    private record ScanCandidate(BlockPos pos, Fluid fluidType, int amount, boolean forcedRecheck) {
+    private record ScanCandidate(BlockPos pos, Fluid fluidType, int amount, boolean forcedRecheck, int componentId) {
+    }
+
+    private record ComputationResult(LongArrayList targets, LongArrayList componentPositions) {
     }
 
     private static final class EqualizationContext {
@@ -724,6 +791,92 @@ public final class ParallelFluidEqualizer {
         private static int index(int minX, int minY, int minZ, int sizeX, int sizeZ, int x, int y, int z) {
             return ((y - minY) * sizeZ + (z - minZ)) * sizeX + (x - minX);
         }
+    }
+
+    private static boolean isCalmBroadSurface(Level level, BlockPos pos, Fluid fluidType, int amount) {
+        if (level == null
+                || fluidType != Fluids.WATER
+                || amount <= 0
+                || !FlowingFluids.config.broadSurfaceSuppressionEnabled) {
+            return false;
+        }
+
+        FluidState state = FFFluidUtils.getEffectiveFluidState(level, pos);
+        if (!state.is(FluidTags.WATER) || AdaptiveTickScheduler.isFlowActiveNow(level, pos)) {
+            return false;
+        }
+
+        var biome = level.getBiome(pos);
+        boolean oceanLikeBiome = FFFluidUtils.isOceanBiome(biome) || FFFluidUtils.isBeachBiome(biome);
+        boolean riverLikeBiome = FFFluidUtils.isRiverBiome(biome);
+        boolean hasFluidAbove = hasFluidAbove(level, pos, fluidType);
+        boolean downwardOutlet = hasImmediateDownwardOutlet(level, pos, fluidType, amount);
+        boolean supportedBelow = isSupportedBelow(level, pos, fluidType, amount);
+        int lateralNeighbors = countLateralWaterNeighbors(level, pos, fluidType);
+        int stableTicks = AdaptiveTickScheduler.getPoolStableTicks(level, pos, 20);
+
+        if (!FFFluidUtils.classifyBroadSurfaceWater(oceanLikeBiome, riverLikeBiome, lateralNeighbors,
+                hasFluidAbove, supportedBelow, downwardOutlet, stableTicks,
+                FlowingFluids.config.broadSurfaceStableTicks)) {
+            return false;
+        }
+
+        return !hasImmediateSurfaceEdge(level, pos, fluidType);
+    }
+
+    private static int countLateralWaterNeighbors(Level level, BlockPos pos, Fluid fluidType) {
+        int count = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction dir : HORIZONTAL_DIRECTIONS) {
+            cursor.setWithOffset(pos, dir);
+            FluidState neighbor = FFFluidUtils.getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
+            if (neighbor.getType().isSame(fluidType) && neighbor.getAmount() > 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static boolean hasFluidAbove(Level level, BlockPos pos, Fluid fluidType) {
+        BlockPos abovePos = pos.above();
+        FluidState above = FFFluidUtils.getEffectiveFluidState(level, abovePos, level.getBlockState(abovePos));
+        return above.getType().isSame(fluidType) && above.getAmount() > 0;
+    }
+
+    private static boolean isSupportedBelow(Level level, BlockPos pos, Fluid fluidType, int amount) {
+        BlockPos belowPos = pos.below();
+        BlockState belowState = level.getBlockState(belowPos);
+        FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
+        return (belowFluid.getType().isSame(fluidType) && belowFluid.getAmount() >= amount)
+            || (!belowState.isAir() && !belowState.canBeReplaced(fluidType));
+    }
+
+    private static boolean hasImmediateSurfaceEdge(Level level, BlockPos pos, Fluid fluidType) {
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction dir : HORIZONTAL_DIRECTIONS) {
+            cursor.setWithOffset(pos, dir);
+            BlockState state = level.getBlockState(cursor);
+            FluidState neighbor = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
+            if (neighbor.isEmpty() && (state.isAir() || state.canBeReplaced(fluidType))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasImmediateDownwardOutlet(Level level, BlockPos pos, Fluid fluidType, int amount) {
+        if (!(fluidType instanceof FlowingFluid flowingFluid)) {
+            return false;
+        }
+        BlockState stateAtPos = level.getBlockState(pos);
+        BlockPos belowPos = pos.below();
+        BlockState belowState = level.getBlockState(belowPos);
+        FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
+        if (!FFFluidUtils.canFluidFlowFromPosToDirection(flowingFluid, Math.max(1, amount), level, pos, stateAtPos,
+                Direction.DOWN, belowPos, belowState, belowFluid)) {
+            return false;
+        }
+        return belowFluid.isEmpty() || !belowFluid.getType().isSame(fluidType) || belowFluid.getAmount() < amount;
     }
 
 }
