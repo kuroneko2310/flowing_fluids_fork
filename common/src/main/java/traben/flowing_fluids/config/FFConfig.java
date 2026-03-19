@@ -26,11 +26,36 @@ public class FFConfig {
     public boolean enableDisplacement = true;
     public boolean enablePistonPushing = true;
     public float rainRefillChance = 0.3f;
-    public float oceanRiverSwampRefillChance = 1f;
+    public float oceanRiverSwampRefillChance = 0.05f;
     public float evaporationChanceV2 = 1f;
     public boolean evaporationDaytimeOnly = true;
     public boolean evaporationRequiresSky = true;
     public float evaporationNetherChance = 1f;
+    public boolean enableHeatwaveEvents = true;
+    public float heatwaveStartChancePerDay = 0.08f;
+    public int heatwaveMinDurationTicks = 12000;
+    public int heatwaveMaxDurationTicks = 36000;
+    public float heatwaveEvaporationMultiplier = 2.0f;
+    public float heatwaveRainRefillMultiplier = 0.6f;
+    public boolean heatwaveDaytimeOnly = true;
+    public boolean enableDrySeasonEvents = true;
+    public float drySeasonStartChancePerDay = 0.03f;
+    public int drySeasonMinDurationTicks = 72000;
+    public int drySeasonMaxDurationTicks = 168000;
+    public float drySeasonEvaporationMultiplier = 1.5f;
+    public float drySeasonRainRefillMultiplier = 0.45f;
+    public boolean enableHotBlockEvaporation = true;
+    public float hotBlockEvaporationChance = 0.35f;
+    public int hotBlockEvaporationRadius = 2;
+    public int hotBlockEvaporationVerticalRange = 1;
+    public int hotBlockEvaporationDrainAmount = 1;
+    public boolean enableShadeProtection = true;
+    public int shadeRoofSearchHeight = 6;
+    public boolean enableRiverDroughts = true;
+    public float riverDroughtRefillMultiplier = 0.2f;
+    public float riverDroughtDrainChance = 0.08f;
+    public int riverDroughtMaxAffectedLevel = 4;
+    public float riverDroughtHeatwaveDrainBonus = 1.35f;
     public boolean printRandomTicks = false;
     public boolean hideFlowingTexture = true;
     public LiquidHeight fullLiquidHeight = LiquidHeight.REGULAR;
@@ -40,33 +65,62 @@ public class FFConfig {
     public int waterFlowDistance = 4;
     public int lavaFlowDistance = 2;
     public int lavaNetherFlowDistance = 4;
-    public int waterTickDelay = 2;
+    public int waterTickDelay = 4;
     public int lavaTickDelay= 15;
     public int lavaNetherTickDelay = 5;
     public int randomTickLevelingDistance = 32;
 
     // Advanced water flow distance settings
-    public int maxWaterFlowDistance = 16; // Maximum horizontal flow distance (can be higher than base flow distance)
-    public int bfsMaxSearchDistance = 20; // Maximum BFS search distance for equalization
-    public float slopeFindDistanceMultiplier = 1.0f; // Multiplier for slope finding distance (1.0 = default, higher = farther search)
+    public int maxWaterFlowDistance = 6; // Maximum horizontal flow distance (can be higher than base flow distance)
+    public int bfsMaxSearchDistance = 10; // Maximum BFS search distance for equalization
+    public float slopeFindDistanceMultiplier = 1.2f; // Multiplier for slope finding distance (1.0 = default, higher = farther search)
     public boolean enableAdaptiveFlowDistance = true; // Adjust flow distance based on terrain type
     public int riverFlowDistance = 64; // Flow distance in river biomes
     public int oceanFlowDistance = 128; // Flow distance in ocean biomes
-    public int canalFlowDistance = 32; // Flow distance for artificial canals (flat terrain)
-    public int forcedEqualizationStableTicks = 200; // Stable ticks before a forced lightweight recheck is scheduled
-    public int forcedEqualizationCooldownTicks = 100; // Cooldown between forced rechecks per column
-    public float forcedEqualizationBudgetFactor = 0.35f; // Budget multiplier when running forced lightweight checks
+    public int canalFlowDistance = 48; // Flow distance for artificial canals (flat terrain)
+    public boolean broadSurfaceSuppressionEnabled = true; // Suppress wide, stable surface leveling until disturbed
+    public int broadSurfaceStableTicks = 6; // Stable ticks required before broad surface suppression applies
+    public int broadSurfaceSlopeClamp = 2; // Base slope-search clamp for broad surfaces
+    public int forcedEqualizationStableTicks = 1200; // Stable ticks before a forced lightweight recheck is scheduled
+    public int forcedEqualizationCooldownTicks = 600; // Cooldown between forced rechecks per column
+    public float forcedEqualizationBudgetFactor = 0.2f; // Budget multiplier when running forced lightweight checks
     public int horizontalSupplementDepth = 12; // Depth for horizontal-only exploration sweeps
-    public int horizontalSupplementExtraNodes = 256; // Additional nodes budget for horizontal sweeps
+    public int horizontalSupplementExtraNodes = 96; // Additional nodes budget for horizontal sweeps
     public int inletProbeMaxSteps = 8; // Straight-line inlet probe to prevent 3-block stalls on narrow drains
     public int clusterDiffusionHeightThreshold = 6; // Minimum height delta to trigger cluster diffusion
     public int clusterDiffusionMaxCluster = 96; // Maximum positions to include in a cluster diffusion pass
-    public float clusterDiffusionBudgetPortion = 0.5f; // Portion of remaining BFS budget usable for diffusion
+    public float clusterDiffusionBudgetPortion = 0.2f; // Portion of remaining BFS budget usable for diffusion
 
     // Performance monitoring settings
     public boolean enablePerformanceMonitoring = false; // Enable detailed performance tracking
     public int performanceLogInterval = 200; // Log performance data every N ticks (20 ticks = 1 second)
     public boolean enableDistanceBasedOptimization = true; // Apply optimizations based on flow distance
+
+    // Flow cohesion and inertia
+    public float waterAffinityStrength = 0.2f; // Bias flow toward nearby water (0 = off)
+    public float flowInertiaStrength = 0.25f; // Bias flow toward last direction (0 = off)
+    public int flowInertiaMaxAgeTicks = 40; // How long inertia is remembered
+    public boolean enableFlowSpeedControl = true; // Lightweight flow speed tiers derived from water profile + momentum
+    public float flowSpeedStrength = 0.35f; // How strongly flow speed tiers bias transfer and thin-edge movement
+    public int flowActivationTicks = 1; // Force ticks briefly after flow updates; profile-based breach handling keeps fronts responsive
+    public boolean forceTickWhenAdjacentAir = false; // Always tick when adjacent to air/replaceable blocks
+    public int forceFlowLevelDifference = 2; // Force flow when level difference exceeds this
+    public int stepDownSearchDistance = 1; // How many blocks horizontally to search for step-down outlets (1-3)
+    public float pressureFlowBonusStrength = 0.1f; // Extra lateral transfer based on height difference
+    public float downwardPressureStrength = 0.4f; // Reduces retention when falling (pressure effect)
+    public int downwardPressureMaxColumn = 4; // Max column height to sample for pressure
+    public float connectedFlowDelayMultiplier = 0.6f; // Tick delay multiplier for connected flow lines
+    public float channelBoostDelayMultiplier = 0.5f; // Tick delay multiplier for narrow channels
+    public float downwardTickDelayMultiplier = 0.5f; // Tick delay multiplier when falling
+    public float activeFlowDistanceBudgetBoost = 1.0f; // Distance budget boost while actively flowing
+    public boolean enableHydraulicGradientFlow = true; // Pressure-aware flow model for rivers, canals, and deep intakes
+    public int hydraulicSampleDistance = 4; // Upstream distance sampled for nearby stored water pressure
+    public float hydraulicDepthWeight = 1.0f; // Local depth contribution to hydraulic drive
+    public float hydraulicUpstreamWeight = 0.75f; // Connected upstream water contribution
+    public float hydraulicIntakeWeight = 1.15f; // River or basin intake boost
+    public float hydraulicChannelVelocityWeight = 0.45f; // How much confinement speeds up narrow channels
+    public float hydraulicChannelCapacityWeight = 0.7f; // How much width/headroom increases moved volume
+    public float hydraulicTickAcceleration = 0.55f; // How strongly hydraulic drive reduces tick delay
 
     public float drinkWaterToBreedAnimalChance = 0.1f;
     public boolean encloseAllFluidOnWorldGen = true;
@@ -95,10 +149,13 @@ public class FFConfig {
     public int waterPressureDataTtl = 1200;
     public float infiniteWaterBiomeNonConsumeChance = 0.01f;
     public float infiniteWaterBiomeDrainSurfaceChance = 0.1f;
+    public float infiniteWaterBiomeFlowingRefillChance = 0.025f;
+    public int infiniteWaterBiomeFlowingRefillInterval = 16;
+    public int infiniteWaterBiomeFlowingRefillMaxAmount = 1;
     public int minWaterLevelForIce = 4;
     public boolean rainFillsWaterHigherV2 = false;
     public int rainBfsCooldownTicks = 5;
-    public float rainSurfaceSpawnChance = 0.05f;
+    public float rainSurfaceSpawnChance = 0.02f;
     public int rainSurfaceSpawnLevel = 1;
     public float rainLevelJumpChance = 0.05f;
     public int infiniteBiomeRainFillMaxLevel = 6;
@@ -111,6 +168,10 @@ public class FFConfig {
     public ObjectOpenHashSet<String> extraRiverBiomes = new ObjectOpenHashSet<>();
     public ObjectOpenHashSet<String> extraBeachBiomes = new ObjectOpenHashSet<>();
 
+    // Extended waterlogging for blocks that normally cannot hold fluids (e.g., fences/iron bars).
+    public boolean enableExtendedWaterlogging = false;
+    public boolean extendedWaterloggingAllowFences = true; // covers fences/iron bars/walls-like if tagged
+
     // Adaptive scheduler settings
     public long adaptiveSchedulerChunkExpiryMs = 60_000; // 1 minute by default
     public int adaptiveSchedulerMaxEntries = 10_000; // Max cached stability entries
@@ -118,11 +179,11 @@ public class FFConfig {
     // Rain system settings
     public boolean enableRainSystem = true;
     public int rainChunkRadius = 3;
-    public int rainGenerateIntervalTicks = 20;
-    public int rainAttemptsPerChunk = 20;
-    public float rainBaseGenerateChance = 0.05f;
+    public int rainGenerateIntervalTicks = 200;
+    public int rainAttemptsPerChunk = 4;
+    public float rainBaseGenerateChance = 0.03f;
     public int rainBaseWaterAmount = 2;
-    public int rainMaxChunksPerTick = 128;
+    public int rainMaxChunksPerTick = 24;
     public boolean rainEnableBiomeFiltering = true;
     public boolean rainSkipInfiniteWaterBiomes = true;
     public boolean rainEnableChunkCaching = true;
@@ -138,6 +199,15 @@ public class FFConfig {
     public float rainQueueMinChanceMultiplier = 0.35f;
     public int rainPlacementAggregationDistance = 1;
     public int rainPlacementMaxCombinedAmount = 16;
+    public int rainWetnessPersistTicks = 1200;
+    public int rainCatchmentRadius = 3;
+    public float rainCatchmentMaxBoost = 1.6f;
+    public int rainUpstreamSearchRadius = 6;
+    public float rainUpstreamMaxBoost = 1.5f;
+    public float rainIntensityDrizzleMultiplier = 0.55f;
+    public float rainIntensitySteadyMultiplier = 1.0f;
+    public float rainIntensityHeavyMultiplier = 1.65f;
+    public float rainIntensityThunderstormMultiplier = 2.25f;
 
     public float rainPrecipJungle = 1.5f;
     public float rainPrecipSwamp = 1.25f;
@@ -146,6 +216,31 @@ public class FFConfig {
     public float rainPrecipPlains = 1.0f;
     public float rainPrecipForest = 1.0f;
     public float rainPrecipTaiga = 0.8f;
+
+    // Snowmelt system settings
+    public boolean enableSnowmeltSystem = true;
+    public boolean snowmeltDaytimeOnly = true;
+    public boolean snowmeltPlacesWater = true;
+    public int snowmeltChunkRadius = 2;
+    public int snowmeltIntervalTicks = 160;
+    public int snowmeltAttemptsPerChunk = 2;
+    public int snowmeltMaxChunksPerTick = 16;
+    public float snowmeltBaseChance = 0.08f;
+    public int snowmeltWaterAmount = 1;
+    public int snowmeltMinSkyLight = 10;
+    public float snowmeltMinTemperature = 0.2f;
+
+    // Flood event settings
+    public boolean enableFloodEvents = false;
+    public int floodDefaultRadius = 48;
+    public int floodDefaultDurationTicks = 20 * 90;
+    public int floodPulseIntervalTicks = 5;
+    public int floodPlacementsPerPulse = 28;
+    public int floodWaterAmountPerPlacement = 4;
+    public int floodShoreSearchRadius = 4;
+    public int floodMaxWaterRise = 3;
+    public float floodLowlandBias = 1.0f;
+    public float floodRainAmountMultiplier = 2.0f;
 
 
     // create mod options
@@ -238,6 +333,31 @@ public class FFConfig {
         evaporationDaytimeOnly = buffer.readBoolean();
         evaporationRequiresSky = buffer.readBoolean();
         evaporationNetherChance = buffer.readFloat();
+        enableHeatwaveEvents = buffer.readBoolean();
+        heatwaveStartChancePerDay = buffer.readFloat();
+        heatwaveMinDurationTicks = buffer.readVarInt();
+        heatwaveMaxDurationTicks = buffer.readVarInt();
+        heatwaveEvaporationMultiplier = buffer.readFloat();
+        heatwaveRainRefillMultiplier = buffer.readFloat();
+        heatwaveDaytimeOnly = buffer.readBoolean();
+        enableDrySeasonEvents = buffer.readBoolean();
+        drySeasonStartChancePerDay = buffer.readFloat();
+        drySeasonMinDurationTicks = buffer.readVarInt();
+        drySeasonMaxDurationTicks = buffer.readVarInt();
+        drySeasonEvaporationMultiplier = buffer.readFloat();
+        drySeasonRainRefillMultiplier = buffer.readFloat();
+        enableHotBlockEvaporation = buffer.readBoolean();
+        hotBlockEvaporationChance = buffer.readFloat();
+        hotBlockEvaporationRadius = buffer.readVarInt();
+        hotBlockEvaporationVerticalRange = buffer.readVarInt();
+        hotBlockEvaporationDrainAmount = buffer.readVarInt();
+        enableShadeProtection = buffer.readBoolean();
+        shadeRoofSearchHeight = buffer.readVarInt();
+        enableRiverDroughts = buffer.readBoolean();
+        riverDroughtRefillMultiplier = buffer.readFloat();
+        riverDroughtDrainChance = buffer.readFloat();
+        riverDroughtMaxAffectedLevel = buffer.readVarInt();
+        riverDroughtHeatwaveDrainBonus = buffer.readFloat();
         printRandomTicks = buffer.readBoolean();
         hideFlowingTexture = buffer.readBoolean();
         fullLiquidHeight = buffer.readEnum(LiquidHeight.class);
@@ -260,11 +380,37 @@ public class FFConfig {
         riverFlowDistance = buffer.readVarInt();
         oceanFlowDistance = buffer.readVarInt();
         canalFlowDistance = buffer.readVarInt();
+        broadSurfaceSuppressionEnabled = buffer.readBoolean();
+        broadSurfaceStableTicks = buffer.readVarInt();
+        broadSurfaceSlopeClamp = buffer.readVarInt();
 
         // Performance monitoring settings
         enablePerformanceMonitoring = buffer.readBoolean();
         performanceLogInterval = buffer.readVarInt();
         enableDistanceBasedOptimization = buffer.readBoolean();
+        waterAffinityStrength = buffer.readFloat();
+        flowInertiaStrength = buffer.readFloat();
+        flowInertiaMaxAgeTicks = buffer.readVarInt();
+        enableFlowSpeedControl = buffer.readBoolean();
+        flowSpeedStrength = buffer.readFloat();
+        flowActivationTicks = buffer.readVarInt();
+        forceTickWhenAdjacentAir = buffer.readBoolean();
+        forceFlowLevelDifference = buffer.readVarInt();
+        pressureFlowBonusStrength = buffer.readFloat();
+        downwardPressureStrength = buffer.readFloat();
+        downwardPressureMaxColumn = buffer.readVarInt();
+        connectedFlowDelayMultiplier = buffer.readFloat();
+        channelBoostDelayMultiplier = buffer.readFloat();
+        downwardTickDelayMultiplier = buffer.readFloat();
+        activeFlowDistanceBudgetBoost = buffer.readFloat();
+        enableHydraulicGradientFlow = buffer.readBoolean();
+        hydraulicSampleDistance = buffer.readVarInt();
+        hydraulicDepthWeight = buffer.readFloat();
+        hydraulicUpstreamWeight = buffer.readFloat();
+        hydraulicIntakeWeight = buffer.readFloat();
+        hydraulicChannelVelocityWeight = buffer.readFloat();
+        hydraulicChannelCapacityWeight = buffer.readFloat();
+        hydraulicTickAcceleration = buffer.readFloat();
 
         drinkWaterToBreedAnimalChance = buffer.readFloat();
         encloseAllFluidOnWorldGen = buffer.readBoolean();
@@ -291,6 +437,9 @@ public class FFConfig {
         waterPressureDataTtl = buffer.readVarInt();
         infiniteWaterBiomeNonConsumeChance = buffer.readFloat();
         infiniteWaterBiomeDrainSurfaceChance = buffer.readFloat();
+        infiniteWaterBiomeFlowingRefillChance = buffer.readFloat();
+        infiniteWaterBiomeFlowingRefillInterval = buffer.readVarInt();
+        infiniteWaterBiomeFlowingRefillMaxAmount = buffer.readVarInt();
         minWaterLevelForIce = buffer.readVarInt();
         rainFillsWaterHigherV2 = buffer.readBoolean();
         rainBfsCooldownTicks = buffer.readVarInt();
@@ -307,6 +456,9 @@ public class FFConfig {
         extraOceanBiomes = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
         extraRiverBiomes = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
         extraBeachBiomes = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
+
+        enableExtendedWaterlogging = buffer.readBoolean();
+        extendedWaterloggingAllowFences = buffer.readBoolean();
 
         adaptiveSchedulerChunkExpiryMs = buffer.readVarLong();
         adaptiveSchedulerMaxEntries = buffer.readVarInt();
@@ -344,6 +496,15 @@ public class FFConfig {
         rainQueueMinChanceMultiplier = buffer.readFloat();
         rainPlacementAggregationDistance = buffer.readVarInt();
         rainPlacementMaxCombinedAmount = buffer.readVarInt();
+        rainWetnessPersistTicks = buffer.readVarInt();
+        rainCatchmentRadius = buffer.readVarInt();
+        rainCatchmentMaxBoost = buffer.readFloat();
+        rainUpstreamSearchRadius = buffer.readVarInt();
+        rainUpstreamMaxBoost = buffer.readFloat();
+        rainIntensityDrizzleMultiplier = buffer.readFloat();
+        rainIntensitySteadyMultiplier = buffer.readFloat();
+        rainIntensityHeavyMultiplier = buffer.readFloat();
+        rainIntensityThunderstormMultiplier = buffer.readFloat();
 
         rainPrecipJungle = buffer.readFloat();
         rainPrecipSwamp = buffer.readFloat();
@@ -352,6 +513,27 @@ public class FFConfig {
         rainPrecipPlains = buffer.readFloat();
         rainPrecipForest = buffer.readFloat();
         rainPrecipTaiga = buffer.readFloat();
+        enableSnowmeltSystem = buffer.readBoolean();
+        snowmeltDaytimeOnly = buffer.readBoolean();
+        snowmeltPlacesWater = buffer.readBoolean();
+        snowmeltChunkRadius = buffer.readVarInt();
+        snowmeltIntervalTicks = buffer.readVarInt();
+        snowmeltAttemptsPerChunk = buffer.readVarInt();
+        snowmeltMaxChunksPerTick = buffer.readVarInt();
+        snowmeltBaseChance = buffer.readFloat();
+        snowmeltWaterAmount = buffer.readVarInt();
+        snowmeltMinSkyLight = buffer.readVarInt();
+        snowmeltMinTemperature = buffer.readFloat();
+        enableFloodEvents = buffer.readBoolean();
+        floodDefaultRadius = buffer.readVarInt();
+        floodDefaultDurationTicks = buffer.readVarInt();
+        floodPulseIntervalTicks = buffer.readVarInt();
+        floodPlacementsPerPulse = buffer.readVarInt();
+        floodWaterAmountPerPlacement = buffer.readVarInt();
+        floodShoreSearchRadius = buffer.readVarInt();
+        floodMaxWaterRise = buffer.readVarInt();
+        floodLowlandBias = buffer.readFloat();
+        floodRainAmountMultiplier = buffer.readFloat();
         ///////////////////////////////////////////////
     }
 
@@ -371,6 +553,31 @@ public class FFConfig {
         buffer.writeBoolean(evaporationDaytimeOnly);
         buffer.writeBoolean(evaporationRequiresSky);
         buffer.writeFloat(evaporationNetherChance);
+        buffer.writeBoolean(enableHeatwaveEvents);
+        buffer.writeFloat(heatwaveStartChancePerDay);
+        buffer.writeVarInt(heatwaveMinDurationTicks);
+        buffer.writeVarInt(heatwaveMaxDurationTicks);
+        buffer.writeFloat(heatwaveEvaporationMultiplier);
+        buffer.writeFloat(heatwaveRainRefillMultiplier);
+        buffer.writeBoolean(heatwaveDaytimeOnly);
+        buffer.writeBoolean(enableDrySeasonEvents);
+        buffer.writeFloat(drySeasonStartChancePerDay);
+        buffer.writeVarInt(drySeasonMinDurationTicks);
+        buffer.writeVarInt(drySeasonMaxDurationTicks);
+        buffer.writeFloat(drySeasonEvaporationMultiplier);
+        buffer.writeFloat(drySeasonRainRefillMultiplier);
+        buffer.writeBoolean(enableHotBlockEvaporation);
+        buffer.writeFloat(hotBlockEvaporationChance);
+        buffer.writeVarInt(hotBlockEvaporationRadius);
+        buffer.writeVarInt(hotBlockEvaporationVerticalRange);
+        buffer.writeVarInt(hotBlockEvaporationDrainAmount);
+        buffer.writeBoolean(enableShadeProtection);
+        buffer.writeVarInt(shadeRoofSearchHeight);
+        buffer.writeBoolean(enableRiverDroughts);
+        buffer.writeFloat(riverDroughtRefillMultiplier);
+        buffer.writeFloat(riverDroughtDrainChance);
+        buffer.writeVarInt(riverDroughtMaxAffectedLevel);
+        buffer.writeFloat(riverDroughtHeatwaveDrainBonus);
         buffer.writeBoolean(printRandomTicks);
         buffer.writeBoolean(hideFlowingTexture);
         buffer.writeEnum(fullLiquidHeight);
@@ -393,11 +600,37 @@ public class FFConfig {
         buffer.writeVarInt(riverFlowDistance);
         buffer.writeVarInt(oceanFlowDistance);
         buffer.writeVarInt(canalFlowDistance);
+        buffer.writeBoolean(broadSurfaceSuppressionEnabled);
+        buffer.writeVarInt(broadSurfaceStableTicks);
+        buffer.writeVarInt(broadSurfaceSlopeClamp);
 
         // Performance monitoring settings
         buffer.writeBoolean(enablePerformanceMonitoring);
         buffer.writeVarInt(performanceLogInterval);
         buffer.writeBoolean(enableDistanceBasedOptimization);
+        buffer.writeFloat(waterAffinityStrength);
+        buffer.writeFloat(flowInertiaStrength);
+        buffer.writeVarInt(flowInertiaMaxAgeTicks);
+        buffer.writeBoolean(enableFlowSpeedControl);
+        buffer.writeFloat(flowSpeedStrength);
+        buffer.writeVarInt(flowActivationTicks);
+        buffer.writeBoolean(forceTickWhenAdjacentAir);
+        buffer.writeVarInt(forceFlowLevelDifference);
+        buffer.writeFloat(pressureFlowBonusStrength);
+        buffer.writeFloat(downwardPressureStrength);
+        buffer.writeVarInt(downwardPressureMaxColumn);
+        buffer.writeFloat(connectedFlowDelayMultiplier);
+        buffer.writeFloat(channelBoostDelayMultiplier);
+        buffer.writeFloat(downwardTickDelayMultiplier);
+        buffer.writeFloat(activeFlowDistanceBudgetBoost);
+        buffer.writeBoolean(enableHydraulicGradientFlow);
+        buffer.writeVarInt(hydraulicSampleDistance);
+        buffer.writeFloat(hydraulicDepthWeight);
+        buffer.writeFloat(hydraulicUpstreamWeight);
+        buffer.writeFloat(hydraulicIntakeWeight);
+        buffer.writeFloat(hydraulicChannelVelocityWeight);
+        buffer.writeFloat(hydraulicChannelCapacityWeight);
+        buffer.writeFloat(hydraulicTickAcceleration);
 
         buffer.writeFloat(drinkWaterToBreedAnimalChance);
         buffer.writeBoolean(encloseAllFluidOnWorldGen);
@@ -424,6 +657,9 @@ public class FFConfig {
         buffer.writeVarInt(waterPressureDataTtl);
         buffer.writeFloat(infiniteWaterBiomeNonConsumeChance);
         buffer.writeFloat(infiniteWaterBiomeDrainSurfaceChance);
+        buffer.writeFloat(infiniteWaterBiomeFlowingRefillChance);
+        buffer.writeVarInt(infiniteWaterBiomeFlowingRefillInterval);
+        buffer.writeVarInt(infiniteWaterBiomeFlowingRefillMaxAmount);
         buffer.writeVarInt(minWaterLevelForIce);
         buffer.writeBoolean(rainFillsWaterHigherV2);
         buffer.writeVarInt(rainBfsCooldownTicks);
@@ -440,6 +676,9 @@ public class FFConfig {
         buffer.writeCollection(extraOceanBiomes, FriendlyByteBuf::writeUtf);
         buffer.writeCollection(extraRiverBiomes, FriendlyByteBuf::writeUtf);
         buffer.writeCollection(extraBeachBiomes, FriendlyByteBuf::writeUtf);
+
+        buffer.writeBoolean(enableExtendedWaterlogging);
+        buffer.writeBoolean(extendedWaterloggingAllowFences);
 
         buffer.writeVarLong(adaptiveSchedulerChunkExpiryMs);
         buffer.writeVarInt(adaptiveSchedulerMaxEntries);
@@ -476,6 +715,15 @@ public class FFConfig {
         buffer.writeFloat(rainQueueMinChanceMultiplier);
         buffer.writeVarInt(rainPlacementAggregationDistance);
         buffer.writeVarInt(rainPlacementMaxCombinedAmount);
+        buffer.writeVarInt(rainWetnessPersistTicks);
+        buffer.writeVarInt(rainCatchmentRadius);
+        buffer.writeFloat(rainCatchmentMaxBoost);
+        buffer.writeVarInt(rainUpstreamSearchRadius);
+        buffer.writeFloat(rainUpstreamMaxBoost);
+        buffer.writeFloat(rainIntensityDrizzleMultiplier);
+        buffer.writeFloat(rainIntensitySteadyMultiplier);
+        buffer.writeFloat(rainIntensityHeavyMultiplier);
+        buffer.writeFloat(rainIntensityThunderstormMultiplier);
 
         buffer.writeFloat(rainPrecipJungle);
         buffer.writeFloat(rainPrecipSwamp);
@@ -484,6 +732,27 @@ public class FFConfig {
         buffer.writeFloat(rainPrecipPlains);
         buffer.writeFloat(rainPrecipForest);
         buffer.writeFloat(rainPrecipTaiga);
+        buffer.writeBoolean(enableSnowmeltSystem);
+        buffer.writeBoolean(snowmeltDaytimeOnly);
+        buffer.writeBoolean(snowmeltPlacesWater);
+        buffer.writeVarInt(snowmeltChunkRadius);
+        buffer.writeVarInt(snowmeltIntervalTicks);
+        buffer.writeVarInt(snowmeltAttemptsPerChunk);
+        buffer.writeVarInt(snowmeltMaxChunksPerTick);
+        buffer.writeFloat(snowmeltBaseChance);
+        buffer.writeVarInt(snowmeltWaterAmount);
+        buffer.writeVarInt(snowmeltMinSkyLight);
+        buffer.writeFloat(snowmeltMinTemperature);
+        buffer.writeBoolean(enableFloodEvents);
+        buffer.writeVarInt(floodDefaultRadius);
+        buffer.writeVarInt(floodDefaultDurationTicks);
+        buffer.writeVarInt(floodPulseIntervalTicks);
+        buffer.writeVarInt(floodPlacementsPerPulse);
+        buffer.writeVarInt(floodWaterAmountPerPlacement);
+        buffer.writeVarInt(floodShoreSearchRadius);
+        buffer.writeVarInt(floodMaxWaterRise);
+        buffer.writeFloat(floodLowlandBias);
+        buffer.writeFloat(floodRainAmountMultiplier);
         ///////////////////////////////////////////////
     }
 
@@ -557,6 +826,194 @@ public class FFConfig {
         if (extraOceanBiomes == null) extraOceanBiomes = new ObjectOpenHashSet<>();
         if (extraRiverBiomes == null) extraRiverBiomes = new ObjectOpenHashSet<>();
         if (extraBeachBiomes == null) extraBeachBiomes = new ObjectOpenHashSet<>();
+    }
+
+    public void sanitizeRanges() {
+        StringBuilder corrections = new StringBuilder();
+        int oldWaterFlowDistance = waterFlowDistance;
+        int oldLavaFlowDistance = lavaFlowDistance;
+        int oldLavaNetherFlowDistance = lavaNetherFlowDistance;
+        int oldWaterTickDelay = waterTickDelay;
+        int oldLavaTickDelay = lavaTickDelay;
+        int oldLavaNetherTickDelay = lavaNetherTickDelay;
+        int oldRandomTickLevelingDistance = randomTickLevelingDistance;
+        int oldMaxWaterFlowDistance = maxWaterFlowDistance;
+        int oldBfsMaxSearchDistance = bfsMaxSearchDistance;
+        float oldSlopeFindDistanceMultiplier = slopeFindDistanceMultiplier;
+        int oldRiverFlowDistance = riverFlowDistance;
+        int oldOceanFlowDistance = oceanFlowDistance;
+        int oldCanalFlowDistance = canalFlowDistance;
+        long oldAdaptiveSchedulerChunkExpiryMs = adaptiveSchedulerChunkExpiryMs;
+        int oldAdaptiveSchedulerMaxEntries = adaptiveSchedulerMaxEntries;
+        int oldRainChunkRadius = rainChunkRadius;
+        float oldFlowSpeedStrength = flowSpeedStrength;
+        int oldRainGenerateIntervalTicks = rainGenerateIntervalTicks;
+        int oldRainAttemptsPerChunk = rainAttemptsPerChunk;
+        float oldRainBaseGenerateChance = rainBaseGenerateChance;
+        int oldRainBaseWaterAmount = rainBaseWaterAmount;
+        int oldRainMaxChunksPerTick = rainMaxChunksPerTick;
+        long oldRainCacheDurationTicks = rainCacheDurationTicks;
+        int oldRainMaxSurfaceSearchDepth = rainMaxSurfaceSearchDepth;
+        int oldRainMaxWaterStackHeight = rainMaxWaterStackHeight;
+        int oldRainMultithreadThreshold = rainMultithreadThreshold;
+        int oldRainMaxThreads = rainMaxThreads;
+        long oldRainMultithreadTimeoutMs = rainMultithreadTimeoutMs;
+        int oldRainPlacementQueueSize = rainPlacementQueueSize;
+        float oldRainQueueSoftCapRatio = rainQueueSoftCapRatio;
+        float oldRainQueueMinChanceMultiplier = rainQueueMinChanceMultiplier;
+        int oldRainPlacementAggregationDistance = rainPlacementAggregationDistance;
+        int oldRainPlacementMaxCombinedAmount = rainPlacementMaxCombinedAmount;
+        int oldRainWetnessPersistTicks = rainWetnessPersistTicks;
+        int oldRainCatchmentRadius = rainCatchmentRadius;
+        float oldRainCatchmentMaxBoost = rainCatchmentMaxBoost;
+        int oldRainUpstreamSearchRadius = rainUpstreamSearchRadius;
+        float oldRainUpstreamMaxBoost = rainUpstreamMaxBoost;
+        float oldRainIntensityDrizzleMultiplier = rainIntensityDrizzleMultiplier;
+        float oldRainIntensitySteadyMultiplier = rainIntensitySteadyMultiplier;
+        float oldRainIntensityHeavyMultiplier = rainIntensityHeavyMultiplier;
+        float oldRainIntensityThunderstormMultiplier = rainIntensityThunderstormMultiplier;
+        int oldSnowmeltChunkRadius = snowmeltChunkRadius;
+        int oldSnowmeltIntervalTicks = snowmeltIntervalTicks;
+        int oldSnowmeltAttemptsPerChunk = snowmeltAttemptsPerChunk;
+        int oldSnowmeltMaxChunksPerTick = snowmeltMaxChunksPerTick;
+        float oldSnowmeltBaseChance = snowmeltBaseChance;
+        int oldSnowmeltWaterAmount = snowmeltWaterAmount;
+        int oldSnowmeltMinSkyLight = snowmeltMinSkyLight;
+        float oldSnowmeltMinTemperature = snowmeltMinTemperature;
+
+        waterFlowDistance = Math.max(1, waterFlowDistance);
+        lavaFlowDistance = Math.max(1, lavaFlowDistance);
+        lavaNetherFlowDistance = Math.max(1, lavaNetherFlowDistance);
+        waterTickDelay = Math.max(1, waterTickDelay);
+        lavaTickDelay = Math.max(1, lavaTickDelay);
+        lavaNetherTickDelay = Math.max(1, lavaNetherTickDelay);
+        randomTickLevelingDistance = Math.max(0, randomTickLevelingDistance);
+
+        maxWaterFlowDistance = Math.max(waterFlowDistance, maxWaterFlowDistance);
+        bfsMaxSearchDistance = Math.max(waterFlowDistance, Math.max(1, bfsMaxSearchDistance));
+        slopeFindDistanceMultiplier = Math.max(0.0f, slopeFindDistanceMultiplier);
+        riverFlowDistance = Math.max(1, riverFlowDistance);
+        oceanFlowDistance = Math.max(1, oceanFlowDistance);
+        canalFlowDistance = Math.max(1, canalFlowDistance);
+
+        adaptiveSchedulerChunkExpiryMs = Math.max(1L, adaptiveSchedulerChunkExpiryMs);
+        adaptiveSchedulerMaxEntries = Math.max(1, adaptiveSchedulerMaxEntries);
+
+        rainChunkRadius = Math.max(0, rainChunkRadius);
+        flowSpeedStrength = Math.max(0.0f, Math.min(2.0f, flowSpeedStrength));
+        rainGenerateIntervalTicks = Math.max(1, rainGenerateIntervalTicks);
+        rainAttemptsPerChunk = Math.max(0, rainAttemptsPerChunk);
+        rainBaseGenerateChance = Math.max(0.0f, Math.min(1.0f, rainBaseGenerateChance));
+        rainBaseWaterAmount = Math.max(1, rainBaseWaterAmount);
+        rainMaxChunksPerTick = Math.max(0, rainMaxChunksPerTick);
+        rainCacheDurationTicks = Math.max(1L, rainCacheDurationTicks);
+        rainMaxSurfaceSearchDepth = Math.max(0, rainMaxSurfaceSearchDepth);
+        rainMaxWaterStackHeight = Math.max(0, rainMaxWaterStackHeight);
+        rainMultithreadThreshold = Math.max(1, rainMultithreadThreshold);
+        rainMaxThreads = Math.max(0, rainMaxThreads);
+        rainMultithreadTimeoutMs = Math.max(1, rainMultithreadTimeoutMs);
+        rainPlacementQueueSize = Math.max(1, rainPlacementQueueSize);
+        rainQueueSoftCapRatio = Math.max(0.0f, Math.min(1.0f, rainQueueSoftCapRatio));
+        rainQueueMinChanceMultiplier = Math.max(0.0f, Math.min(1.0f, rainQueueMinChanceMultiplier));
+        rainPlacementAggregationDistance = Math.max(0, rainPlacementAggregationDistance);
+        rainPlacementMaxCombinedAmount = Math.max(1, rainPlacementMaxCombinedAmount);
+        rainWetnessPersistTicks = Math.max(1, rainWetnessPersistTicks);
+        rainCatchmentRadius = Math.max(0, rainCatchmentRadius);
+        rainCatchmentMaxBoost = Math.max(1.0f, rainCatchmentMaxBoost);
+        rainUpstreamSearchRadius = Math.max(0, rainUpstreamSearchRadius);
+        rainUpstreamMaxBoost = Math.max(1.0f, rainUpstreamMaxBoost);
+        rainIntensityDrizzleMultiplier = Math.max(0.1f, rainIntensityDrizzleMultiplier);
+        rainIntensitySteadyMultiplier = Math.max(0.1f, rainIntensitySteadyMultiplier);
+        rainIntensityHeavyMultiplier = Math.max(0.1f, rainIntensityHeavyMultiplier);
+        rainIntensityThunderstormMultiplier = Math.max(0.1f, rainIntensityThunderstormMultiplier);
+        snowmeltChunkRadius = Math.max(0, snowmeltChunkRadius);
+        snowmeltIntervalTicks = Math.max(1, snowmeltIntervalTicks);
+        snowmeltAttemptsPerChunk = Math.max(0, snowmeltAttemptsPerChunk);
+        snowmeltMaxChunksPerTick = Math.max(0, snowmeltMaxChunksPerTick);
+        snowmeltBaseChance = Math.max(0.0f, Math.min(1.0f, snowmeltBaseChance));
+        snowmeltWaterAmount = Math.max(1, Math.min(8, snowmeltWaterAmount));
+        snowmeltMinSkyLight = Math.max(0, Math.min(15, snowmeltMinSkyLight));
+        snowmeltMinTemperature = Math.max(-1.0f, Math.min(4.0f, snowmeltMinTemperature));
+
+        appendCorrection(corrections, "waterFlowDistance", oldWaterFlowDistance, waterFlowDistance);
+        appendCorrection(corrections, "lavaFlowDistance", oldLavaFlowDistance, lavaFlowDistance);
+        appendCorrection(corrections, "lavaNetherFlowDistance", oldLavaNetherFlowDistance, lavaNetherFlowDistance);
+        appendCorrection(corrections, "waterTickDelay", oldWaterTickDelay, waterTickDelay);
+        appendCorrection(corrections, "lavaTickDelay", oldLavaTickDelay, lavaTickDelay);
+        appendCorrection(corrections, "lavaNetherTickDelay", oldLavaNetherTickDelay, lavaNetherTickDelay);
+        appendCorrection(corrections, "randomTickLevelingDistance", oldRandomTickLevelingDistance, randomTickLevelingDistance);
+        appendCorrection(corrections, "maxWaterFlowDistance", oldMaxWaterFlowDistance, maxWaterFlowDistance);
+        appendCorrection(corrections, "bfsMaxSearchDistance", oldBfsMaxSearchDistance, bfsMaxSearchDistance);
+        appendCorrection(corrections, "slopeFindDistanceMultiplier", oldSlopeFindDistanceMultiplier, slopeFindDistanceMultiplier);
+        appendCorrection(corrections, "riverFlowDistance", oldRiverFlowDistance, riverFlowDistance);
+        appendCorrection(corrections, "oceanFlowDistance", oldOceanFlowDistance, oceanFlowDistance);
+        appendCorrection(corrections, "canalFlowDistance", oldCanalFlowDistance, canalFlowDistance);
+        appendCorrection(corrections, "adaptiveSchedulerChunkExpiryMs", oldAdaptiveSchedulerChunkExpiryMs, adaptiveSchedulerChunkExpiryMs);
+        appendCorrection(corrections, "adaptiveSchedulerMaxEntries", oldAdaptiveSchedulerMaxEntries, adaptiveSchedulerMaxEntries);
+        appendCorrection(corrections, "flowSpeedStrength", oldFlowSpeedStrength, flowSpeedStrength);
+        appendCorrection(corrections, "rainChunkRadius", oldRainChunkRadius, rainChunkRadius);
+        appendCorrection(corrections, "rainGenerateIntervalTicks", oldRainGenerateIntervalTicks, rainGenerateIntervalTicks);
+        appendCorrection(corrections, "rainAttemptsPerChunk", oldRainAttemptsPerChunk, rainAttemptsPerChunk);
+        appendCorrection(corrections, "rainBaseGenerateChance", oldRainBaseGenerateChance, rainBaseGenerateChance);
+        appendCorrection(corrections, "rainBaseWaterAmount", oldRainBaseWaterAmount, rainBaseWaterAmount);
+        appendCorrection(corrections, "rainMaxChunksPerTick", oldRainMaxChunksPerTick, rainMaxChunksPerTick);
+        appendCorrection(corrections, "rainCacheDurationTicks", oldRainCacheDurationTicks, rainCacheDurationTicks);
+        appendCorrection(corrections, "rainMaxSurfaceSearchDepth", oldRainMaxSurfaceSearchDepth, rainMaxSurfaceSearchDepth);
+        appendCorrection(corrections, "rainMaxWaterStackHeight", oldRainMaxWaterStackHeight, rainMaxWaterStackHeight);
+        appendCorrection(corrections, "rainMultithreadThreshold", oldRainMultithreadThreshold, rainMultithreadThreshold);
+        appendCorrection(corrections, "rainMaxThreads", oldRainMaxThreads, rainMaxThreads);
+        appendCorrection(corrections, "rainMultithreadTimeoutMs", oldRainMultithreadTimeoutMs, rainMultithreadTimeoutMs);
+        appendCorrection(corrections, "rainPlacementQueueSize", oldRainPlacementQueueSize, rainPlacementQueueSize);
+        appendCorrection(corrections, "rainQueueSoftCapRatio", oldRainQueueSoftCapRatio, rainQueueSoftCapRatio);
+        appendCorrection(corrections, "rainQueueMinChanceMultiplier", oldRainQueueMinChanceMultiplier, rainQueueMinChanceMultiplier);
+        appendCorrection(corrections, "rainPlacementAggregationDistance", oldRainPlacementAggregationDistance, rainPlacementAggregationDistance);
+        appendCorrection(corrections, "rainPlacementMaxCombinedAmount", oldRainPlacementMaxCombinedAmount, rainPlacementMaxCombinedAmount);
+        appendCorrection(corrections, "rainWetnessPersistTicks", oldRainWetnessPersistTicks, rainWetnessPersistTicks);
+        appendCorrection(corrections, "rainCatchmentRadius", oldRainCatchmentRadius, rainCatchmentRadius);
+        appendCorrection(corrections, "rainCatchmentMaxBoost", oldRainCatchmentMaxBoost, rainCatchmentMaxBoost);
+        appendCorrection(corrections, "rainUpstreamSearchRadius", oldRainUpstreamSearchRadius, rainUpstreamSearchRadius);
+        appendCorrection(corrections, "rainUpstreamMaxBoost", oldRainUpstreamMaxBoost, rainUpstreamMaxBoost);
+        appendCorrection(corrections, "rainIntensityDrizzleMultiplier", oldRainIntensityDrizzleMultiplier, rainIntensityDrizzleMultiplier);
+        appendCorrection(corrections, "rainIntensitySteadyMultiplier", oldRainIntensitySteadyMultiplier, rainIntensitySteadyMultiplier);
+        appendCorrection(corrections, "rainIntensityHeavyMultiplier", oldRainIntensityHeavyMultiplier, rainIntensityHeavyMultiplier);
+        appendCorrection(corrections, "rainIntensityThunderstormMultiplier", oldRainIntensityThunderstormMultiplier, rainIntensityThunderstormMultiplier);
+        appendCorrection(corrections, "snowmeltChunkRadius", oldSnowmeltChunkRadius, snowmeltChunkRadius);
+        appendCorrection(corrections, "snowmeltIntervalTicks", oldSnowmeltIntervalTicks, snowmeltIntervalTicks);
+        appendCorrection(corrections, "snowmeltAttemptsPerChunk", oldSnowmeltAttemptsPerChunk, snowmeltAttemptsPerChunk);
+        appendCorrection(corrections, "snowmeltMaxChunksPerTick", oldSnowmeltMaxChunksPerTick, snowmeltMaxChunksPerTick);
+        appendCorrection(corrections, "snowmeltBaseChance", oldSnowmeltBaseChance, snowmeltBaseChance);
+        appendCorrection(corrections, "snowmeltWaterAmount", oldSnowmeltWaterAmount, snowmeltWaterAmount);
+        appendCorrection(corrections, "snowmeltMinSkyLight", oldSnowmeltMinSkyLight, snowmeltMinSkyLight);
+        appendCorrection(corrections, "snowmeltMinTemperature", oldSnowmeltMinTemperature, snowmeltMinTemperature);
+
+        if (!corrections.isEmpty()) {
+            FlowingFluids.warn("Adjusted invalid flowing_fluids config values: " + corrections);
+        }
+    }
+
+    private void appendCorrection(StringBuilder corrections, String key, int before, int after) {
+        if (before != after) {
+            appendCorrection(corrections, key, Integer.toString(before), Integer.toString(after));
+        }
+    }
+
+    private void appendCorrection(StringBuilder corrections, String key, long before, long after) {
+        if (before != after) {
+            appendCorrection(corrections, key, Long.toString(before), Long.toString(after));
+        }
+    }
+
+    private void appendCorrection(StringBuilder corrections, String key, float before, float after) {
+        if (Float.compare(before, after) != 0) {
+            appendCorrection(corrections, key, Float.toString(before), Float.toString(after));
+        }
+    }
+
+    private void appendCorrection(StringBuilder corrections, String key, String before, String after) {
+        if (corrections.length() > 0) {
+            corrections.append(", ");
+        }
+        corrections.append(key).append(": ").append(before).append(" -> ").append(after);
     }
 
 //    public enum LevelingStrength {

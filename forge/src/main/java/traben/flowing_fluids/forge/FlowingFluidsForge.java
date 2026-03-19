@@ -3,13 +3,16 @@ package traben.flowing_fluids.forge;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.level.ChunkEvent;
 import net.minecraftforge.event.level.LevelEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.FlowingFluidsTick;
 import traben.flowing_fluids.ParallelFluidTickManager;
 import traben.flowing_fluids.config.FFCommands;
+import traben.flowing_fluids.flood.FloodEventSystem;
 import traben.flowing_fluids.rain.RainWaterSystem;
 
 
@@ -31,14 +34,32 @@ public final class FlowingFluidsForge {
     @SubscribeEvent
     public static void onLevelTick(TickEvent.LevelTickEvent event) {
         if (event.phase == TickEvent.Phase.END && event.level instanceof net.minecraft.server.level.ServerLevel level) {
+            FloodEventSystem.onLevelTick(level);
             RainWaterSystem.onLevelTick(level);
+            FlowingFluidsTick.onLevelTick(level);
         }
     }
 
     @SubscribeEvent
     public static void onLevelUnload(LevelEvent.Unload event) {
         if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            FloodEventSystem.onLevelUnload(level);
             RainWaterSystem.onLevelUnload(level);
+            FlowingFluidsTick.onLevelUnload(level);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onChunkLoad(ChunkEvent.Load event) {
+        if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            FlowingFluidsTick.onChunkLoad(level, event.getChunk().getPos());
+        }
+    }
+
+    @SubscribeEvent
+    public static void onChunkUnload(ChunkEvent.Unload event) {
+        if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            FlowingFluidsTick.onChunkUnload(level, event.getChunk().getPos());
         }
     }
 
@@ -46,10 +67,12 @@ public final class FlowingFluidsForge {
     public static void onServerStopping(ServerStoppingEvent event) {
         FlowingFluids.info("Server stopping - cleaning up fluid system caches...");
         ParallelFluidTickManager.shutdown();
+        traben.flowing_fluids.ParallelFluidEqualizer.shutdown();
         traben.flowing_fluids.EnhancedFluidBFS.shutdown();
         traben.flowing_fluids.AdaptiveTickScheduler.clearAll();
         traben.flowing_fluids.FluidSpatialGrid.clearAll();
         traben.flowing_fluids.ChunkLocalSlopeCache.clearAll();
         traben.flowing_fluids.FluidTickBuffer.clearBuffer();
+        traben.flowing_fluids.FluidActivityTracker.clearAll();
     }
 }

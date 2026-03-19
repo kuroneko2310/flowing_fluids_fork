@@ -1,9 +1,10 @@
-package traben.flowing_fluids.mixin.sodium;
+package traben.flowing_fluids.fabric.mixin.sodium;
 
 #if MC == MC_20_1
 
 import me.jellysquid.mods.sodium.client.model.color.ColorProvider;
 import me.jellysquid.mods.sodium.client.render.chunk.compile.pipeline.FluidRenderer;
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
@@ -20,13 +21,13 @@ import java.util.Arrays;
 @Mixin(FluidRenderer.class)
 public abstract class MixinFluidRenderer2 {
 
-    @ModifyVariable(
+    @ModifyExpressionValue(
             method = "render",
-            at = @At(value = "INVOKE_ASSIGN",
+            at = @At(value = "INVOKE",
                     target = "Lnet/minecraft/world/level/material/FluidState;getFlow(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/Vec3;",
-                    shift = At.Shift.AFTER)
-            , ordinal = 0
-            , require = 0
+                    remap = true),
+            remap = false,
+            require = 0
     )
     private Vec3 ff$alterFlowDir(final Vec3 value) {
         if (FlowingFluids.config.enableMod
@@ -43,6 +44,7 @@ public abstract class MixinFluidRenderer2 {
 
     @ModifyVariable(method = "render", at = @At("HEAD"),
             ordinal = 2,
+            remap = false,
             require = 0)
     private ColorProvider<FluidState> ff$alterColor(final ColorProvider<FluidState> value) {
         if (FlowingFluids.config.enableMod && FlowingFluids.config.debugWaterLevelColours) {
@@ -52,8 +54,6 @@ public abstract class MixinFluidRenderer2 {
     }
 }
 #else
-
-/// difference is still mostly identical but seems 1.20.1 sodium won't get the 0.6 update so just making separate mixin down here
 
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import net.caffeinemc.mods.sodium.client.model.color.ColorProvider;
@@ -74,8 +74,9 @@ import java.util.Arrays;
 @Mixin(DefaultFluidRenderer.class)
 public abstract class MixinFluidRenderer2 {
 
-    @ModifyExpressionValue(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/material/FluidState;getFlow(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/Vec3;")
-            , require = 0)
+    @ModifyExpressionValue(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/material/FluidState;getFlow(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/Vec3;", remap = true),
+            remap = false,
+            require = 0)
     private Vec3 ff$alterFlowDir(final Vec3 original) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.hideFlowingTexture) {
@@ -89,8 +90,9 @@ public abstract class MixinFluidRenderer2 {
             -> Arrays.fill(ints, FFConfig.waterLevelColours[fluidState.getAmount() - 1]);
 
 
-    @ModifyVariable(method = "render", at = @At("HEAD"), ordinal = 0, argsOnly = true
-            , require = 0)
+    @ModifyVariable(method = "render", at = @At("HEAD"), ordinal = 0, argsOnly = true,
+            remap = false,
+            require = 0)
     private ColorProvider<FluidState> ff$alterColor(final ColorProvider<FluidState> value) {
         if (FlowingFluids.config.enableMod && FlowingFluids.config.debugWaterLevelColours) {
             return ff$waterLevelColours;

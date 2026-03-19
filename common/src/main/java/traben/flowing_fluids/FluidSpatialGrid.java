@@ -5,7 +5,11 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
 import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.BitSet;
@@ -77,6 +81,11 @@ public class FluidSpatialGrid {
         storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
         ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
         grid.setFluidAt(pos, hasFluid, amount);
+        if (!grid.isEmpty()) {
+            AdaptiveTickScheduler.autoDetectAreaType(level, chunkPos, grid.getFluidCount());
+        } else {
+            AdaptiveTickScheduler.setAreaType(level, chunkPos, AdaptiveTickScheduler.AreaType.NORMAL);
+        }
         if (grid.isEmpty()) {
             storage.chunkGrids.remove(chunkPos, grid);
             storage.chunkAccessTimes.remove(chunkPos);
@@ -222,30 +231,40 @@ public class FluidSpatialGrid {
 
         int minX = chunkPos.getMinBlockX();
         int minZ = chunkPos.getMinBlockZ();
-        int maxX = chunkPos.getMaxBlockX();
-        int maxZ = chunkPos.getMaxBlockZ();
         int minY = level.getMinBuildHeight();
-        int maxY = level.getMaxBuildHeight();
 
         BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
+        LevelChunk chunk = level.getChunk(chunkPos.x, chunkPos.z);
+        LevelChunkSection[] sections = chunk.getSections();
 
-        // Scan all blocks in the chunk with a reusable mutable position to avoid allocations
-        for (int x = minX; x <= maxX; x++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                for (int y = minY; y < maxY; y++) {
-                    scanPos.set(x, y, z);
-                    net.minecraft.world.level.material.FluidState fluidState = level.getFluidState(scanPos);
+        // Scan only non-empty sections to reduce work on chunk load.
+        for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+            LevelChunkSection section = sections[sectionIndex];
+            if (section == null || section.hasOnlyAir()) {
+                continue;
+            }
 
-                    if (!fluidState.isEmpty()) {
-                        // Convert BlockState amount (0-8) to internal (0-255)
-                        int blockStateAmount = fluidState.getAmount();
-                        int internalAmount = FluidAmountConverter.toInternal(blockStateAmount);
+            int baseY = minY + (sectionIndex * 16);
+            for (int localY = 0; localY < 16; localY++) {
+                int worldY = baseY + localY;
+                for (int localZ = 0; localZ < 16; localZ++) {
+                    int worldZ = minZ + localZ;
+                    for (int localX = 0; localX < 16; localX++) {
+                        BlockState state = section.getBlockState(localX, localY, localZ);
+                        FluidState fluidState = state.getFluidState();
+                        if (fluidState.isEmpty()) {
+                            continue;
+                        }
 
+                        scanPos.set(minX + localX, worldY, worldZ);
+                        int internalAmount = FluidAmountConverter.toInternal(fluidState.getAmount());
                         grid.setFluidAt(scanPos, true, internalAmount);
                     }
                 }
             }
         }
+
+        AdaptiveTickScheduler.autoDetectAreaType(level, chunkPos, grid.getFluidCount());
 
         if (grid.isEmpty()) {
             storage.chunkGrids.remove(chunkPos, grid);
@@ -362,6 +381,8 @@ public class FluidSpatialGrid {
         // Layer 1: Macro cell data
         private final BitSet macroFluidPresence = new BitSet(MACRO_GRID_SIZE);
         private final float[] macroAverageLevels = new float[MACRO_GRID_SIZE];
+        private final int[] macroFluidCounts = new int[MACRO_GRID_SIZE];
+        private final int[] macroFluidTotals = new int[MACRO_GRID_SIZE];
         private final Direction[] macroGradients = new Direction[MACRO_GRID_SIZE];
 
         // Layer 2: Fine-grained fluid presence and amounts (0-255 internal precision)
@@ -371,9 +392,6 @@ public class FluidSpatialGrid {
         // Layer 3: Connected component IDs - LAZILY INITIALIZED to save ~400KB per chunk
         // Most chunks never need component tracking, so we only allocate when first accessed
         private int[] componentIds = null;
-
-        // FIXED: Track number of differential updates per macro cell for accuracy maintenance
-        private final int[] macroUpdateCounts = new int[MACRO_GRID_SIZE];
 
         /**
          * Converts block position to fine grid index.
@@ -485,54 +503,34 @@ public class FluidSpatialGrid {
         }
 
         /**
-         * Updates macro cell statistics using differential update (OPTIMIZED).
-         * Instead of scanning all 4096 blocks, updates based on the change.
-         * FIXED: Periodically performs full scan to maintain accuracy.
+         * Updates macro cell statistics using exact differential updates.
+         * Keeps per-cell fluid count and total amount for stable averages.
          */
         private void updateMacroCellDifferential(BlockPos pos, int oldAmount, int newAmount,
                                                   boolean wasFluid, boolean isFluid) {
             int macroIndex = posToMacroIndex(pos);
+            int count = macroFluidCounts[macroIndex];
+            int total = macroFluidTotals[macroIndex];
 
-            // Get current macro cell state
-            float currentAvg = macroAverageLevels[macroIndex];
-            boolean hadFluid = macroFluidPresence.get(macroIndex);
+            if (wasFluid) {
+                count--;
+                total -= oldAmount;
+            }
+            if (isFluid) {
+                count++;
+                total += newAmount;
+            }
 
-            // If this is the first update or macro cell is empty, do full scan
-            if (!hadFluid && isFluid) {
+            // Guard against legacy drift; rescan this macro cell if counters become invalid.
+            if (count < 0 || total < 0) {
                 updateMacroCellFull(pos);
-                macroUpdateCounts[macroIndex] = 0;
                 return;
             }
 
-            // FIXED: Increment update counter and periodically do full scan to maintain accuracy
-            macroUpdateCounts[macroIndex]++;
-            if (macroUpdateCounts[macroIndex] > 100) { // Full scan every 100 updates
-                updateMacroCellFull(pos);
-                macroUpdateCounts[macroIndex] = 0;
-                return;
-            }
-
-            // Calculate fluid count change
-            int countChange = 0;
-            if (!wasFluid && isFluid) countChange = 1;
-            if (wasFluid && !isFluid) countChange = -1;
-
-            // Estimate new count (approximation for performance)
-            int estimatedCount = Math.max(1, (int)(currentAvg > 0 ? 1 : 0) + countChange);
-
-            // Calculate new total
-            float oldTotal = currentAvg * estimatedCount;
-            float newTotal = oldTotal - oldAmount + newAmount;
-
-            // Update macro cell
-            boolean stillHasFluid = (isFluid || estimatedCount > 1);
-            macroFluidPresence.set(macroIndex, stillHasFluid);
-
-            if (stillHasFluid && estimatedCount > 0) {
-                macroAverageLevels[macroIndex] = newTotal / estimatedCount;
-            } else {
-                macroAverageLevels[macroIndex] = 0.0f;
-            }
+            macroFluidCounts[macroIndex] = count;
+            macroFluidTotals[macroIndex] = total;
+            macroFluidPresence.set(macroIndex, count > 0);
+            macroAverageLevels[macroIndex] = count > 0 ? (float) total / count : 0.0f;
         }
 
         /**
@@ -570,6 +568,8 @@ public class FluidSpatialGrid {
             }
 
             // Update macro cell data
+            macroFluidCounts[macroIndex] = fluidCount;
+            macroFluidTotals[macroIndex] = totalAmount;
             macroFluidPresence.set(macroIndex, fluidCount > 0);
             macroAverageLevels[macroIndex] = fluidCount > 0 ? (float) totalAmount / fluidCount : 0.0f;
         }

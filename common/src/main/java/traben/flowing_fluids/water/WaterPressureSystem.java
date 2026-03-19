@@ -3,6 +3,7 @@ package traben.flowing_fluids.water;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
@@ -38,6 +39,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class WaterPressureSystem {
     private static final float WARNING_RATIO = 0.75f;
     private static final int WATER_DEPTH_SAMPLE = 10;
+    private static final float LATERAL_PRESSURE_PER_SIDE = 0.12f;
+    private static final float NEIGHBOR_LEVEL_PRESSURE_SCALE = 0.05f;
     // FIXED: Use ConcurrentHashMap for thread safety
     private static final Map<ResourceKey<Level>, LevelState> LEVEL_STATE = new ConcurrentHashMap<>();
 
@@ -57,6 +60,7 @@ public final class WaterPressureSystem {
         if (removed != null) {
             removed.data.clear();
             removed.positions.clear();
+            removed.positionIndex.clear();
         }
     }
 
@@ -145,11 +149,10 @@ public final class WaterPressureSystem {
                 continue;
             }
 
-            boolean adjacentWater = hasAdjacentWater(level, pos);
-            int depth = calculateWaterDepthAbove(level, pos);
+            PressureSample pressureSample = samplePressure(level, pos);
 
-            if (adjacentWater || depth > 0) {
-                float increase = calculatePressureIncrease(blockState, block, depth);
+            if (pressureSample.hasWaterContact()) {
+                float increase = calculatePressureIncrease(blockState, block, pressureSample);
                 data.pressure += increase;
                 data.lastTick = currentTick;
 
@@ -246,7 +249,7 @@ public final class WaterPressureSystem {
             }
         }
 
-        if (waterCheck && !hasAdjacentWater(level, pos)) {
+        if (waterCheck && !samplePressure(level, pos).hasWaterContact()) {
             return;
         }
 
@@ -262,6 +265,7 @@ public final class WaterPressureSystem {
         }
 
         state.data.put(posLong, new WaterPressureData(currentTick));
+        state.positionIndex.put(posLong, state.positions.size());
         state.positions.add(posLong);
     }
 
@@ -291,23 +295,48 @@ public final class WaterPressureSystem {
 
     private static void removeEntry(LevelState state, long posLong) {
         state.data.remove(posLong);
-        int index = state.positions.indexOf(posLong);
-        if (index >= 0) {
-            state.positions.removeLong(index);
-            if (state.cursor > index) {
-                state.cursor--;
-            }
+        int index = state.positionIndex.remove(posLong);
+        if (index < 0) {
+            return;
+        }
+
+        int lastIndex = state.positions.size() - 1;
+        if (lastIndex < 0) {
+            state.cursor = 0;
+            return;
+        }
+
+        long lastPos = state.positions.getLong(lastIndex);
+        if (index != lastIndex) {
+            state.positions.set(index, lastPos);
+            state.positionIndex.put(lastPos, index);
+        }
+
+        state.positions.removeLong(lastIndex);
+        if (state.cursor > index) {
+            state.cursor--;
+        }
+        if (state.positions.isEmpty()) {
+            state.cursor = 0;
+        } else if (state.cursor >= state.positions.size()) {
+            state.cursor = 0;
         }
     }
 
-    private static boolean hasAdjacentWater(Level level, BlockPos pos) {
+    private static PressureSample samplePressure(Level level, BlockPos pos) {
+        int adjacentWater = 0;
+        int adjacentLevelSum = 0;
+        BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
         for (Direction direction : Direction.values()) {
-            FluidState fluidState = level.getFluidState(pos.relative(direction));
+            neighborPos.setWithOffset(pos, direction);
+            FluidState fluidState = level.getFluidState(neighborPos);
             if (fluidState.is(FluidTags.WATER)) {
-                return true;
+                adjacentWater++;
+                adjacentLevelSum += fluidState.getAmount();
             }
         }
-        return false;
+        int depth = calculateWaterDepthAbove(level, pos);
+        return new PressureSample(adjacentWater, adjacentLevelSum, depth);
     }
 
     private static int calculateWaterDepthAbove(Level level, BlockPos pos) {
@@ -325,10 +354,13 @@ public final class WaterPressureSystem {
         return depth;
     }
 
-    private static float calculatePressureIncrease(BlockState state, Block block, int waterDepth) {
+    private static float calculatePressureIncrease(BlockState state, Block block, PressureSample sample) {
         FFConfig config = FlowingFluids.config;
         float baseRate = config.waterPressureAccumulationRate;
-        float depthMultiplier = 1.0f + (waterDepth * 0.25f);
+        float depthMultiplier = 1.0f + (sample.waterDepth() * 0.25f);
+        float lateralMultiplier = 1.0f + Math.min(1.5f, sample.adjacentWaterCount() * LATERAL_PRESSURE_PER_SIDE);
+        float neighborLevelMultiplier = 1.0f + (Math.max(0.0f, sample.averageNeighborLevel() - 1.0f)
+                * NEIGHBOR_LEVEL_PRESSURE_SCALE);
         float openMultiplier = 1.0f;
 
         if (state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN)) {
@@ -338,7 +370,7 @@ public final class WaterPressureSystem {
             }
         }
 
-        return baseRate * depthMultiplier * openMultiplier;
+        return baseRate * depthMultiplier * lateralMultiplier * neighborLevelMultiplier * openMultiplier;
     }
 
     private static float getBreakThreshold(BlockState state, Block block, FFConfig config) {
@@ -384,9 +416,14 @@ public final class WaterPressureSystem {
     private static final class LevelState {
         final Long2ObjectOpenHashMap<WaterPressureData> data = new Long2ObjectOpenHashMap<>();
         final LongArrayList positions = new LongArrayList();
+        final Long2IntOpenHashMap positionIndex = new Long2IntOpenHashMap();
         int cursor = 0;
         int lastScanTick = -1;
         int lastCleanupTick = -1;
+
+        private LevelState() {
+            positionIndex.defaultReturnValue(-1);
+        }
     }
 
     private static final class WaterPressureData {
@@ -398,6 +435,16 @@ public final class WaterPressureSystem {
             this.pressure = 0.0f;
             this.lastTick = currentTick;
             this.warned = false;
+        }
+    }
+
+    private record PressureSample(int adjacentWaterCount, int adjacentLevelSum, int waterDepth) {
+        private boolean hasWaterContact() {
+            return adjacentWaterCount > 0 || waterDepth > 0;
+        }
+
+        private float averageNeighborLevel() {
+            return adjacentWaterCount <= 0 ? 0.0f : (float) adjacentLevelSum / adjacentWaterCount;
         }
     }
 }

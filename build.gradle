@@ -42,6 +42,22 @@ private void setupPreProcess(def index){
 }
 setupPreProcess(rootProject.mc_build)
 
+def enabledPlatformSet = ((rootProject.enabled_platforms ?: "") as String)
+        .split(",")
+        .collect { it.trim().toLowerCase() }
+        .findAll { !it.isEmpty() }
+        .toSet()
+
+rootProject.ext.platformFlags = [
+        enabledPlatforms : enabledPlatformSet,
+        fabricEnabled    : enabledPlatformSet.contains("fabric"),
+        forgeEnabled     : enabledPlatformSet.contains("forge"),
+        neoForgeEnabled  : enabledPlatformSet.contains("neoforge"),
+        forgeOnlyProfile : enabledPlatformSet.contains("forge")
+                && !enabledPlatformSet.contains("fabric")
+                && !enabledPlatformSet.contains("neoforge")
+]
+
 architectury {
     minecraft = project.minecraft_version
 }
@@ -75,7 +91,9 @@ allprojects {
 
     tasks.withType(JavaCompile).configureEach {
         it.options.release = rootProject.java_version as int
-        it.options.compilerArgs += ["-Xplugin:Manifold"]
+        if (!it.name.toLowerCase(Locale.ROOT).contains("test")) {
+            it.options.compilerArgs += ["-Xplugin:Manifold"]
+        }
     }
 }
 
@@ -128,6 +146,7 @@ subprojects {
 
         //annotationProcessor 'systems.manifold:manifold-preprocessor:2023.1.17'
         annotationProcessor 'systems.manifold:manifold-preprocessor:2025.1.16'
+        testAnnotationProcessor 'systems.manifold:manifold-preprocessor:2025.1.16'
     }
 
     processResources {

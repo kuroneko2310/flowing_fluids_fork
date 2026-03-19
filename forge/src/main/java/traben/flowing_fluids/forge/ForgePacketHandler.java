@@ -90,9 +90,10 @@ public class ForgePacketHandler {
         }
 #if MC > MC_20_1
         public static void messageConsumer(FFConfigPacket packet, CustomPayloadEvent.Context ctx) {
-        // Handle message
+            // Handle message
             if (packet.is_valid) {
                 FlowingFluids.config = packet;
+                FlowingFluids.applyConfigRuntime();
                 FlowingFluids.info("- Server Config data received and synced");
             } else {
                 FlowingFluids.error("- Server Config data received and failed to sync");
@@ -105,6 +106,7 @@ public class ForgePacketHandler {
             // Handle message
             if (is_valid) {
                 FlowingFluids.config = this;
+                FlowingFluids.applyConfigRuntime();
                 FlowingFluids.info("- Server Config data received and synced");
             } else {
                 FlowingFluids.error("- Server Config data received and failed to sync");

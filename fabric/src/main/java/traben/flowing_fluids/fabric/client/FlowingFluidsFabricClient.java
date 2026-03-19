@@ -23,6 +23,7 @@ public final class FlowingFluidsFabricClient implements ClientModInitializer {
                                 }
                                 try {
                                     FlowingFluids.config = data.delegate;
+                                    FlowingFluids.applyConfigRuntime();
                                     FlowingFluids.info("- Server Config data received and synced");
                                 } catch (Exception e) {
                                     FlowingFluids.error("- Server Config data received and failed to sync");
@@ -37,6 +38,7 @@ public final class FlowingFluidsFabricClient implements ClientModInitializer {
 
                                 try {
                                     FlowingFluids.config = new FFConfig(buf);
+                                    FlowingFluids.applyConfigRuntime();
                                     FlowingFluids.info("- Server Config data received and synced");
                                 } catch (Exception e) {
                                     FlowingFluids.error("- Server Config data received and failed to sync");

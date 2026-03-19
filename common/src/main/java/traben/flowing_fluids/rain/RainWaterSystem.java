@@ -5,33 +5,39 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.TagKey;
+import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.Fluids;
 import org.slf4j.Logger;
+import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.api.FlowingFluidsAPI;
+import traben.flowing_fluids.flood.FloodEventSystem;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -48,14 +54,32 @@ public final class RainWaterSystem {
     private static final ConcurrentHashMap<ResourceKey<Level>, Long> lastCacheMaintenanceTick = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ChunkCacheKey, ChunkBiomeCache> chunkCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Biome>, Float> PRECIP_MUL = new ConcurrentHashMap<>();
+    private static final RainWetnessCache WETNESS_CACHE = new RainWetnessCache();
 
     private static final ConcurrentLinkedQueue<RainPlacementTask> placementQueue = new ConcurrentLinkedQueue<>();
     private static final AtomicInteger placementQueueSize = new AtomicInteger(0);
 
     private static final LongOpenHashSet reusableChunkCollector = new LongOpenHashSet();
 
+    private static final TagKey<Block> RAIN_ABSORPTION_HIGH = TagKey.create(Registries.BLOCK, FFFluidUtils.res(FlowingFluids.MOD_ID, "rain_absorption_high"));
+    private static final TagKey<Block> RAIN_ABSORPTION_MEDIUM = TagKey.create(Registries.BLOCK, FFFluidUtils.res(FlowingFluids.MOD_ID, "rain_absorption_medium"));
+    private static final TagKey<Block> RAIN_ABSORPTION_LOW = TagKey.create(Registries.BLOCK, FFFluidUtils.res(FlowingFluids.MOD_ID, "rain_absorption_low"));
+    private static final TagKey<Block> RAIN_ABSORPTION_IMPERVIOUS = TagKey.create(Registries.BLOCK, FFFluidUtils.res(FlowingFluids.MOD_ID, "rain_absorption_impervious"));
+
+    private static final int[][] SAMPLE_DIRECTIONS = {
+            {1, 0},
+            {-1, 0},
+            {0, 1},
+            {0, -1},
+            {1, 1},
+            {1, -1},
+            {-1, 1},
+            {-1, -1}
+    };
+
     private static ForkJoinPool executorService = null;
-    private static final long FALLBACK_CACHE_RESYNC_TICKS = 20L * 60L * 5L; // 5 minutes
+    private static final long FALLBACK_CACHE_RESYNC_TICKS = 20L * 60L * 5L;
+    private static volatile boolean warnedUnsafeMultithreading = false;
 
     private RainWaterSystem() {
     }
@@ -69,6 +93,7 @@ public final class RainWaterSystem {
         initializeExecutorService();
         placementQueue.clear();
         placementQueueSize.set(0);
+        WETNESS_CACHE.clearAll();
 
         if (!FlowingFluids.config.rainEnableChunkCaching) {
             chunkCache.clear();
@@ -97,7 +122,6 @@ public final class RainWaterSystem {
         lastRunTick.put(key, now);
 
         final RandomSource random = level.getRandom();
-
         final int chunkRadius = getEffectiveChunkRadius(level, FlowingFluids.config.rainChunkRadius);
         final int maxChunksPerTick = FlowingFluids.config.rainMaxChunksPerTick;
 
@@ -125,81 +149,46 @@ public final class RainWaterSystem {
         for (long packed : chunkArray) {
             final int cx = ChunkPos.getX(packed);
             final int cz = ChunkPos.getZ(packed);
-
             if (!level.hasChunk(cx, cz)) {
                 continue;
             }
 
             ChunkBiomeCache cache = getOrCreateChunkCache(level, packed, currentTime);
-
             if (FlowingFluids.config.rainEnableBiomeFiltering && !cache.hasPrecipitation) {
                 continue;
             }
-
             if (FlowingFluids.config.rainSkipInfiniteWaterBiomes && cache.isInfiniteWaterBiome) {
                 continue;
             }
-
             validChunks.add(new ChunkProcessingData(packed, cache));
         }
 
         if (validChunks.isEmpty()) return;
 
-        final boolean useMultithreading = FlowingFluids.config.rainEnableMultithreading && validChunks.size() > FlowingFluids.config.rainMultithreadThreshold;
-
+        final boolean useMultithreading = FlowingFluids.config.rainEnableMultithreading
+                && validChunks.size() > FlowingFluids.config.rainMultithreadThreshold;
         if (useMultithreading) {
-            if (executorService == null || executorService.isShutdown()) {
-                initializeExecutorService();
-            }
+            warnUnsafeMultithreading();
+        }
 
-            final long[] threadSeeds = new long[validChunks.size()];
-            final RandomSource seedGenerator = level.getRandom();
-            for (int i = 0; i < threadSeeds.length; i++) {
-                threadSeeds[i] = seedGenerator.nextLong();
-            }
+        final BlockPos.MutableBlockPos mPos = new BlockPos.MutableBlockPos();
+        final BlockPos.MutableBlockPos mAbove = new BlockPos.MutableBlockPos();
+        final BlockPos.MutableBlockPos mCursor = new BlockPos.MutableBlockPos();
 
-            List<CompletableFuture<Void>> futures = new ArrayList<>();
-            for (int i = 0; i < validChunks.size(); i++) {
-                final ChunkProcessingData chunkData = validChunks.get(i);
-                final long seed = threadSeeds[i];
-
-                futures.add(CompletableFuture.runAsync(() -> {
-                    final int cx = ChunkPos.getX(chunkData.packedPos);
-                    final int cz = ChunkPos.getZ(chunkData.packedPos);
-
-                    final BlockPos.MutableBlockPos mPos = new BlockPos.MutableBlockPos();
-                    final BlockPos.MutableBlockPos mAbove = new BlockPos.MutableBlockPos();
-                    final BlockPos.MutableBlockPos mCursor = new BlockPos.MutableBlockPos();
-                    final RandomSource threadRandom = RandomSource.create(seed);
-
-                    final int attempts = Math.max(1, Math.round(FlowingFluids.config.rainAttemptsPerChunk * chunkData.cache.precipMul));
-                    spawnRainWaterInChunk(level, threadRandom, cx, cz, attempts, chunkData.cache.precipMul, mPos, mAbove, mCursor, minBuildY);
-                }, executorService));
-            }
-
-            final int timeoutMs = FlowingFluids.config.rainMultithreadTimeoutMs;
-            try {
-                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                        .get(timeoutMs, TimeUnit.MILLISECONDS);
-            } catch (TimeoutException e) {
-                LOGGER.debug("[{}] Rain processing timed out after {}ms", FlowingFluids.MOD_ID, timeoutMs);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } catch (Exception e) {
-                LOGGER.error("[{}] Error during rain processing: {}", FlowingFluids.MOD_ID, e.getMessage());
-            }
-        } else {
-            final BlockPos.MutableBlockPos mPos = new BlockPos.MutableBlockPos();
-            final BlockPos.MutableBlockPos mAbove = new BlockPos.MutableBlockPos();
-            final BlockPos.MutableBlockPos mCursor = new BlockPos.MutableBlockPos();
-
-            for (ChunkProcessingData chunkData : validChunks) {
-                final int cx = ChunkPos.getX(chunkData.packedPos);
-                final int cz = ChunkPos.getZ(chunkData.packedPos);
-
-                final int attempts = Math.max(1, Math.round(FlowingFluids.config.rainAttemptsPerChunk * chunkData.cache.precipMul));
-                spawnRainWaterInChunk(level, random, cx, cz, attempts, chunkData.cache.precipMul, mPos, mAbove, mCursor, minBuildY);
-            }
+        for (ChunkProcessingData chunkData : validChunks) {
+            final int cx = ChunkPos.getX(chunkData.packedPos);
+            final int cz = ChunkPos.getZ(chunkData.packedPos);
+            final RainIntensityStage intensityStage = RainMath.chooseRainIntensityStage(
+                    level.isThundering(),
+                    currentTime / Math.max(1L, FlowingFluids.config.rainGenerateIntervalTicks),
+                    cx,
+                    cz,
+                    level.getSeed()
+            );
+            final float intensityMultiplier = getRainIntensityMultiplier(intensityStage);
+            final int attempts = Math.max(1, Math.round(FlowingFluids.config.rainAttemptsPerChunk * chunkData.cache.precipMul * intensityMultiplier));
+            spawnRainWaterInChunk(level, random, cx, cz, attempts, chunkData.cache.precipMul, intensityStage,
+                    intensityMultiplier, currentTime, mPos, mAbove, mCursor, minBuildY);
         }
     }
 
@@ -208,14 +197,87 @@ public final class RainWaterSystem {
         lastRunTick.remove(levelKey);
         lastCacheMaintenanceTick.remove(levelKey);
         chunkCache.keySet().removeIf(key -> key.level.equals(levelKey));
+        WETNESS_CACHE.clearLevel(levelKey);
         purgeQueuedPlacements(levelKey);
 
-        // OPTIMIZATION: Clear all cached data for this dimension to prevent memory leaks
         traben.flowing_fluids.AdaptiveTickScheduler.clearDimension(level);
         traben.flowing_fluids.FluidSpatialGrid.clearDimension(level);
         traben.flowing_fluids.ChunkLocalSlopeCache.clearDimension(level);
         traben.flowing_fluids.FluidTickBuffer.clearDimension(level);
         traben.flowing_fluids.water.WaterPressureSystem.onLevelUnload(level);
+    }
+
+    public static String describeRuntimeState(ServerLevel level) {
+        ResourceKey<Level> levelKey = level.dimension();
+        long wetnessEntries = WETNESS_CACHE.countLevel(levelKey);
+        long cachedChunks = chunkCache.keySet().stream().filter(key -> key.level.equals(levelKey)).count();
+        BlockPos referencePos = level.players().isEmpty() ? level.getSharedSpawnPos() : level.players().get(0).blockPosition();
+        RainIntensityStage stage = RainMath.chooseRainIntensityStage(
+                level.isThundering(),
+                level.getGameTime() / Math.max(1L, FlowingFluids.config.rainGenerateIntervalTicks),
+                referencePos.getX() >> 4,
+                referencePos.getZ() >> 4,
+                level.getSeed()
+        );
+        return "Rain runtime"
+                + "\nWeather: raining=" + level.isRaining() + ", thundering=" + level.isThundering()
+                + "\nIntensity stage: " + stage.name().toLowerCase(Locale.ROOT)
+                + "\nPlacement queue: " + placementQueueSize.get() + "/" + FlowingFluids.config.rainPlacementQueueSize
+                + "\nWetness samples: " + wetnessEntries
+                + "\nChunk cache entries: " + cachedChunks
+                + "\nCache enabled=" + FlowingFluids.config.rainEnableChunkCaching
+                + " / multithread requested=" + FlowingFluids.config.rainEnableMultithreading;
+    }
+
+    public static String inspectRainAt(ServerLevel level, BlockPos probePos) {
+        if (!FlowingFluids.config.enableRainSystem) {
+            return "Rain system is disabled.";
+        }
+
+        int x = probePos.getX();
+        int z = probePos.getZ();
+        int minBuildY = level.getMinBuildHeight();
+        BlockPos.MutableBlockPos landingPos = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos abovePos = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+
+        RainIntensityStage stage = RainMath.chooseRainIntensityStage(
+                level.isThundering(),
+                level.getGameTime() / Math.max(1L, FlowingFluids.config.rainGenerateIntervalTicks),
+                x >> 4,
+                z >> 4,
+                level.getSeed()
+        );
+        float intensityMultiplier = getRainIntensityMultiplier(stage);
+        int baseAmount = Math.max(1, Math.round(Math.max(1, FlowingFluids.config.rainBaseWaterAmount) * intensityMultiplier));
+
+        if (!findRainLandingMutable(level, x, z, landingPos, abovePos, minBuildY)) {
+            return "No valid rain landing point at "
+                    + x + ", " + probePos.getY() + ", " + z
+                    + "\nStage: " + stage.name().toLowerCase(Locale.ROOT)
+                    + " / Raining here: " + level.isRainingAt(probePos);
+        }
+
+        int groundY = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z);
+        boolean raisedFromPuddle = FlowingFluids.config.rainFillsWaterHigherV2
+                && tryRaiseWaterOnPuddle(level, landingPos, cursor, groundY);
+        RainSurfaceContext context = buildSurfaceContext(level, landingPos, baseAmount, stage,
+                level.getGameTime(), minBuildY, raisedFromPuddle, cursor);
+
+        return "Rain probe"
+                + "\nProbe: " + x + ", " + probePos.getY() + ", " + z
+                + "\nLanding: " + landingPos.getX() + ", " + landingPos.getY() + ", " + landingPos.getZ()
+                + "\nBlock: " + BuiltInRegistries.BLOCK.getKey(context.groundBlock())
+                + "\nAbsorption: " + context.absorptionTier().name().toLowerCase(Locale.ROOT)
+                + "\nWetness: " + String.format(Locale.ROOT, "%.2f", context.wetness())
+                + "\nIntensity: " + stage.name().toLowerCase(Locale.ROOT) + " x" + String.format(Locale.ROOT, "%.2f", intensityMultiplier)
+                + "\nUpstream bonus: " + String.format(Locale.ROOT, "%.2f", context.upstreamBonus())
+                + "\nCatchment boost: " + String.format(Locale.ROOT, "%.2f", context.catchmentBoost())
+                + "\nCandidate amount: " + context.candidateAmount()
+                + "\nEffective amount: " + context.effectiveAmount()
+                + "\nAbsorbed wetness add: " + String.format(Locale.ROOT, "%.2f", context.absorbedWetness())
+                + "\nRaised from puddle: " + raisedFromPuddle
+                + "\nRaining here: " + level.isRainingAt(landingPos);
     }
 
     private static void purgeQueuedPlacements(ResourceKey<Level> levelKey) {
@@ -236,14 +298,17 @@ public final class RainWaterSystem {
     private static void spawnRainWaterInChunk(ServerLevel level, RandomSource random,
                                               int chunkX, int chunkZ,
                                               int attempts, float rainMul,
+                                              RainIntensityStage intensityStage,
+                                              float intensityMultiplier,
+                                              long currentTime,
                                               BlockPos.MutableBlockPos mPos,
                                               BlockPos.MutableBlockPos mAbove,
                                               BlockPos.MutableBlockPos mCursor,
                                               int minBuildY) {
 
         final float baseChance = FlowingFluids.config.rainBaseGenerateChance * rainMul;
-        final int baseWaterAmount = Math.max(1, Math.min(FlowingFluids.config.rainPlacementMaxCombinedAmount,
-                FlowingFluids.config.rainBaseWaterAmount));
+        final int rainBaseAmount = Math.max(1, FlowingFluids.config.rainBaseWaterAmount);
+        final int baseWaterAmount = Math.max(1, Math.round(rainBaseAmount * intensityMultiplier));
 
         final int maxQueueSize = FlowingFluids.config.rainPlacementQueueSize;
         final float congestionMultiplier = calculateQueueCongestionMultiplier(maxQueueSize);
@@ -267,8 +332,26 @@ public final class RainWaterSystem {
             if (level.getBiome(mPos).value().coldEnoughToSnow(mPos)) continue;
 
             final int groundY = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z);
-            if (tryRaiseWaterOnPuddle(level, mPos, mCursor, groundY)) {
-                submitRainPlacement(level, mPos, baseWaterAmount, maxQueueSize);
+            final boolean raisedFromPuddle = FlowingFluids.config.rainFillsWaterHigherV2
+                    && tryRaiseWaterOnPuddle(level, mPos, mCursor, groundY);
+            final RainSurfaceContext context = buildSurfaceContext(level, mPos, baseWaterAmount, intensityStage,
+                    currentTime, minBuildY, raisedFromPuddle, mCursor);
+
+            if (!raisedFromPuddle && context.absorbedWetness() > 0.0f) {
+                WETNESS_CACHE.addWetness(level.dimension(), context.groundPos(), context.absorbedWetness(), currentTime);
+            }
+
+            if (context.effectiveAmount() <= 0) {
+                continue;
+            }
+
+            final int adjustedAmount = FloodEventSystem.adjustRainWaterAmount(level, mPos, context.effectiveAmount());
+            if (adjustedAmount <= 0) {
+                continue;
+            }
+
+            if (raisedFromPuddle) {
+                submitRainPlacement(level, mPos, adjustedAmount, maxQueueSize);
                 continue;
             }
 
@@ -276,10 +359,166 @@ public final class RainWaterSystem {
             if (cur.isAir() || cur.canBeReplaced()) {
                 mAbove.set(mPos.getX(), mPos.getY() - 1, mPos.getZ());
                 if (mAbove.getY() >= minBuildY && !level.getBlockState(mAbove).isAir()) {
-                    submitRainPlacement(level, mPos, baseWaterAmount, maxQueueSize);
+                    submitRainPlacement(level, mPos, adjustedAmount, maxQueueSize);
                 }
             }
         }
+    }
+
+    private static RainSurfaceContext buildSurfaceContext(ServerLevel level, BlockPos placementPos,
+                                                          int baseWaterAmount,
+                                                          RainIntensityStage intensityStage,
+                                                          long currentTime,
+                                                          int minBuildY,
+                                                          boolean existingPuddle,
+                                                          BlockPos.MutableBlockPos cursor) {
+        BlockPos groundPos = resolveGroundReferencePos(level, placementPos, cursor, minBuildY);
+        BlockState groundState = groundPos.getY() >= minBuildY ? level.getBlockState(groundPos) : Blocks.AIR.defaultBlockState();
+        AbsorptionTier absorptionTier = resolveAbsorptionTier(groundState);
+        float wetness = existingPuddle ? 1.0f : WETNESS_CACHE.getWetness(level.dimension(), groundPos, currentTime);
+        float upstreamBonus = computeUpstreamBonus(level, placementPos.getX(), placementPos.getZ(), groundPos.getY());
+        float catchmentBoost = computeCatchmentBoost(level, placementPos.getX(), placementPos.getZ());
+        int candidateAmount = computeCandidateAmount(baseWaterAmount, upstreamBonus, catchmentBoost);
+        int effectiveAmount = existingPuddle ? candidateAmount
+                : RainMath.computeSurfaceWaterAmount(candidateAmount, absorptionTier.absorptionCoefficient(), wetness);
+        float effectiveAbsorption = existingPuddle ? 0.0f
+                : Mth.clamp(absorptionTier.absorptionCoefficient() * (1.0f - wetness), 0.0f, 1.0f);
+        float absorbedWetness = existingPuddle ? 0.0f
+                : Mth.clamp((candidateAmount * effectiveAbsorption) / 6.0f, 0.0f, 1.0f);
+
+        return new RainSurfaceContext(
+                groundPos,
+                groundState.getBlock(),
+                absorptionTier,
+                wetness,
+                intensityStage,
+                upstreamBonus,
+                catchmentBoost,
+                candidateAmount,
+                effectiveAmount,
+                absorbedWetness
+        );
+    }
+
+    private static BlockPos resolveGroundReferencePos(ServerLevel level, BlockPos placementPos,
+                                                      BlockPos.MutableBlockPos cursor, int minBuildY) {
+        cursor.set(placementPos.getX(), placementPos.getY() - 1, placementPos.getZ());
+        int guard = 0;
+        int maxDepth = Math.max(6, FlowingFluids.config.rainMaxSurfaceSearchDepth + FlowingFluids.config.rainMaxWaterStackHeight + 4);
+
+        while (cursor.getY() >= minBuildY && guard++ < maxDepth) {
+            BlockState state = level.getBlockState(cursor);
+            if (level.getFluidState(cursor).isSourceOfType(Fluids.WATER)) {
+                cursor.move(0, -1, 0);
+                continue;
+            }
+            if (!state.isAir() && !state.canBeReplaced()) {
+                return cursor.immutable();
+            }
+            cursor.move(0, -1, 0);
+        }
+        return new BlockPos(placementPos.getX(), Math.max(minBuildY, placementPos.getY() - 1), placementPos.getZ());
+    }
+
+    private static AbsorptionTier resolveAbsorptionTier(BlockState state) {
+        if (state.is(RAIN_ABSORPTION_HIGH)) {
+            return AbsorptionTier.HIGH;
+        }
+        if (state.is(RAIN_ABSORPTION_IMPERVIOUS)) {
+            return AbsorptionTier.IMPERVIOUS;
+        }
+        if (state.is(RAIN_ABSORPTION_LOW)) {
+            return AbsorptionTier.LOW;
+        }
+        if (state.is(RAIN_ABSORPTION_MEDIUM)) {
+            return AbsorptionTier.MEDIUM;
+        }
+        return AbsorptionTier.MEDIUM;
+    }
+
+    private static int computeCandidateAmount(int baseWaterAmount, float upstreamBonus, float catchmentBoost) {
+        float combined = baseWaterAmount * upstreamBonus * catchmentBoost;
+        return Mth.clamp(Math.max(1, Math.round(combined)), 1, Math.max(1, FlowingFluids.config.rainPlacementMaxCombinedAmount));
+    }
+
+    private static float computeUpstreamBonus(ServerLevel level, int x, int z, int referenceSurfaceY) {
+        int searchRadius = Math.max(0, FlowingFluids.config.rainUpstreamSearchRadius);
+        if (searchRadius <= 0) {
+            return 1.0f;
+        }
+
+        int uphillHits = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int[] offset : SAMPLE_DIRECTIONS) {
+            int sampleX = x + offset[0] * searchRadius;
+            int sampleZ = z + offset[1] * searchRadius;
+            if (!level.hasChunk(sampleX >> 4, sampleZ >> 4)) {
+                continue;
+            }
+
+            int sampleSurfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, sampleX, sampleZ) - 1;
+            if (sampleSurfaceY <= referenceSurfaceY) {
+                continue;
+            }
+
+            cursor.set(sampleX, sampleSurfaceY + 1, sampleZ);
+            if (level.canSeeSky(cursor)) {
+                uphillHits++;
+            }
+        }
+
+        if (uphillHits <= 0) {
+            return 1.0f;
+        }
+
+        float uphillRatio = uphillHits / (float) SAMPLE_DIRECTIONS.length;
+        float maxBoost = Math.max(1.0f, FlowingFluids.config.rainUpstreamMaxBoost);
+        return Mth.clamp(1.0f + uphillRatio * (maxBoost - 1.0f), 1.0f, maxBoost);
+    }
+
+    private static float computeCatchmentBoost(ServerLevel level, int x, int z) {
+        int radius = Math.max(0, FlowingFluids.config.rainCatchmentRadius);
+        if (radius <= 0) {
+            return 1.0f;
+        }
+
+        int openSky = 0;
+        int sampleCount = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                int sampleX = x + dx;
+                int sampleZ = z + dz;
+                if (!level.hasChunk(sampleX >> 4, sampleZ >> 4)) {
+                    continue;
+                }
+
+                int sampleSurfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, sampleX, sampleZ);
+                cursor.set(sampleX, sampleSurfaceY, sampleZ);
+                if (level.canSeeSky(cursor)) {
+                    openSky++;
+                }
+                sampleCount++;
+            }
+        }
+
+        if (sampleCount <= 0) {
+            return 1.0f;
+        }
+
+        float openSkyRatio = openSky / (float) sampleCount;
+        float maxBoost = Math.max(1.0f, FlowingFluids.config.rainCatchmentMaxBoost);
+        return Mth.clamp(1.0f + openSkyRatio * (maxBoost - 1.0f), 1.0f, maxBoost);
+    }
+
+    private static float getRainIntensityMultiplier(RainIntensityStage stage) {
+        return switch (stage) {
+            case DRIZZLE -> Math.max(0.1f, FlowingFluids.config.rainIntensityDrizzleMultiplier);
+            case STEADY -> Math.max(0.1f, FlowingFluids.config.rainIntensitySteadyMultiplier);
+            case HEAVY -> Math.max(0.1f, FlowingFluids.config.rainIntensityHeavyMultiplier);
+            case THUNDERSTORM -> Math.max(0.1f, FlowingFluids.config.rainIntensityThunderstormMultiplier);
+        };
     }
 
     private static void submitRainPlacement(ServerLevel level, BlockPos pos, int amount, int maxQueueSize) {
@@ -335,7 +574,6 @@ public final class RainWaterSystem {
         final int configuredLimit = FlowingFluids.config.rainPlacementQueueSize;
         final int maxProcessPerTick = configuredLimit <= 0 ? Integer.MAX_VALUE : configuredLimit;
         int processed = 0;
-
         final Map<ResourceKey<Level>, PlacementAggregation> aggregated = new HashMap<>();
 
         while (processed < maxProcessPerTick) {
@@ -354,7 +592,7 @@ public final class RainWaterSystem {
     }
 
     private static void mergePlacementTask(Map<ResourceKey<Level>, PlacementAggregation> aggregated,
-                                          RainPlacementTask task) {
+                                           RainPlacementTask task) {
         final int maxCombinedAmount = Math.max(1, FlowingFluids.config.rainPlacementMaxCombinedAmount);
         final int mergeDistance = Math.max(0, FlowingFluids.config.rainPlacementAggregationDistance);
 
@@ -406,13 +644,15 @@ public final class RainWaterSystem {
         if (!FlowingFluids.config.rainEnableMultithreading) {
             return;
         }
+        warnUnsafeMultithreading();
+    }
 
-        int threadCount = FlowingFluids.config.rainMaxThreads;
-        if (threadCount <= 0) {
-            threadCount = Runtime.getRuntime().availableProcessors();
+    private static void warnUnsafeMultithreading() {
+        if (!warnedUnsafeMultithreading) {
+            warnedUnsafeMultithreading = true;
+            LOGGER.warn("[{}] Rain multithreading disabled to avoid unsafe world access. Running single-threaded.",
+                    FlowingFluids.MOD_ID);
         }
-
-        executorService = new ForkJoinPool(threadCount);
     }
 
     private static ChunkBiomeCache getOrCreateChunkCache(ServerLevel level, long packedChunkPos, long currentTime) {
@@ -440,13 +680,11 @@ public final class RainWaterSystem {
         final Holder<Biome> holder = level.getBiome(tempPos);
         final Biome biome = holder.value();
         final ResourceKey<Biome> biomeKey = holder.unwrapKey().orElse(null);
-
         final String biomeName = biomeKey != null ? biomeKey.location().getPath().toLowerCase() : "";
 
         float precipMul = 1.0f;
         if (biomeKey != null) {
             precipMul = PRECIP_MUL.getOrDefault(biomeKey, -1.0f);
-
             if (precipMul < 0) {
                 if (biomeName.contains("desert")) {
                     precipMul = FlowingFluids.config.rainPrecipDesert;
@@ -470,21 +708,15 @@ public final class RainWaterSystem {
 
         final boolean hasPrecipitation = biome.hasPrecipitation();
         final boolean isInfiniteWaterBiome = FLUIDS_API.doesBiomeInfiniteWaterRefill(holder);
-
         ChunkBiomeCache newCache = new ChunkBiomeCache(biomeKey, precipMul, hasPrecipitation, isInfiniteWaterBiome, currentTime);
 
         if (FlowingFluids.config.rainEnableChunkCaching) {
             chunkCache.put(cacheKey, newCache);
         }
-
         return newCache;
     }
 
     private static void performCacheMaintenanceIfNeeded(ServerLevel level, long now) {
-        if (!FlowingFluids.config.rainEnableChunkCaching) {
-            return;
-        }
-
         final ResourceKey<Level> levelKey = level.dimension();
         final long lastMaintenance = lastCacheMaintenanceTick.getOrDefault(levelKey, Long.MIN_VALUE);
 
@@ -493,10 +725,13 @@ public final class RainWaterSystem {
             return;
         }
 
-        final long fallbackTicks = Math.max(FALLBACK_CACHE_RESYNC_TICKS, FlowingFluids.config.rainCacheDurationTicks);
-
+        long wetnessPersistTicks = Math.max(20L, FlowingFluids.config.rainWetnessPersistTicks);
+        final long fallbackTicks = Math.max(Math.max(FALLBACK_CACHE_RESYNC_TICKS, FlowingFluids.config.rainCacheDurationTicks), wetnessPersistTicks);
         if ((now - lastMaintenance) >= fallbackTicks) {
-            chunkCache.keySet().removeIf(key -> key.level.equals(levelKey));
+            if (FlowingFluids.config.rainEnableChunkCaching) {
+                chunkCache.keySet().removeIf(key -> key.level.equals(levelKey));
+            }
+            WETNESS_CACHE.purgeExpired(levelKey, now);
             lastCacheMaintenanceTick.put(levelKey, now);
         }
     }
@@ -510,7 +745,6 @@ public final class RainWaterSystem {
 
         outPos.set(x, surfaceY, z);
         BlockState s = level.getBlockState(outPos);
-
         final int maxSearchDepth = FlowingFluids.config.rainMaxSurfaceSearchDepth;
 
         if (s.is(BlockTags.LEAVES)) {
@@ -567,7 +801,6 @@ public final class RainWaterSystem {
         }
 
         final int maxStackHeight = FlowingFluids.config.rainMaxWaterStackHeight;
-
         final BlockPos.MutableBlockPos above = new BlockPos.MutableBlockPos(cursor.getX(), cursor.getY() + 1, cursor.getZ());
         int guard = 0;
         while (level.getFluidState(above).isSourceOfType(Fluids.WATER)) {
@@ -586,6 +819,29 @@ public final class RainWaterSystem {
         return true;
     }
 
+    private enum AbsorptionTier {
+        HIGH(0.75f),
+        MEDIUM(0.45f),
+        LOW(0.20f),
+        IMPERVIOUS(0.05f);
+
+        private final float absorptionCoefficient;
+
+        AbsorptionTier(float absorptionCoefficient) {
+            this.absorptionCoefficient = absorptionCoefficient;
+        }
+
+        float absorptionCoefficient() {
+            return absorptionCoefficient;
+        }
+    }
+
+    private record RainSurfaceContext(BlockPos groundPos, Block groundBlock, AbsorptionTier absorptionTier,
+                                      float wetness, RainIntensityStage rainIntensityStage,
+                                      float upstreamBonus, float catchmentBoost,
+                                      int candidateAmount, int effectiveAmount, float absorbedWetness) {
+    }
+
     private record ChunkProcessingData(long packedPos, ChunkBiomeCache cache) {
     }
 
@@ -594,6 +850,68 @@ public final class RainWaterSystem {
 
     private record ChunkBiomeCache(ResourceKey<Biome> biomeKey, float precipMul,
                                    boolean hasPrecipitation, boolean isInfiniteWaterBiome, long cachedTime) {
+    }
+
+    private record WetnessCacheKey(ResourceKey<Level> level, BlockPos pos) {
+    }
+
+    private record WetnessEntry(float wetness, long lastUpdateTick) {
+    }
+
+    private static final class RainWetnessCache {
+        private final ConcurrentHashMap<WetnessCacheKey, WetnessEntry> wetnessByBlock = new ConcurrentHashMap<>();
+
+        private float getWetness(ResourceKey<Level> levelKey, BlockPos pos, long currentTime) {
+            WetnessCacheKey key = new WetnessCacheKey(levelKey, pos.immutable());
+            WetnessEntry entry = wetnessByBlock.get(key);
+            if (entry == null) {
+                return 0.0f;
+            }
+
+            float decayed = RainMath.decayWetness(entry.wetness(), currentTime - entry.lastUpdateTick(), FlowingFluids.config.rainWetnessPersistTicks);
+            if (decayed <= 0.0f) {
+                wetnessByBlock.remove(key, entry);
+                return 0.0f;
+            }
+            return decayed;
+        }
+
+        private void addWetness(ResourceKey<Level> levelKey, BlockPos pos, float delta, long currentTime) {
+            if (delta <= 0.0f || FlowingFluids.config.rainWetnessPersistTicks <= 0) {
+                return;
+            }
+
+            WetnessCacheKey key = new WetnessCacheKey(levelKey, pos.immutable());
+            wetnessByBlock.compute(key, (ignored, entry) -> {
+                float currentWetness = entry == null
+                        ? 0.0f
+                        : RainMath.decayWetness(entry.wetness(), currentTime - entry.lastUpdateTick(), FlowingFluids.config.rainWetnessPersistTicks);
+                float updated = Mth.clamp(currentWetness + delta, 0.0f, 1.0f);
+                return updated <= 0.0f ? null : new WetnessEntry(updated, currentTime);
+            });
+        }
+
+        private void purgeExpired(ResourceKey<Level> levelKey, long currentTime) {
+            wetnessByBlock.entrySet().removeIf(entry -> {
+                if (!entry.getKey().level().equals(levelKey)) {
+                    return false;
+                }
+                return RainMath.decayWetness(entry.getValue().wetness(), currentTime - entry.getValue().lastUpdateTick(),
+                        FlowingFluids.config.rainWetnessPersistTicks) <= 0.0f;
+            });
+        }
+
+        private void clearLevel(ResourceKey<Level> levelKey) {
+            wetnessByBlock.keySet().removeIf(key -> key.level().equals(levelKey));
+        }
+
+        private void clearAll() {
+            wetnessByBlock.clear();
+        }
+
+        private long countLevel(ResourceKey<Level> levelKey) {
+            return wetnessByBlock.keySet().stream().filter(key -> key.level().equals(levelKey)).count();
+        }
     }
 
     private static final class AggregatedPlacement {
@@ -665,4 +983,3 @@ public final class RainWaterSystem {
     private record RainPlacementTask(ServerLevel level, BlockPos pos, int amount) {
     }
 }
-

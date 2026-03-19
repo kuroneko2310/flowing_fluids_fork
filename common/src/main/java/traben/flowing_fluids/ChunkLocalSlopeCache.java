@@ -44,13 +44,13 @@ public class ChunkLocalSlopeCache {
     public static int getCached(LevelAccessor level, ChunkPos chunkPos, BlockPos sourcePos, int searchDistance, Direction direction) {
         DimensionCache cache = getDimensionCache(level);
         synchronized (getChunkLock(cache, chunkPos)) {
-            var chunkCache = cache.chunkCaches.get(chunkPos);
+            ChunkCacheData chunkCache = cache.chunkCaches.get(chunkPos);
             if (chunkCache == null) {
                 return -1;
             }
 
             CacheKey key = new CacheKey(sourcePos, searchDistance, direction);
-            Integer result = chunkCache.get(key);
+            Integer result = chunkCache.slopeDistances.get(key);
             return result != null ? result : -1;
         }
     }
@@ -65,9 +65,9 @@ public class ChunkLocalSlopeCache {
     public static void putCached(LevelAccessor level, ChunkPos chunkPos, BlockPos sourcePos, int searchDistance, Direction direction, int slopeDistance) {
         DimensionCache cache = getDimensionCache(level);
         synchronized (getChunkLock(cache, chunkPos)) {
-            var chunkCache = cache.chunkCaches.computeIfAbsent(chunkPos, k -> Collections.synchronizedMap(new LRUCache<>(CACHE_SIZE_PER_CHUNK)));
+            ChunkCacheData chunkCache = cache.chunkCaches.computeIfAbsent(chunkPos, k -> new ChunkCacheData());
             CacheKey key = new CacheKey(sourcePos, searchDistance, direction);
-            chunkCache.put(key, slopeDistance);
+            chunkCache.slopeDistances.put(key, slopeDistance);
         }
     }
 
@@ -82,11 +82,11 @@ public class ChunkLocalSlopeCache {
     public static Vec3i getGradientVector(LevelAccessor level, ChunkPos chunkPos, BlockPos pos) {
         DimensionCache cache = getDimensionCache(level);
         synchronized (getChunkLock(cache, chunkPos)) {
-            var gradientCache = cache.gradientCaches.get(chunkPos);
-            if (gradientCache == null) {
+            ChunkCacheData chunkCache = cache.chunkCaches.get(chunkPos);
+            if (chunkCache == null) {
                 return null;
             }
-            return gradientCache.get(pos.asLong());
+            return chunkCache.gradientVectors.get(pos.asLong());
         }
     }
 
@@ -100,8 +100,8 @@ public class ChunkLocalSlopeCache {
     public static void putGradientVector(LevelAccessor level, ChunkPos chunkPos, BlockPos pos, Vec3i gradientVector) {
         DimensionCache cache = getDimensionCache(level);
         synchronized (getChunkLock(cache, chunkPos)) {
-            var gradientCache = cache.gradientCaches.computeIfAbsent(chunkPos, k -> Collections.synchronizedMap(new LRUCache<>(CACHE_SIZE_PER_CHUNK)));
-            gradientCache.put(pos.asLong(), gradientVector);
+            ChunkCacheData chunkCache = cache.chunkCaches.computeIfAbsent(chunkPos, k -> new ChunkCacheData());
+            chunkCache.gradientVectors.put(pos.asLong(), gradientVector);
         }
     }
 
@@ -180,7 +180,6 @@ public class ChunkLocalSlopeCache {
     public static void clearChunk(LevelAccessor level, ChunkPos chunkPos) {
         DimensionCache cache = getDimensionCache(level);
         cache.chunkCaches.remove(chunkPos);
-        cache.gradientCaches.remove(chunkPos);
         cache.chunkLocks.remove(chunkPos);
     }
 
@@ -194,7 +193,6 @@ public class ChunkLocalSlopeCache {
         DimensionCache removed = DIMENSION_CACHES.remove(key);
         if (removed != null) {
             removed.chunkCaches.clear();
-            removed.gradientCaches.clear();
             removed.chunkLocks.clear();
         }
     }
@@ -216,9 +214,13 @@ public class ChunkLocalSlopeCache {
     }
 
     private static class DimensionCache {
-        final ConcurrentHashMap<ChunkPos, Map<CacheKey, Integer>> chunkCaches = new ConcurrentHashMap<>();
-        final ConcurrentHashMap<ChunkPos, Map<Long, Vec3i>> gradientCaches = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<ChunkPos, ChunkCacheData> chunkCaches = new ConcurrentHashMap<>();
         final ConcurrentHashMap<ChunkPos, Object> chunkLocks = new ConcurrentHashMap<>();
+    }
+
+    private static class ChunkCacheData {
+        final LRUCache<CacheKey, Integer> slopeDistances = new LRUCache<>(CACHE_SIZE_PER_CHUNK);
+        final LRUCache<Long, Vec3i> gradientVectors = new LRUCache<>(CACHE_SIZE_PER_CHUNK);
     }
 
     /**
