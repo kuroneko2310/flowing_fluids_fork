@@ -100,6 +100,8 @@ public class FFConfig {
     public float waterAffinityStrength = 0.2f; // Bias flow toward nearby water (0 = off)
     public float flowInertiaStrength = 0.25f; // Bias flow toward last direction (0 = off)
     public int flowInertiaMaxAgeTicks = 40; // How long inertia is remembered
+    public boolean enableFlowSpeedControl = true; // Lightweight flow speed tiers derived from water profile + momentum
+    public float flowSpeedStrength = 0.35f; // How strongly flow speed tiers bias transfer and thin-edge movement
     public int flowActivationTicks = 1; // Force ticks briefly after flow updates; profile-based breach handling keeps fronts responsive
     public boolean forceTickWhenAdjacentAir = false; // Always tick when adjacent to air/replaceable blocks
     public int forceFlowLevelDifference = 2; // Force flow when level difference exceeds this
@@ -214,6 +216,19 @@ public class FFConfig {
     public float rainPrecipPlains = 1.0f;
     public float rainPrecipForest = 1.0f;
     public float rainPrecipTaiga = 0.8f;
+
+    // Snowmelt system settings
+    public boolean enableSnowmeltSystem = true;
+    public boolean snowmeltDaytimeOnly = true;
+    public boolean snowmeltPlacesWater = true;
+    public int snowmeltChunkRadius = 2;
+    public int snowmeltIntervalTicks = 160;
+    public int snowmeltAttemptsPerChunk = 2;
+    public int snowmeltMaxChunksPerTick = 16;
+    public float snowmeltBaseChance = 0.08f;
+    public int snowmeltWaterAmount = 1;
+    public int snowmeltMinSkyLight = 10;
+    public float snowmeltMinTemperature = 0.2f;
 
     // Flood event settings
     public boolean enableFloodEvents = false;
@@ -376,6 +391,8 @@ public class FFConfig {
         waterAffinityStrength = buffer.readFloat();
         flowInertiaStrength = buffer.readFloat();
         flowInertiaMaxAgeTicks = buffer.readVarInt();
+        enableFlowSpeedControl = buffer.readBoolean();
+        flowSpeedStrength = buffer.readFloat();
         flowActivationTicks = buffer.readVarInt();
         forceTickWhenAdjacentAir = buffer.readBoolean();
         forceFlowLevelDifference = buffer.readVarInt();
@@ -496,6 +513,17 @@ public class FFConfig {
         rainPrecipPlains = buffer.readFloat();
         rainPrecipForest = buffer.readFloat();
         rainPrecipTaiga = buffer.readFloat();
+        enableSnowmeltSystem = buffer.readBoolean();
+        snowmeltDaytimeOnly = buffer.readBoolean();
+        snowmeltPlacesWater = buffer.readBoolean();
+        snowmeltChunkRadius = buffer.readVarInt();
+        snowmeltIntervalTicks = buffer.readVarInt();
+        snowmeltAttemptsPerChunk = buffer.readVarInt();
+        snowmeltMaxChunksPerTick = buffer.readVarInt();
+        snowmeltBaseChance = buffer.readFloat();
+        snowmeltWaterAmount = buffer.readVarInt();
+        snowmeltMinSkyLight = buffer.readVarInt();
+        snowmeltMinTemperature = buffer.readFloat();
         enableFloodEvents = buffer.readBoolean();
         floodDefaultRadius = buffer.readVarInt();
         floodDefaultDurationTicks = buffer.readVarInt();
@@ -583,6 +611,8 @@ public class FFConfig {
         buffer.writeFloat(waterAffinityStrength);
         buffer.writeFloat(flowInertiaStrength);
         buffer.writeVarInt(flowInertiaMaxAgeTicks);
+        buffer.writeBoolean(enableFlowSpeedControl);
+        buffer.writeFloat(flowSpeedStrength);
         buffer.writeVarInt(flowActivationTicks);
         buffer.writeBoolean(forceTickWhenAdjacentAir);
         buffer.writeVarInt(forceFlowLevelDifference);
@@ -702,6 +732,17 @@ public class FFConfig {
         buffer.writeFloat(rainPrecipPlains);
         buffer.writeFloat(rainPrecipForest);
         buffer.writeFloat(rainPrecipTaiga);
+        buffer.writeBoolean(enableSnowmeltSystem);
+        buffer.writeBoolean(snowmeltDaytimeOnly);
+        buffer.writeBoolean(snowmeltPlacesWater);
+        buffer.writeVarInt(snowmeltChunkRadius);
+        buffer.writeVarInt(snowmeltIntervalTicks);
+        buffer.writeVarInt(snowmeltAttemptsPerChunk);
+        buffer.writeVarInt(snowmeltMaxChunksPerTick);
+        buffer.writeFloat(snowmeltBaseChance);
+        buffer.writeVarInt(snowmeltWaterAmount);
+        buffer.writeVarInt(snowmeltMinSkyLight);
+        buffer.writeFloat(snowmeltMinTemperature);
         buffer.writeBoolean(enableFloodEvents);
         buffer.writeVarInt(floodDefaultRadius);
         buffer.writeVarInt(floodDefaultDurationTicks);
@@ -805,6 +846,7 @@ public class FFConfig {
         long oldAdaptiveSchedulerChunkExpiryMs = adaptiveSchedulerChunkExpiryMs;
         int oldAdaptiveSchedulerMaxEntries = adaptiveSchedulerMaxEntries;
         int oldRainChunkRadius = rainChunkRadius;
+        float oldFlowSpeedStrength = flowSpeedStrength;
         int oldRainGenerateIntervalTicks = rainGenerateIntervalTicks;
         int oldRainAttemptsPerChunk = rainAttemptsPerChunk;
         float oldRainBaseGenerateChance = rainBaseGenerateChance;
@@ -830,6 +872,14 @@ public class FFConfig {
         float oldRainIntensitySteadyMultiplier = rainIntensitySteadyMultiplier;
         float oldRainIntensityHeavyMultiplier = rainIntensityHeavyMultiplier;
         float oldRainIntensityThunderstormMultiplier = rainIntensityThunderstormMultiplier;
+        int oldSnowmeltChunkRadius = snowmeltChunkRadius;
+        int oldSnowmeltIntervalTicks = snowmeltIntervalTicks;
+        int oldSnowmeltAttemptsPerChunk = snowmeltAttemptsPerChunk;
+        int oldSnowmeltMaxChunksPerTick = snowmeltMaxChunksPerTick;
+        float oldSnowmeltBaseChance = snowmeltBaseChance;
+        int oldSnowmeltWaterAmount = snowmeltWaterAmount;
+        int oldSnowmeltMinSkyLight = snowmeltMinSkyLight;
+        float oldSnowmeltMinTemperature = snowmeltMinTemperature;
 
         waterFlowDistance = Math.max(1, waterFlowDistance);
         lavaFlowDistance = Math.max(1, lavaFlowDistance);
@@ -850,6 +900,7 @@ public class FFConfig {
         adaptiveSchedulerMaxEntries = Math.max(1, adaptiveSchedulerMaxEntries);
 
         rainChunkRadius = Math.max(0, rainChunkRadius);
+        flowSpeedStrength = Math.max(0.0f, Math.min(2.0f, flowSpeedStrength));
         rainGenerateIntervalTicks = Math.max(1, rainGenerateIntervalTicks);
         rainAttemptsPerChunk = Math.max(0, rainAttemptsPerChunk);
         rainBaseGenerateChance = Math.max(0.0f, Math.min(1.0f, rainBaseGenerateChance));
@@ -875,6 +926,14 @@ public class FFConfig {
         rainIntensitySteadyMultiplier = Math.max(0.1f, rainIntensitySteadyMultiplier);
         rainIntensityHeavyMultiplier = Math.max(0.1f, rainIntensityHeavyMultiplier);
         rainIntensityThunderstormMultiplier = Math.max(0.1f, rainIntensityThunderstormMultiplier);
+        snowmeltChunkRadius = Math.max(0, snowmeltChunkRadius);
+        snowmeltIntervalTicks = Math.max(1, snowmeltIntervalTicks);
+        snowmeltAttemptsPerChunk = Math.max(0, snowmeltAttemptsPerChunk);
+        snowmeltMaxChunksPerTick = Math.max(0, snowmeltMaxChunksPerTick);
+        snowmeltBaseChance = Math.max(0.0f, Math.min(1.0f, snowmeltBaseChance));
+        snowmeltWaterAmount = Math.max(1, Math.min(8, snowmeltWaterAmount));
+        snowmeltMinSkyLight = Math.max(0, Math.min(15, snowmeltMinSkyLight));
+        snowmeltMinTemperature = Math.max(-1.0f, Math.min(4.0f, snowmeltMinTemperature));
 
         appendCorrection(corrections, "waterFlowDistance", oldWaterFlowDistance, waterFlowDistance);
         appendCorrection(corrections, "lavaFlowDistance", oldLavaFlowDistance, lavaFlowDistance);
@@ -891,6 +950,7 @@ public class FFConfig {
         appendCorrection(corrections, "canalFlowDistance", oldCanalFlowDistance, canalFlowDistance);
         appendCorrection(corrections, "adaptiveSchedulerChunkExpiryMs", oldAdaptiveSchedulerChunkExpiryMs, adaptiveSchedulerChunkExpiryMs);
         appendCorrection(corrections, "adaptiveSchedulerMaxEntries", oldAdaptiveSchedulerMaxEntries, adaptiveSchedulerMaxEntries);
+        appendCorrection(corrections, "flowSpeedStrength", oldFlowSpeedStrength, flowSpeedStrength);
         appendCorrection(corrections, "rainChunkRadius", oldRainChunkRadius, rainChunkRadius);
         appendCorrection(corrections, "rainGenerateIntervalTicks", oldRainGenerateIntervalTicks, rainGenerateIntervalTicks);
         appendCorrection(corrections, "rainAttemptsPerChunk", oldRainAttemptsPerChunk, rainAttemptsPerChunk);
@@ -917,6 +977,14 @@ public class FFConfig {
         appendCorrection(corrections, "rainIntensitySteadyMultiplier", oldRainIntensitySteadyMultiplier, rainIntensitySteadyMultiplier);
         appendCorrection(corrections, "rainIntensityHeavyMultiplier", oldRainIntensityHeavyMultiplier, rainIntensityHeavyMultiplier);
         appendCorrection(corrections, "rainIntensityThunderstormMultiplier", oldRainIntensityThunderstormMultiplier, rainIntensityThunderstormMultiplier);
+        appendCorrection(corrections, "snowmeltChunkRadius", oldSnowmeltChunkRadius, snowmeltChunkRadius);
+        appendCorrection(corrections, "snowmeltIntervalTicks", oldSnowmeltIntervalTicks, snowmeltIntervalTicks);
+        appendCorrection(corrections, "snowmeltAttemptsPerChunk", oldSnowmeltAttemptsPerChunk, snowmeltAttemptsPerChunk);
+        appendCorrection(corrections, "snowmeltMaxChunksPerTick", oldSnowmeltMaxChunksPerTick, snowmeltMaxChunksPerTick);
+        appendCorrection(corrections, "snowmeltBaseChance", oldSnowmeltBaseChance, snowmeltBaseChance);
+        appendCorrection(corrections, "snowmeltWaterAmount", oldSnowmeltWaterAmount, snowmeltWaterAmount);
+        appendCorrection(corrections, "snowmeltMinSkyLight", oldSnowmeltMinSkyLight, snowmeltMinSkyLight);
+        appendCorrection(corrections, "snowmeltMinTemperature", oldSnowmeltMinTemperature, snowmeltMinTemperature);
 
         if (!corrections.isEmpty()) {
             FlowingFluids.warn("Adjusted invalid flowing_fluids config values: " + corrections);

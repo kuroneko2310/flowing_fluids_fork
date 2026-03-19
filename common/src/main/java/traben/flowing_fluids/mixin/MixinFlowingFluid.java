@@ -619,6 +619,9 @@ public abstract class MixinFlowingFluid extends Fluid {
             if (changed) {
                 int moved = Math.max(0, amount - fromAmount);
                 float momentum = Mth.clamp((moved / 4.0f) + (transferBias / 6.0f), 0.2f, 1.0f);
+                if (waterProfile != null) {
+                    momentum = Mth.clamp(momentum + waterProfile.getFlowSpeedMomentumBonus(), 0.2f, 1.0f);
+                }
                 AdaptiveTickScheduler.recordFlowDirection(level, blockPos, dir, momentum);
             }
         }
@@ -631,7 +634,9 @@ public abstract class MixinFlowingFluid extends Fluid {
             return 0.15f;
         }
         WaterFlowProfile waterProfile = flowing_fluids$getWaterFlowProfile(level, origin, fluidState, amount);
-        float bias = 0.15f + waterProfile.getDirectionalTransferBias() * 0.06f;
+        float bias = 0.15f
+                + waterProfile.getDirectionalTransferBias() * 0.06f
+                + waterProfile.getFlowSpeedDirectionalBonus();
         if (flowing_fluids$isRiverTransferZone(level, origin, origin.relative(direction))) {
             bias += 0.03f;
         }
@@ -1351,7 +1356,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         WaterFlowProfile profile = waterProfile != null
                 ? waterProfile
                 : flowing_fluids$getWaterFlowProfile(level, origin, fluidState, sourceAmount);
-        float bias = profile.getDirectionalTransferBias();
+        float bias = profile.getDirectionalTransferBias() + profile.getFlowSpeedTransferBonus();
         if (targetAmount <= 0) {
             bias += 0.1f;
         }
