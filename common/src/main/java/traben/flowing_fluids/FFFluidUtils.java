@@ -135,8 +135,25 @@ public class FFFluidUtils {
     }
 
     public static boolean canFluidFlowToNeighbourFromPos(LevelAccessor accessor, BlockPos pos, FlowingFluid fluid, int amount) {
-        for (Direction direction :Direction.Plane.HORIZONTAL) {
-            if (FFFluidUtils.canFluidFlowFromPosToDirection(fluid, amount, accessor, pos, direction)) {
+        return canFluidFlowToNeighbourFromPos(accessor, pos, accessor.getBlockState(pos), fluid, amount);
+    }
+
+    public static boolean canFluidFlowToNeighbourFromPos(LevelAccessor accessor, BlockPos pos, BlockState sourceState,
+                                                         FlowingFluid fluid, int amount) {
+        BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            neighborPos.setWithOffset(pos, direction);
+            BlockState neighborState = accessor.getBlockState(neighborPos);
+            if (FFFluidUtils.canFluidFlowFromPosToDirection(
+                    fluid,
+                    amount,
+                    accessor,
+                    pos,
+                    sourceState,
+                    direction,
+                    neighborPos,
+                    neighborState,
+                    neighborState.getFluidState())) {
                 return true;
             }
         }
@@ -417,12 +434,14 @@ public class FFFluidUtils {
         return getEffectiveFluidState(level, pos, level.getBlockState(pos));
     }
 
-    private static void notifyCaches(LevelAccessor levelAccessor, BlockPos pos, int newAmount) {
+    private static void notifyCaches(LevelAccessor levelAccessor, BlockPos pos, int newAmount, boolean invalidateConnectedComponents) {
         AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
         ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
         int clamped = Math.max(0, Math.min(8, newAmount));
         FluidSpatialGrid.setFluidAt(levelAccessor, pos, clamped > 0, FluidAmountConverter.toInternal(clamped));
-        invalidateConnectedFluidComponents(levelAccessor, pos);
+        if (invalidateConnectedComponents) {
+            invalidateConnectedFluidComponents(levelAccessor, pos);
+        }
     }
 
     private static void invalidateConnectedFluidComponents(LevelAccessor levelAccessor, BlockPos pos) {
@@ -434,11 +453,25 @@ public class FFFluidUtils {
         FluidSpatialGrid.invalidateComponentsInRegion(levelAccessor, pos, radius);
     }
 
+    private static boolean shouldInvalidateConnectedFluidComponents(FluidState previousState, Fluid newFluid, int newAmount) {
+        boolean hadFluid = !previousState.isEmpty() && previousState.getAmount() > 0;
+        boolean hasFluid = newAmount > 0;
+        if (hadFluid != hasFluid) {
+            return true;
+        }
+        if (!hadFluid) {
+            return false;
+        }
+        // Connected components track reachability, so pure amount changes do not need a full regional reset.
+        return !previousState.getType().isSame(newFluid);
+    }
+
 
     public static boolean setFluidStateAtPosToNewAmount(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid, int newAmount) {
         BlockState blockState = levelAccessor.getBlockState(pos);
         int normalizedAmount = normalizeRequestedFluidAmount(levelAccessor, pos, blockState, fluid, newAmount);
         FluidState existingState = getEffectiveFluidState(levelAccessor, pos, blockState);
+        boolean invalidateConnectedComponents = shouldInvalidateConnectedFluidComponents(existingState, fluid, normalizedAmount);
         if (normalizedAmount == 0) {
             if (existingState.isEmpty()) {
                 return true;
@@ -453,7 +486,7 @@ public class FFFluidUtils {
 
         if (supportsVirtualFluidState(levelAccessor, blockState)) {
             ExtendedWaterlogStore.set(levelAccessor, pos, fluid, normalizedAmount);
-            notifyCaches(levelAccessor, pos, normalizedAmount);
+            notifyCaches(levelAccessor, pos, normalizedAmount, invalidateConnectedComponents);
             return true;
         }
         if (isVanillaWaterloggable(blockState)) {
@@ -461,7 +494,7 @@ public class FFFluidUtils {
             if (normalizedAmount == 8) {
                 boolean result = liquidBlockContainer.placeLiquid(levelAccessor, pos, blockState, getStateForFluidByAmount(fluid, normalizedAmount));
                 if (result) {
-                    notifyCaches(levelAccessor, pos, normalizedAmount);
+                    notifyCaches(levelAccessor, pos, normalizedAmount, invalidateConnectedComponents);
                 }
                 return result;
             }
@@ -470,6 +503,9 @@ public class FFFluidUtils {
             AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
             ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
             FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
+            if (invalidateConnectedComponents) {
+                invalidateConnectedFluidComponents(levelAccessor, pos);
+            }
             return true;
         }
         if (blockState.getBlock() instanceof LiquidBlockContainer) {
@@ -483,7 +519,7 @@ public class FFFluidUtils {
         }
         boolean result = levelAccessor.setBlock(pos, getStateForFluidByAmount(fluid, normalizedAmount).createLegacyBlock(), 3);
         if (result) {
-            notifyCaches(levelAccessor, pos, normalizedAmount);
+            notifyCaches(levelAccessor, pos, normalizedAmount, invalidateConnectedComponents);
         }
         return result;
     }
@@ -593,8 +629,14 @@ public class FFFluidUtils {
 
     public static boolean removeAllFluidAtPos(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid) {
         var blockState = levelAccessor.getBlockState(pos);
+        FluidState existingState = getEffectiveFluidState(levelAccessor, pos, blockState);
+        boolean invalidateConnectedComponents = !existingState.isEmpty() && existingState.getAmount() > 0;
         if (supportsVirtualFluidState(levelAccessor, blockState) || ExtendedWaterlogStore.has(levelAccessor, pos)) {
-            return clearStoredVirtualFluidState(levelAccessor, pos);
+            boolean cleared = clearStoredVirtualFluidState(levelAccessor, pos);
+            if (cleared && invalidateConnectedComponents) {
+                invalidateConnectedFluidComponents(levelAccessor, pos);
+            }
+            return cleared;
         }
         if (blockState.getBlock() instanceof LiquidBlockContainer
                 && blockState.getBlock() instanceof BucketPickup bucketPickup) {
@@ -602,6 +644,9 @@ public class FFFluidUtils {
             AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
             ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
             FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
+            if (invalidateConnectedComponents) {
+                invalidateConnectedFluidComponents(levelAccessor, pos);
+            }
             return true;
         }
 
@@ -614,6 +659,9 @@ public class FFFluidUtils {
             AdaptiveTickScheduler.notifyFluidChange(levelAccessor, pos);
             ChunkLocalSlopeCache.clearChunk(levelAccessor, new net.minecraft.world.level.ChunkPos(pos));
             FluidSpatialGrid.removeFluidAt(levelAccessor, pos);
+            if (invalidateConnectedComponents) {
+                invalidateConnectedFluidComponents(levelAccessor, pos);
+            }
         }
         return result;
     }
@@ -932,18 +980,7 @@ public class FFFluidUtils {
     }
 
     private static int determineDryActivationCount(int remaining, int dryCandidates) {
-        if (remaining <= 0 || dryCandidates <= 0) {
-            return 0;
-        }
-        int minCellsNeeded = Math.max(1, (remaining + 7) / 8);
-        int maxCellsForCoherentFill = remaining >= MIN_DRY_CELL_FILL_LEVEL
-                ? Math.max(1, remaining / MIN_DRY_CELL_FILL_LEVEL)
-                : 1;
-        int selected = Math.min(dryCandidates, minCellsNeeded);
-        if (selected > maxCellsForCoherentFill) {
-            selected = Math.min(dryCandidates, maxCellsForCoherentFill);
-        }
-        return Math.max(1, selected);
+        return FluidRegressionLogic.computeDryActivationCount(remaining, dryCandidates, MIN_DRY_CELL_FILL_LEVEL);
     }
 
     private static int distributeAcrossCandidates(int[] levels, List<Integer> orderedIndices, int amount, int maxLevel) {

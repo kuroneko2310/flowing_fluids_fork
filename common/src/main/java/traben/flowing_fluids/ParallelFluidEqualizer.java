@@ -422,9 +422,7 @@ public final class ParallelFluidEqualizer {
         maxDepth = Math.min(Math.max(minDepth, FlowingFluids.config.bfsMaxSearchDistance), maxDepth);
         maxDepth = Math.max(minDepth, Math.round(maxDepth * Math.max(0.6f, distanceLoadFactor)));
 
-        int snapshotRadius = Math.max(maxDepth, Math.max(8, FlowingFluids.config.inletProbeMaxSteps));
-        snapshotRadius = Math.max(snapshotRadius, Math.max(8, FlowingFluids.config.horizontalSupplementDepth));
-        snapshotRadius = flowProfile.clampSnapshotRadius(snapshotRadius);
+        int snapshotRadius = flowProfile.computeDistanceScaledSnapshotRadius(maxDepth, distanceLoadFactor);
 
         return new Request(
             startPos.immutable(),

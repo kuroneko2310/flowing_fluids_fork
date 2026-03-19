@@ -400,7 +400,26 @@ public final class WaterFlowProfile {
         return Mth.clamp(baseFactor * multiplier, 0.25f, 1.0f);
     }
 
-    public int clampSnapshotRadius(int snapshotRadius) {
+    public int computeDistanceScaledSnapshotRadius(int maxDepth, float distanceLoadFactor) {
+        return computeDistanceScaledSnapshotRadius(maxDepth, distanceLoadFactor, shouldRunInletProbe(), regime);
+    }
+
+    static int computeDistanceScaledSnapshotRadius(int maxDepth, float distanceLoadFactor,
+                                                   boolean allowInletProbe, Regime regime) {
+        float clampedLoadFactor = Mth.clamp(distanceLoadFactor, 0.25f, 1.0f);
+        int inletProbeRadius = allowInletProbe
+            ? Math.max(0, Math.round(FlowingFluids.config.inletProbeMaxSteps * clampedLoadFactor))
+            : 0;
+        int horizontalSweepRadius = Math.max(1, Math.round(
+            FlowingFluids.config.horizontalSupplementDepth * (0.6f + 0.4f * clampedLoadFactor)));
+        // Keep capture wide enough for the actual BFS depth and the scaled side probes,
+        // but avoid forcing every request up to the raw config floor when load shedding
+        // has already reduced the work we intend to do.
+        int snapshotRadius = Math.max(maxDepth, Math.max(6, Math.max(inletProbeRadius, horizontalSweepRadius)));
+        return clampSnapshotRadius(snapshotRadius, regime);
+    }
+
+    private static int clampSnapshotRadius(int snapshotRadius, Regime regime) {
         return switch (regime) {
             case LARGE_BODY -> Math.min(snapshotRadius, Math.max(6, FlowingFluids.config.broadSurfaceSlopeClamp + 4));
             case SUBTERRANEAN_POOL -> Math.min(snapshotRadius, 6);

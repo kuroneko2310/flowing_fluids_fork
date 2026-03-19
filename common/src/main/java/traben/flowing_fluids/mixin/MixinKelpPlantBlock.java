@@ -28,7 +28,7 @@ public abstract class MixinKelpPlantBlock extends GrowingPlantBodyBlock {
                 && FlowingFluids.config.isWaterAllowed()
                 && level instanceof LevelAccessor accessor) {
             //break the plant if its water can flow out of it
-            if(FFFluidUtils.canFluidFlowToNeighbourFromPos(accessor, pos, Fluids.WATER, 8)) {
+            if(FFFluidUtils.canFluidFlowToNeighbourFromPos(accessor, pos, state, Fluids.WATER, 8)) {
                 return false;
             }
         }

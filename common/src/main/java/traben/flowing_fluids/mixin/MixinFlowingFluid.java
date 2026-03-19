@@ -41,6 +41,7 @@ import traben.flowing_fluids.FFDownwardFlowTarget;
 import traben.flowing_fluids.FFFlowDownResult;
 import traben.flowing_fluids.FFSectionSampleContext;
 import traben.flowing_fluids.FluidAmountConverter;
+import traben.flowing_fluids.FluidRegressionLogic;
 import traben.flowing_fluids.FluidSectionDataCache;
 import traben.flowing_fluids.FluidTickBuffer;
 import traben.flowing_fluids.FluidSpatialGrid;
@@ -162,7 +163,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                 return false; // let normal flow handling decide
             }
 
-            int transferAmount = MixinFluidRegressionLogic.computeVanillaWaterlogTransferAmount(fromIsWaterloggableVanilla, toIsWaterloggableVanilla, amount, destFluidAmount);
+            int transferAmount = FluidRegressionLogic.computeVanillaWaterlogTransferAmount(fromIsWaterloggableVanilla, toIsWaterloggableVanilla, amount, destFluidAmount);
             if (transferAmount <= 0) {
                 return false;
             }
@@ -537,9 +538,6 @@ public abstract class MixinFlowingFluid extends Fluid {
         // this amount is already confirmed to be less than {amount}
         final int destFluidAmount = FFFluidUtils.getEffectiveFluidState(level, posDir, level.getBlockState(posDir)).getAmount();
 
-        // If we retained a minimum (drop-off) amount for downward flow, allow leveling without draining below it.
-        int combinedTotal = amount + destFluidAmount;
-
         // must force total flow of fluid because of waterloggables
         if (ff$handleWaterLoggedFlowAndReturnIfHandled(level, blockPos, fluidState, amount, thisState, posDir, destFluidAmount, false))
             return;
@@ -554,6 +552,9 @@ public abstract class MixinFlowingFluid extends Fluid {
                 : null;
         final float transferBias = flowing_fluids$getProfileTransferBias(level, blockPos, dir, fluidState, amount,
                 destFluidAmount, difference, waterProfile);
+        final boolean preferThinDryEdgeBalance = fluidState.is(FluidTags.WATER)
+                && FluidRegressionLogic.shouldPreferThinDryEdgeBalance(
+                amount, destFluidAmount, difference, minimumRetainedAmount);
 
         if (fluidState.is(FluidTags.WATER)
                 && (waterProfile == null || !waterProfile.shouldBypassStableTransferSuppression())
@@ -577,11 +578,13 @@ public abstract class MixinFlowingFluid extends Fluid {
                 amount,
                 destFluidAmount,
                 minimumRetainedAmount,
-                0f);
+                preferThinDryEdgeBalance
+                        ? FluidRegressionLogic.getThinDryEdgeDestinationBiasLevels(amount, destFluidAmount)
+                        : 0f);
         fromAmount = baseBalance.sourceAmount();
         toAmount = baseBalance.destinationAmount();
 
-        if (difference > 0 && transferBias > 0f) {
+        if (difference > 0 && transferBias > 0f && !preferThinDryEdgeBalance) {
             int available = Math.max(0, fromAmount - minimumRetainedAmount);
             float maxExtraTransfer = waterProfile != null && waterProfile.regime() == WaterFlowProfile.Regime.BREACH
                     ? 3
@@ -1451,6 +1454,9 @@ public abstract class MixinFlowingFluid extends Fluid {
             return true;
         }
         if (difference <= 0 || difference > 3) {
+            return false;
+        }
+        if (FluidRegressionLogic.shouldPreserveThinShallowFlow(sourceAmount, targetAmount, difference)) {
             return false;
         }
         if (sourceAmount > 3 || targetAmount > 2) {

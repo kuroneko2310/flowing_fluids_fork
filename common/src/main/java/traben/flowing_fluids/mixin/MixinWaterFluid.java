@@ -11,6 +11,7 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
@@ -23,6 +24,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
+import traben.flowing_fluids.FluidRegressionLogic;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.drying.DryingEventSystem;
 
@@ -175,9 +177,10 @@ private boolean ff$tryRainFill(final Level level, final BlockPos blockPos, float
             if (DryingEventSystem.isShadeProtected(level, blockPos)) return false;
             if (FlowingFluids.config.evaporationRequiresSky && !level.canSeeSky(blockPos.above())) return false;
             if (level.isRainingAt(blockPos.above())) return false;
-            if (FFFluidUtils.canFluidFlowToNeighbourFromPos(level, blockPos, this, amount)) return false;
+            BlockState sourceState = level.getBlockState(blockPos);
+            if (FFFluidUtils.canFluidFlowToNeighbourFromPos(level, blockPos, sourceState, this, amount)) return false;
             FluidState aboveFluid = FFFluidUtils.getEffectiveFluidState(level, blockPos.above());
-            if (!MixinFluidRegressionLogic.isSurfaceEvaporationCandidate(aboveFluid != null && aboveFluid.getType().isSame(this))) return false;
+            if (!FluidRegressionLogic.isSurfaceEvaporationCandidate(aboveFluid != null && aboveFluid.getType().isSame(this))) return false;
             // evaporate over time if not raining
             if (amount <= getDropOff(level) && FFFluidUtils.getEffectiveFluidState(level, blockPos.below()).isEmpty()) {
                 return FFFluidUtils.applyLocalFluidAmountDelta(level, blockPos, this, -amount);
@@ -191,7 +194,8 @@ private boolean ff$tryRainFill(final Level level, final BlockPos blockPos, float
         if (!DryingEventSystem.hasNearbyHeatSource(level, blockPos)) return false;
         if (FFFluidUtils.isProtectedInfiniteBiomeWater(level, blockPos, this, amount)) return false;
         if (AdaptiveTickScheduler.isFlowActiveNow(level, blockPos)) return false;
-        if (FFFluidUtils.canFluidFlowToNeighbourFromPos(level, blockPos, this, amount)) return false;
+        BlockState sourceState = level.getBlockState(blockPos);
+        if (FFFluidUtils.canFluidFlowToNeighbourFromPos(level, blockPos, sourceState, this, amount)) return false;
         float heatChance = Mth.clamp(FlowingFluids.config.hotBlockEvaporationChance * DryingEventSystem.getAmbientEvaporationMultiplier(level), 0.0f, 1.0f);
         if (chance >= heatChance) return false;
         int drainAmount = Mth.clamp(FlowingFluids.config.hotBlockEvaporationDrainAmount, 1, amount);

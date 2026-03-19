@@ -159,13 +159,22 @@ public class AdaptiveTickScheduler {
             neighborPos.setWithOffset(pos, dir);
             boolean neighborLoaded = level.isLoaded(neighborPos);
             int neighborAmount = neighborLoaded ? FluidSpatialGrid.getFluidAmount(level, neighborPos) : -1;
-            BlockState neighborState = neighborLoaded ? level.getBlockState(neighborPos) : null;
-            FluidState neighborFluid = neighborLoaded && neighborState != null
-                ? FFFluidUtils.getEffectiveFluidState(level, neighborPos, neighborState)
-                : Fluids.EMPTY.defaultFluidState();
-            boolean neighborEmpty = neighborLoaded && neighborFluid.isEmpty();
-            boolean neighborReplaceable = neighborLoaded && neighborState != null
-                && (neighborState.isAir() || neighborState.canBeReplaced());
+            BlockState neighborState = null;
+            FluidState neighborFluid = Fluids.EMPTY.defaultFluidState();
+            boolean neighborEmpty = false;
+            boolean neighborReplaceable = false;
+
+            // Wide water bodies are already represented in the spatial grid, so avoid
+            // paying for blockstate + effective-fluid lookups unless the grid says empty.
+            if (neighborLoaded && neighborAmount <= 0) {
+                neighborState = level.getBlockState(neighborPos);
+                neighborFluid = FFFluidUtils.getEffectiveFluidState(level, neighborPos, neighborState);
+                neighborEmpty = neighborFluid.isEmpty();
+                neighborReplaceable = neighborState.isAir() || neighborState.canBeReplaced();
+                if (!neighborFluid.isEmpty()) {
+                    neighborAmount = FluidAmountConverter.toInternal(neighborFluid.getAmount());
+                }
+            }
 
             neighborSignature = mixNeighborSignature(neighborSignature, dir, neighborAmount, neighborLoaded, neighborEmpty, neighborReplaceable);
             hasUnloadedNeighbor = hasUnloadedNeighbor || !neighborLoaded;
@@ -249,16 +258,23 @@ public class AdaptiveTickScheduler {
 
     private static boolean hasNearbyStepDown(Level level, BlockPos pos) {
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos belowSide = new BlockPos.MutableBlockPos();
 
         for (Direction dir : Direction.Plane.HORIZONTAL) {
             cursor.setWithOffset(pos, dir);
+            if (FluidSpatialGrid.getFluidAmount(level, cursor) > 0) {
+                continue;
+            }
             BlockState sideState = level.getBlockState(cursor);
             FluidState sideFluid = FFFluidUtils.getEffectiveFluidState(level, cursor, sideState);
 
             boolean sidePassable = sideFluid.isEmpty() || sideState.isAir();
             if (!sidePassable) continue;
 
-            BlockPos belowSide = cursor.below();
+            belowSide.set(cursor).move(Direction.DOWN);
+            if (FluidSpatialGrid.getFluidAmount(level, belowSide) > 0) {
+                continue;
+            }
             BlockState belowSideState = level.getBlockState(belowSide);
             FluidState belowSideFluid = FFFluidUtils.getEffectiveFluidState(level, belowSide, belowSideState);
 
@@ -279,18 +295,41 @@ public class AdaptiveTickScheduler {
         if (isFlowActive(level, pos)) {
             return true;
         }
-        if (FlowingFluids.config.forceTickWhenAdjacentAir && hasAdjacentAir(level, pos)) {
-            return true;
-        }
-        if (hasNearbyStepDown(level, pos)) {
-            return true;
-        }
-        if (FlowingFluids.config.forceFlowLevelDifference > 0
-                && hasStrongLevelDifference(level, pos, FlowingFluids.config.forceFlowLevelDifference)) {
-            return true;
+        boolean saturatedNeighborhood = hasFluidFilledFlowNeighborhood(level, pos);
+        if (!saturatedNeighborhood) {
+            if (FlowingFluids.config.forceTickWhenAdjacentAir && hasAdjacentAir(level, pos)) {
+                return true;
+            }
+            if (hasNearbyStepDown(level, pos)) {
+                return true;
+            }
+            if (FlowingFluids.config.forceFlowLevelDifference > 0
+                    && hasStrongLevelDifference(level, pos, FlowingFluids.config.forceFlowLevelDifference)) {
+                return true;
+            }
         }
         float equilibriumIndex = calculateEquilibriumIndex(level, pos, fluidAmount);
         return equilibriumIndex > EQUILIBRIUM_STABLE_THRESHOLD;
+    }
+
+    private static boolean hasFluidFilledFlowNeighborhood(Level level, BlockPos pos) {
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        for (Direction dir : FLOW_CHECK_DIRECTIONS) {
+            mutablePos.setWithOffset(pos, dir);
+            if (!level.isLoaded(mutablePos)) {
+                return false;
+            }
+            int neighborAmount = FluidSpatialGrid.getFluidAmount(level, mutablePos);
+            if (neighborAmount > 0) {
+                continue;
+            }
+            BlockState state = level.getBlockState(mutablePos);
+            FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, mutablePos, state);
+            if (fluidState.isEmpty() || fluidState.getAmount() <= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -440,6 +479,9 @@ public class AdaptiveTickScheduler {
         BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         for (Direction dir : FLOW_CHECK_DIRECTIONS) {
             mutablePos.setWithOffset(pos, dir);
+            if (FluidSpatialGrid.getFluidAmount(level, mutablePos) > 0) {
+                continue;
+            }
             BlockState state = level.getBlockState(mutablePos);
             FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, mutablePos, state);
             if (fluidState.isEmpty() && (state.isAir() || state.canBeReplaced())) {
@@ -461,6 +503,13 @@ public class AdaptiveTickScheduler {
         BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         for (Direction dir : FLOW_CHECK_DIRECTIONS) {
             mutablePos.setWithOffset(pos, dir);
+            int neighborInternalAmount = FluidSpatialGrid.getFluidAmount(level, mutablePos);
+            if (neighborInternalAmount > 0) {
+                int neighborAmount = FluidAmountConverter.toBlockState(neighborInternalAmount);
+                if (Math.abs(currentAmount - neighborAmount) < threshold) {
+                    continue;
+                }
+            }
             BlockState state = level.getBlockState(mutablePos);
             FluidState neighbor = FFFluidUtils.getEffectiveFluidState(level, mutablePos, state);
             if (neighbor.isEmpty()) {
@@ -518,10 +567,11 @@ public class AdaptiveTickScheduler {
         if (!(level instanceof Level lvl)) {
             return false;
         }
-        boolean north = isSolidWall(lvl, pos.north(), state);
-        boolean south = isSolidWall(lvl, pos.south(), state);
-        boolean east = isSolidWall(lvl, pos.east(), state);
-        boolean west = isSolidWall(lvl, pos.west(), state);
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        boolean north = isSolidWall(lvl, mutablePos.setWithOffset(pos, Direction.NORTH), state);
+        boolean south = isSolidWall(lvl, mutablePos.setWithOffset(pos, Direction.SOUTH), state);
+        boolean east = isSolidWall(lvl, mutablePos.setWithOffset(pos, Direction.EAST), state);
+        boolean west = isSolidWall(lvl, mutablePos.setWithOffset(pos, Direction.WEST), state);
 
         int solidSides = 0;
         if (north) solidSides++;
@@ -546,6 +596,9 @@ public class AdaptiveTickScheduler {
     }
 
     private static boolean isSolidWall(Level level, BlockPos pos, FluidState state) {
+        if (FluidSpatialGrid.getFluidAmount(level, pos) > 0) {
+            return false;
+        }
         BlockState neighborState = level.getBlockState(pos);
         FluidState neighborFluid = FFFluidUtils.getEffectiveFluidState(level, pos, neighborState);
         if (!neighborFluid.isEmpty()) {
