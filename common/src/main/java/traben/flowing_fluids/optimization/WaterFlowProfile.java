@@ -94,11 +94,24 @@ public final class WaterFlowProfile {
         float flowMomentum = FlowingFluids.config.flowInertiaMaxAgeTicks > 0
             ? AdaptiveTickScheduler.getFlowMomentum(level, pos, FlowingFluids.config.flowInertiaMaxAgeTicks)
             : 0.0f;
-        NeighborhoodMetrics metrics = sampleNeighborhood(level, pos, fluidType, flowingFluid, amount, sectionCache);
+        BasicNeighborhoodMetrics basicMetrics = sampleBasicNeighborhood(level, pos, fluidType, amount, sectionCache);
 
         var biome = level.getBiome(pos);
         boolean oceanLikeBiome = FFFluidUtils.isOceanBiome(biome) || FFFluidUtils.isBeachBiome(biome);
         boolean riverLikeBiome = FFFluidUtils.isRiverBiome(biome);
+        WaterFlowProfile fastPathProfile = tryFastCalmInteriorProfile(
+            amount,
+            flowActive,
+            flowMomentum,
+            oceanLikeBiome,
+            riverLikeBiome,
+            basicMetrics
+        );
+        if (fastPathProfile != null) {
+            return fastPathProfile;
+        }
+
+        NeighborhoodMetrics metrics = sampleNeighborhood(level, pos, fluidType, flowingFluid, amount, sectionCache, basicMetrics);
         boolean shouldSampleStableTicks = shouldSampleStableTicks(amount, flowActive, oceanLikeBiome, riverLikeBiome, metrics);
         int stableTicks = shouldSampleStableTicks ? AdaptiveTickScheduler.getPoolStableTicks(level, pos, 20) : 0;
         int stackedColumnHeight = shouldMeasureStackedColumnHeight(amount, metrics)
@@ -167,6 +180,58 @@ public final class WaterFlowProfile {
             metrics.lateralWaterNeighbors(),
             metrics.lateralEscapeRoutes(),
             stackedColumnHeight,
+            flowMomentum
+        );
+    }
+
+    static boolean qualifiesForFastCalmInterior(int amount, boolean flowActive, float flowMomentum,
+                                                boolean oceanLikeBiome, boolean riverLikeBiome,
+                                                boolean hasFluidAbove, boolean supportedBelow,
+                                                int lateralWaterNeighbors, int surfaceEdgeCount) {
+        if (amount < 8
+                || flowActive
+                || flowMomentum > 0.12f
+                || riverLikeBiome
+                || hasFluidAbove
+                || !supportedBelow
+                || lateralWaterNeighbors < 4
+                || surfaceEdgeCount > 0) {
+            return false;
+        }
+        return oceanLikeBiome || lateralWaterNeighbors >= 4;
+    }
+
+    private static @Nullable WaterFlowProfile tryFastCalmInteriorProfile(int amount, boolean flowActive, float flowMomentum,
+                                                                         boolean oceanLikeBiome, boolean riverLikeBiome,
+                                                                         BasicNeighborhoodMetrics metrics) {
+        if (!qualifiesForFastCalmInterior(
+            amount,
+            flowActive,
+            flowMomentum,
+            oceanLikeBiome,
+            riverLikeBiome,
+            metrics.hasFluidAbove(),
+            metrics.supportedBelow(),
+            metrics.lateralWaterNeighbors(),
+            metrics.surfaceEdgeCount()
+        )) {
+            return null;
+        }
+
+        return new WaterFlowProfile(
+            Regime.LARGE_BODY,
+            true,
+            true,
+            false,
+            false,
+            false,
+            oceanLikeBiome,
+            riverLikeBiome,
+            false,
+            false,
+            metrics.lateralWaterNeighbors(),
+            0,
+            1,
             flowMomentum
         );
     }
@@ -341,7 +406,7 @@ public final class WaterFlowProfile {
                 ? delta >= 3 || flowActive || flowMomentum > 0.35f
                 : true;
             case SUBTERRANEAN_POOL -> delta >= 4 || flowActive;
-            case LARGE_BODY -> delta >= 3 || flowActive;
+            case LARGE_BODY -> delta >= 2 || flowActive;
             case IMPOUNDED -> delta >= 2 || flowMomentum > 0.12f;
             case BREACH -> true;
         };
@@ -360,7 +425,7 @@ public final class WaterFlowProfile {
 
     public int getMinimumEqualizerDepth() {
         return switch (regime) {
-            case LARGE_BODY -> 4;
+            case LARGE_BODY -> 2;
             case SUBTERRANEAN_POOL -> 3;
             case IMPOUNDED -> 5;
             case BREACH -> 6;
@@ -445,7 +510,7 @@ public final class WaterFlowProfile {
 
     public int getVisitedPromotionVarianceThreshold() {
         return switch (regime) {
-            case LARGE_BODY -> 4;
+            case LARGE_BODY -> 2;
             case SUBTERRANEAN_POOL -> 5;
             case IMPOUNDED -> 3;
             case BREACH -> 1;
@@ -568,9 +633,8 @@ public final class WaterFlowProfile {
         };
     }
 
-    private static NeighborhoodMetrics sampleNeighborhood(Level level, BlockPos pos, Fluid fluidType,
-                                                          @Nullable FlowingFluid flowingFluid, int amount,
-                                                          @Nullable FluidSectionDataCache sectionCache) {
+    private static BasicNeighborhoodMetrics sampleBasicNeighborhood(Level level, BlockPos pos, Fluid fluidType,
+                                                                    int amount, @Nullable FluidSectionDataCache sectionCache) {
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         SampledCell above = sampleCell(level, cursor.set(pos.getX(), pos.getY() + 1, pos.getZ()), fluidType, sectionCache);
         SampledCell below = sampleCell(level, cursor.set(pos.getX(), pos.getY() - 1, pos.getZ()), fluidType, sectionCache);
@@ -578,9 +642,33 @@ public final class WaterFlowProfile {
         boolean supportedBelow = (below.matches(fluidType) && below.amount() >= amount)
             || (!below.air() && !below.replaceable());
 
+        int lateralWaterNeighbors = 0;
+        int surfaceEdgeCount = 0;
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            cursor.setWithOffset(pos, dir);
+            SampledCell neighbor = sampleCell(level, cursor, fluidType, sectionCache);
+            if (neighbor.matches(fluidType)) {
+                lateralWaterNeighbors++;
+            } else if (neighbor.isSurfaceEdge()) {
+                surfaceEdgeCount++;
+            }
+        }
+        return new BasicNeighborhoodMetrics(
+            hasFluidAbove,
+            supportedBelow,
+            lateralWaterNeighbors,
+            surfaceEdgeCount
+        );
+    }
+
+    private static NeighborhoodMetrics sampleNeighborhood(Level level, BlockPos pos, Fluid fluidType,
+                                                          @Nullable FlowingFluid flowingFluid, int amount,
+                                                          @Nullable FluidSectionDataCache sectionCache,
+                                                          BasicNeighborhoodMetrics basicMetrics) {
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         BlockState sourceState = flowingFluid != null ? level.getBlockState(pos) : null;
         boolean immediateDownwardOutlet = false;
-        if (flowingFluid != null && (!below.matches(fluidType) || below.amount() < amount)) {
+        if (flowingFluid != null && !basicMetrics.supportedBelow()) {
             BlockPos belowPos = pos.below();
             BlockState belowState = level.getBlockState(belowPos);
             FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
@@ -597,17 +685,10 @@ public final class WaterFlowProfile {
             ) && (belowFluid.isEmpty() || !belowFluid.getType().isSame(fluidType) || belowFluid.getAmount() < amount);
         }
 
-        int lateralWaterNeighbors = 0;
-        int surfaceEdgeCount = 0;
         int lateralEscapeRoutes = 0;
         for (Direction dir : Direction.Plane.HORIZONTAL) {
             cursor.setWithOffset(pos, dir);
             SampledCell neighbor = sampleCell(level, cursor, fluidType, sectionCache);
-            if (neighbor.matches(fluidType)) {
-                lateralWaterNeighbors++;
-            } else if (neighbor.isSurfaceEdge()) {
-                surfaceEdgeCount++;
-            }
             if (flowingFluid == null || (neighbor.matches(fluidType) && neighbor.amount() >= amount)) {
                 continue;
             }
@@ -628,11 +709,11 @@ public final class WaterFlowProfile {
             }
         }
         return new NeighborhoodMetrics(
-            hasFluidAbove,
-            supportedBelow,
+            basicMetrics.hasFluidAbove(),
+            basicMetrics.supportedBelow(),
             immediateDownwardOutlet,
-            lateralWaterNeighbors,
-            surfaceEdgeCount,
+            basicMetrics.lateralWaterNeighbors(),
+            basicMetrics.surfaceEdgeCount(),
             lateralEscapeRoutes
         );
     }
@@ -728,6 +809,10 @@ public final class WaterFlowProfile {
 
     private record NeighborhoodMetrics(boolean hasFluidAbove, boolean supportedBelow, boolean immediateDownwardOutlet,
                                        int lateralWaterNeighbors, int surfaceEdgeCount, int lateralEscapeRoutes) {
+    }
+
+    private record BasicNeighborhoodMetrics(boolean hasFluidAbove, boolean supportedBelow,
+                                            int lateralWaterNeighbors, int surfaceEdgeCount) {
     }
 
     private record SampledCell(@Nullable Fluid fluid, int amount, boolean air, boolean replaceable) {

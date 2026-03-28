@@ -24,11 +24,7 @@ public final class FFSectionSampleContext {
     }
 
     public void end() {
-        this.level = null;
-        this.cache = null;
-        this.sampleReads = 0;
-        this.waterProfiles.clear();
-        this.gameTime = Long.MIN_VALUE;
+        reset();
     }
 
     private void ensureFresh(Level level) {
@@ -51,7 +47,7 @@ public final class FFSectionSampleContext {
             return cache;
         }
         sampleReads++;
-        if (sampleReads < sampleThreshold) {
+        if (!shouldBuildSectionCache(sampleReads, sampleThreshold)) {
             return null;
         }
         cache = new FluidSectionDataCache(level, 8);
@@ -80,20 +76,40 @@ public final class FFSectionSampleContext {
     }
 
     public void invalidate(BlockPos... positions) {
-        if (cache == null && waterProfiles.isEmpty()) {
+        if (positions == null || positions.length == 0) {
             return;
         }
-        for (BlockPos pos : positions) {
-            if (pos == null) {
-                continue;
+        // Local writes only invalidate the touched sections; keeping the rest of the
+        // sample cache alive avoids rebuilding every later profile in the same tick.
+        if (cache != null) {
+            for (BlockPos pos : positions) {
+                if (pos != null) {
+                    cache.invalidate(pos);
+                }
             }
-            if (cache != null) {
-                cache.invalidate(pos);
-            }
-            waterProfiles.remove(pos.asLong());
         }
+        waterProfiles.clear();
+    }
+
+    static boolean shouldBuildSectionCache(int sampleReads, int sampleThreshold) {
+        if (sampleThreshold <= 0) {
+            return sampleReads > 0;
+        }
+        return sampleReads >= sampleThreshold;
+    }
+
+    static boolean shouldBuildSectionCache(int sampleReads, int sampleThreshold, boolean dirtyTick) {
+        return shouldBuildSectionCache(sampleReads, sampleThreshold);
     }
 
     private record CachedWaterProfile(Fluid fluid, int amount, WaterFlowProfile profile) {
+    }
+
+    private void reset() {
+        this.level = null;
+        this.cache = null;
+        this.sampleReads = 0;
+        this.waterProfiles.clear();
+        this.gameTime = Long.MIN_VALUE;
     }
 }

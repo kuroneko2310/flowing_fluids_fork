@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import traben.flowing_fluids.FlowingFluids;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WaterFlowProfileRegressionTest {
@@ -52,5 +53,35 @@ class WaterFlowProfileRegressionTest {
             FlowingFluids.config.inletProbeMaxSteps = oldInletSteps;
             FlowingFluids.config.broadSurfaceSlopeClamp = oldBroadSurfaceClamp;
         }
+    }
+
+    @Test
+    void fastCalmInteriorPathRecognizesFullStableBroadWater() {
+        assertTrue(WaterFlowProfile.qualifiesForFastCalmInterior(
+            8,
+            false,
+            0.05f,
+            true,
+            false,
+            false,
+            true,
+            4,
+            0
+        ));
+    }
+
+    @Test
+    void fastCalmInteriorPathRejectsLiveFrontierWater() {
+        assertFalse(WaterFlowProfile.qualifiesForFastCalmInterior(
+            8,
+            false,
+            0.05f,
+            false,
+            false,
+            false,
+            true,
+            3,
+            1
+        ));
     }
 }
