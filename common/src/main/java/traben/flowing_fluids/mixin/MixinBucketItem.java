@@ -30,6 +30,7 @@ import net.minecraft.world.level.block.LiquidBlockContainer;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -105,9 +106,12 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
                 if (level.mayInteract(player, blockPos) && player.mayUseItemAt(blockPos2, direction, heldBucket)) {
 
                     BlockState blockState = level.getBlockState(blockPos);
-                    var fluidState = level.getFluidState(blockPos);
-                    BlockPos blockPos3 = (blockState.getBlock() instanceof LiquidBlockContainer && this.content == Fluids.WATER)
-                            || (this.content.isSame(fluidState.getType()) && fluidState.getAmount() < 8)
+                    FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, blockPos, blockState);
+                    boolean canUseHitBlock = (this.content == Fluids.WATER
+                            && (FFFluidUtils.supportsVirtualFluidState(level, blockState)
+                            || blockState.getBlock() instanceof LiquidBlockContainer))
+                            || (this.content.isSame(fluidState.getType()) && fluidState.getAmount() < 8);
+                    BlockPos blockPos3 = canUseHitBlock
                             ? blockPos : blockPos2;
                     int amount = 8 - heldBucket.getDamageValue();
                     int remainder = this.ff$emptyContents_AndGetRemainder(player, level, blockPos3, blockHitResult, amount, false);
@@ -152,12 +156,16 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
         } else {
 
             var state = level.getBlockState(blockPos);
-            var fluidState = level.getFluidState(blockPos);
+            var fluidState = FFFluidUtils.getEffectiveFluidState(level, blockPos, state);
 
             boolean fluidIsSameAsContent = this.content.isSame(fluidState.getType());
-            boolean canPlaceLiquidInPos = state.canBeReplaced(this.content) || state.isAir() || fluidIsSameAsContent;
+            boolean virtualTarget = FFFluidUtils.supportsVirtualFluidState(level, state);
+            boolean canPlaceLiquidInPos = state.canBeReplaced(this.content)
+                    || state.isAir()
+                    || fluidIsSameAsContent
+                    || virtualTarget;
 
-            if (!canPlaceLiquidInPos && state.getBlock() instanceof LiquidBlockContainer container) {
+            if (!virtualTarget && !canPlaceLiquidInPos && state.getBlock() instanceof LiquidBlockContainer container) {
                 if (container.canPlaceLiquid(#if MC > MC_20_1 player,#endif level, blockPos, state, this.content)) {
                     if (amount != 8) return amount;
                     container.placeLiquid(level, blockPos, level.getBlockState(blockPos), flowingFluid.getSource(false));
@@ -193,18 +201,18 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
                     int total = levelAtBlock + amount;
                     if (total > 8){
                         if (onlyModifyThatBlock) {
-                            success = level.setBlock(blockPos, FFFluidUtils.getBlockForFluidByAmount(content, 8), 11);
+                            success = FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, content, 8);
                             remainder = total - 8;
                         } else {
                             remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainderAndTrySpreadIfFull(level, blockPos, flowingFluid, amount);
                             success = remainder != amount;
                         }
                     } else {
-                        success = level.setBlock(blockPos, FFFluidUtils.getBlockForFluidByAmount(content, total), 11);
+                        success = FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, content, total);
                         remainder = 0;
                     }
                 } else {
-                    success = level.setBlock(blockPos, FFFluidUtils.getBlockForFluidByAmount(content, amount), 11);
+                    success = FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, content, amount);
                     remainder = 0;
                 }
 

@@ -38,7 +38,13 @@ public abstract class MixinLevel {
                                                final BlockState old, final int oldLight,
                                                final int oldOpacity, final BlockState blockstate) {
     #endif
-        FFFluidUtils.displaceFluids((Level) (Object) this, pos, state, flags, levelchunk, old);
+        // Skip server-side placement/generation writes that intentionally avoid neighbor updates.
+        if ((flags & Block.UPDATE_NEIGHBORS) == 0) {
+            return;
+        }
+        Level level = (Level) (Object) this;
+        FFFluidUtils.displaceFluids(level, pos, state, flags, levelchunk, old);
+        FFFluidUtils.wakeAdjacentVirtualFluidCells(level, pos);
     }
 
 }
