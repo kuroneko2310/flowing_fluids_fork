@@ -246,7 +246,7 @@ public final class ParallelFluidEqualizer {
         int horizontalBucketSize = getSelectionBucketSize();
         int verticalBucketSize = Math.max(4, horizontalBucketSize / 2);
         Map<Fluid, Long2ObjectOpenHashMap<List<ScanCandidate>>> bucketsByFluid = new LinkedHashMap<>();
-        Map<Fluid, Set<Integer>> seenComponentsByFluid = new LinkedHashMap<>();
+        Map<Fluid, Long2ObjectOpenHashMap<Set<Integer>>> seenComponentsByFluid = new LinkedHashMap<>();
         LongOpenHashSet deferred = new LongOpenHashSet();
         int candidateCount = 0;
         int momentumAge = FlowingFluids.config != null
@@ -279,15 +279,14 @@ public final class ParallelFluidEqualizer {
             if (candidate == null) {
                 continue;
             }
+            long bucketKey = packSelectionBucket(candidate.pos(), horizontalBucketSize, verticalBucketSize);
             if (candidate.componentId() > 0) {
-                Set<Integer> seenComponents = seenComponentsByFluid
-                    .computeIfAbsent(candidate.fluidType(), ignored -> new HashSet<>());
-                if (!seenComponents.add(candidate.componentId())) {
+                Long2ObjectOpenHashMap<Set<Integer>> seenByBucket = seenComponentsByFluid
+                    .computeIfAbsent(candidate.fluidType(), ignored -> new Long2ObjectOpenHashMap<>());
+                if (shouldSkipComponentCandidate(seenByBucket, bucketKey, candidate.componentId())) {
                     continue;
                 }
             }
-
-            long bucketKey = packSelectionBucket(candidate.pos(), horizontalBucketSize, verticalBucketSize);
             Long2ObjectOpenHashMap<List<ScanCandidate>> fluidBuckets =
                 bucketsByFluid.computeIfAbsent(candidate.fluidType(), ignored -> new Long2ObjectOpenHashMap<>());
             List<ScanCandidate> bucketCandidates = fluidBuckets.get(bucketKey);
@@ -636,9 +635,30 @@ public final class ParallelFluidEqualizer {
             }
         }
         LongArrayList componentPositions = new LongArrayList(visitedOrder.size() + 1);
-        componentPositions.add(startKey);
+        if (request.snapshot().hasSameFluid(request.startPos().getX(), request.startPos().getY(), request.startPos().getZ())) {
+            componentPositions.add(startKey);
+        }
         componentPositions.addAll(visitedOrder);
+        trimComponentPositionsToSameFluid(request, componentPositions);
         return new ComputationResult(targets, componentPositions);
+    }
+
+    private static void trimComponentPositionsToSameFluid(Request request, LongArrayList componentPositions) {
+        if (request == null || componentPositions == null || componentPositions.isEmpty()) {
+            return;
+        }
+        int writeIndex = 0;
+        for (int i = 0; i < componentPositions.size(); i++) {
+            long posKey = componentPositions.getLong(i);
+            int x = BlockPos.getX(posKey);
+            int y = BlockPos.getY(posKey);
+            int z = BlockPos.getZ(posKey);
+            if (!request.snapshot().hasSameFluid(x, y, z)) {
+                continue;
+            }
+            componentPositions.set(writeIndex++, posKey);
+        }
+        componentPositions.size(writeIndex);
     }
 
     private static void runInletProbe(Request request, LongOpenHashSet visited, LongArrayList visitedOrder,
@@ -869,6 +889,13 @@ public final class ParallelFluidEqualizer {
                 return 0;
             }
             return amounts[index(x, y, z)] & 0xFFFF;
+        }
+
+        private boolean hasSameFluid(int x, int y, int z) {
+            if (!contains(x, y, z)) {
+                return false;
+            }
+            return (flags[index(x, y, z)] & SAME_FLUID) != 0;
         }
 
         private boolean contains(int x, int y, int z) {

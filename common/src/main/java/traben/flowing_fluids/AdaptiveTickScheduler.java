@@ -873,13 +873,8 @@ public class AdaptiveTickScheduler {
                 frontierWakeChunks.add(chunkPos);
             }
 
-            for (int dx = -1; dx <= 1; dx++) {
-                for (int dy = -1; dy <= 1; dy++) {
-                    for (int dz = -1; dz <= 1; dz++) {
-                        if (dx == 0 && dy == 0 && dz == 0) continue;
-                        neighbors.add(pos.offset(dx, dy, dz).asLong());
-                    }
-                }
+            for (Direction direction : NEIGHBOR_HASH_DIRECTIONS) {
+                neighbors.add(pos.relative(direction).asLong());
             }
         }
 

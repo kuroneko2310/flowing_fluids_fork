@@ -11,6 +11,8 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.Arrays;
@@ -87,7 +89,10 @@ public class FluidSpatialGrid {
         ChunkPos chunkPos = new ChunkPos(pos);
         storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
         ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
-        grid.setFluidAt(pos, hasFluid, amount);
+        boolean changed = grid.setFluidAt(pos, hasFluid, amount);
+        if (changed) {
+            invalidateLocalComponents(level, pos);
+        }
         refreshFrontierNeighborhood(level, pos);
         if (!grid.isFrontierDirty()) {
             storage.dirtyFrontierChunks.remove(chunkPos);
@@ -288,7 +293,10 @@ public class FluidSpatialGrid {
         ChunkPos chunkPos = new ChunkPos(pos);
         ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid != null) {
-            grid.setFluidAt(pos, false, 0);
+            boolean changed = grid.setFluidAt(pos, false, 0);
+            if (changed) {
+                invalidateLocalComponents(level, pos);
+            }
             refreshFrontierNeighborhood(level, pos);
             if (!grid.isFrontierDirty()) {
                 storage.dirtyFrontierChunks.remove(chunkPos);
@@ -424,6 +432,52 @@ public class FluidSpatialGrid {
         storage.dirtyFrontierChunks.remove(chunkPos);
         storage.pendingChunkInitializations.remove(chunkPos);
         cleanupStorageIfEmpty(level, storage);
+    }
+
+    static void invalidateLocalComponents(LevelAccessor level, Iterable<BlockPos> changedPositions) {
+        if (level == null || changedPositions == null) {
+            return;
+        }
+        DimensionStorage storage = getStorage(level);
+        LongOpenHashSet affectedPositions = new LongOpenHashSet();
+        for (BlockPos pos : changedPositions) {
+            if (pos == null) {
+                continue;
+            }
+            affectedPositions.add(pos.asLong());
+            for (Direction direction : Direction.values()) {
+                affectedPositions.add(pos.relative(direction).asLong());
+            }
+        }
+        clearComponentIds(storage, affectedPositions);
+    }
+
+    private static void invalidateLocalComponents(LevelAccessor level, BlockPos center) {
+        if (level == null || center == null) {
+            return;
+        }
+        DimensionStorage storage = getStorage(level);
+        LongOpenHashSet affectedPositions = new LongOpenHashSet(Direction.values().length + 1);
+        affectedPositions.add(center.asLong());
+        for (Direction direction : Direction.values()) {
+            affectedPositions.add(center.relative(direction).asLong());
+        }
+        clearComponentIds(storage, affectedPositions);
+    }
+
+    private static void clearComponentIds(DimensionStorage storage, LongOpenHashSet affectedPositions) {
+        if (storage == null || affectedPositions == null || affectedPositions.isEmpty()) {
+            return;
+        }
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        for (LongIterator it = affectedPositions.iterator(); it.hasNext(); ) {
+            long posKey = it.nextLong();
+            mutablePos.set(BlockPos.getX(posKey), BlockPos.getY(posKey), BlockPos.getZ(posKey));
+            ChunkFluidGrid grid = storage.chunkGrids.get(new ChunkPos(mutablePos));
+            if (grid != null) {
+                grid.clearComponentId(mutablePos);
+            }
+        }
     }
 
     /**
@@ -599,7 +653,7 @@ public class FluidSpatialGrid {
             return fluidPresence.get(index);
         }
 
-        public void setFluidAt(BlockPos pos, boolean hasFluid, int amount) {
+        public boolean setFluidAt(BlockPos pos, boolean hasFluid, int amount) {
             int index = posToIndex(pos);
             boolean wasFluid = fluidPresence.get(index);
             int oldAmount = wasFluid ? (fluidAmounts[index] & 0xFF) : 0;
@@ -616,9 +670,11 @@ public class FluidSpatialGrid {
             }
 
             // Update macro cell data when fluid changes (optimized differential update)
-            if (wasFluid != hasFluid || oldAmount != newAmount) {
+            boolean changed = wasFluid != hasFluid || oldAmount != newAmount;
+            if (changed) {
                 updateMacroCellDifferential(pos, oldAmount, newAmount, wasFluid, hasFluid);
             }
+            return changed;
         }
 
         public int getFluidAmount(BlockPos pos) {
@@ -648,6 +704,13 @@ public class FluidSpatialGrid {
             }
             int index = posToIndex(pos);
             componentIds[index] = componentId;
+        }
+
+        public void clearComponentId(BlockPos pos) {
+            if (componentIds == null) {
+                return;
+            }
+            componentIds[posToIndex(pos)] = 0;
         }
 
         public Direction getGradientDirection(BlockPos pos) {

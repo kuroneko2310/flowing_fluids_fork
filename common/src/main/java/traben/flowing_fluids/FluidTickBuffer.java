@@ -186,6 +186,7 @@ public class FluidTickBuffer {
                 FluidSpatialGrid.setFluidAtFromBuffer(level, pos, change.hasFluid, change.amount);
                 changedPositions.add(pos);
             }
+            FluidSpatialGrid.invalidateLocalComponents(level, changedPositions);
             FluidSpatialGrid.refreshAreaTypesForChunks(level, touchedChunks);
 
             // Notify adaptive scheduler in bulk to reset neighbor delays per chunk
