@@ -19,3 +19,8 @@
 - `componentId` を単なる最適化キャッシュとして扱うなら、更新側と参照側を必ずセットで見ること。
 - 連結情報の dedupe は「どの粒度で重複とみなすか」を bucket / chunk / component の単位で混ぜないこと。
 - BFS や equalizer の探索結果をそのまま連結成分へ使うと、air を含む探索条件と水域の定義がずれやすい。
+
+## 追加の残留水面メモ
+
+- 閉じた broad surface の partial tile は、薄い lateral source を残す保護と、`delta == 1` では equalizer が起きにくい条件が重なると残留しやすい。
+- 修正では、broad surface の thin source 保護を live front 付近だけに寄せ、partial な 1段差は equalizer を起こせるようにした。

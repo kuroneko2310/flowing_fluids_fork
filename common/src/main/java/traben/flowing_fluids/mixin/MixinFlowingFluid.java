@@ -1361,7 +1361,12 @@ public abstract class MixinFlowingFluid extends Fluid {
         if (FFFluidUtils.isRiverBiome(level.getBiome(sourcePos)) || FFFluidUtils.isRiverBiome(level.getBiome(targetPos))) {
             return true;
         }
-        if (flowing_fluids$isBroadSurfaceWater(level, sourcePos, sourceState, sourceAmount)) {
+        WaterFlowProfile waterProfile = flowing_fluids$getWaterFlowProfile(level, sourcePos, sourceState, sourceAmount);
+        if (FluidRegressionLogic.shouldPreserveBroadSurfaceThinSource(
+                waterProfile.isBroadSurface(),
+                waterProfile.isInletZone(),
+                flowing_fluids$hasImmediateSurfaceEdge(level, sourcePos, sourceState.getType()),
+                flowing_fluids$hasNearbyStepDownOutlet(level, sourcePos, sourceState.getType(), sourceAmount))) {
             return true;
         }
         if (flowing_fluids$countLateralFluidNeighbors(level, sourcePos, sourceState.getType()) >= 2) {
@@ -2658,7 +2663,16 @@ public abstract class MixinFlowingFluid extends Fluid {
         int beforeAmount = before.getType().isSame(relevant.getType()) ? before.getAmount() : 0;
         int afterAmount = updated.getType().isSame(relevant.getType()) ? updated.getAmount() : 0;
         WaterFlowProfile waterProfile = flowing_fluids$getWaterFlowProfile(level, blockPos, relevant, Math.max(beforeAmount, afterAmount));
-        return waterProfile.shouldQueueEqualizer(Math.abs(afterAmount - beforeAmount), before.isEmpty(), updated.isEmpty());
+        int difference = Math.abs(afterAmount - beforeAmount);
+        if (waterProfile.shouldQueueEqualizer(difference, before.isEmpty(), updated.isEmpty())) {
+            return true;
+        }
+        return FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(
+                waterProfile.isBroadSurface(),
+                waterProfile.isPressureDriven(),
+                difference,
+                beforeAmount,
+                afterAmount);
     }
 
     @Unique

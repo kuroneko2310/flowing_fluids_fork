@@ -45,6 +45,23 @@ class MixinFlowingFluidRegressionTest {
     }
 
     @Test
+    void broadSurfaceThinSourceOnlyStaysAliveNearLiveFronts() {
+        assertFalse(FluidRegressionLogic.shouldPreserveBroadSurfaceThinSource(true, false, false, false));
+        assertTrue(FluidRegressionLogic.shouldPreserveBroadSurfaceThinSource(true, true, false, false));
+        assertTrue(FluidRegressionLogic.shouldPreserveBroadSurfaceThinSource(true, false, true, false));
+        assertTrue(FluidRegressionLogic.shouldPreserveBroadSurfaceThinSource(true, false, false, true));
+    }
+
+    @Test
+    void broadSurfaceEqualizerWakesForPartialOneLevelDent() {
+        assertTrue(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, false, 1, 8, 7));
+        assertTrue(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, false, 1, 7, 8));
+        assertFalse(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, false, 1, 8, 8));
+        assertFalse(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, true, 1, 8, 7));
+        assertFalse(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(false, false, 1, 8, 7));
+    }
+
+    @Test
     void totalAmountBelowWaterlogThresholdFallsBackToNormalFlow() {
         assertEquals(0, FluidRegressionLogic.computeVanillaWaterlogTransferAmount(true, true, 3, 4));
     }

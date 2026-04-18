@@ -210,6 +210,29 @@ public final class FluidRegressionLogic {
         return stillReservoirInterior;
     }
 
+    public static boolean shouldPreserveBroadSurfaceThinSource(boolean broadSurface,
+                                                               boolean inletZone,
+                                                               boolean immediateSurfaceEdge,
+                                                               boolean nearbyStepDownOutlet) {
+        // Broad-surface thin sources are useful around live fronts so shoreline tails do not collapse
+        // too aggressively, but preserving them inside a sealed calm pool leaves 1-level dents behind.
+        return broadSurface && (inletZone || immediateSurfaceEdge || nearbyStepDownOutlet);
+    }
+
+    public static boolean shouldWakeBroadSurfaceEqualizerForThinPartial(boolean broadSurface,
+                                                                        boolean pressureDriven,
+                                                                        int difference,
+                                                                        int beforeAmount,
+                                                                        int afterAmount) {
+        // Large calm surfaces already wake the equalizer on >=2 level jumps. The remaining visible
+        // artifact is a partial-height 1-step dent that can settle without another strong disturbance.
+        if (!broadSurface || pressureDriven || difference != 1) {
+            return false;
+        }
+        return beforeAmount > 0 && beforeAmount < 8
+            || afterAmount > 0 && afterAmount < 8;
+    }
+
     public static boolean shouldTrackWaterPoolStableTicks(int amount) {
         // Water profiles use poolStableTicks for both shallow-settled behavior and broad-surface /
         // reservoir classification. Restricting tracking to only thin water makes the large-body
