@@ -1,0 +1,12 @@
+{
+  "variants": {
+    "facing=north,waterlogged=false": { "model": "flowing_fluids:block/wall_spring" },
+    "facing=east,waterlogged=false": { "model": "flowing_fluids:block/wall_spring", "y": 90 },
+    "facing=south,waterlogged=false": { "model": "flowing_fluids:block/wall_spring", "y": 180 },
+    "facing=west,waterlogged=false": { "model": "flowing_fluids:block/wall_spring", "y": 270 },
+    "facing=north,waterlogged=true": { "model": "flowing_fluids:block/wall_spring" },
+    "facing=east,waterlogged=true": { "model": "flowing_fluids:block/wall_spring", "y": 90 },
+    "facing=south,waterlogged=true": { "model": "flowing_fluids:block/wall_spring", "y": 180 },
+    "facing=west,waterlogged=true": { "model": "flowing_fluids:block/wall_spring", "y": 270 }
+  }
+}

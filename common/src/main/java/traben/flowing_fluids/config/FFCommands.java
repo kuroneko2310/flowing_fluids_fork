@@ -4,11 +4,14 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.LiteralMessage;
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
 import com.mojang.datafixers.util.Pair;
+import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.booleans.BooleanConsumer;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -31,9 +34,15 @@ import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FlowingFluidsPlatform;
 import traben.flowing_fluids.PlugWaterFeature;
+import traben.flowing_fluids.drying.DryingEventSystem;
+import traben.flowing_fluids.flood.FloodEventSystem;
+import traben.flowing_fluids.performance.FluidAutoTickDelay;
 import traben.flowing_fluids.rain.RainWaterSystem;
+import traben.flowing_fluids.water.WaterPressureSystem;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -41,6 +50,14 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 public class FFCommands {
+    private static final List<String> DEFAULT_INFINITE_BIOME_ENTRIES = List.of(
+            "#minecraft:is_ocean",
+            "#minecraft:is_river",
+            "#minecraft:is_beach",
+            "minecraft:swamp",
+            "minecraft:mangrove_swamp"
+    );
+
     private static int messageAndSaveConfig(CommandContext<CommandSourceStack> context, String text) {
         FlowingFluids.saveConfig();
         FlowingFluids.applyConfigRuntime();
@@ -88,6 +105,191 @@ public class FFCommands {
         return message(context, "Rain runtime state was refreshed. Cached wetness and queue data were cleared.");
     }
 
+    private static int dryingStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, DryingEventSystem.describeStatus(context.getSource().getLevel()));
+    }
+
+    private static int floodStatus(CommandContext<CommandSourceStack> context) {
+        BlockPos pos = BlockPos.containing(context.getSource().getPosition());
+        return message(context, FloodEventSystem.describeFlood(context.getSource().getLevel(), pos));
+    }
+
+    private static int waterPressureStatus(CommandContext<CommandSourceStack> context) {
+        BlockPos pos = BlockPos.containing(context.getSource().getPosition());
+        return message(context, WaterPressureSystem.describeStatus(context.getSource().getLevel(), pos));
+    }
+
+    private static int autoTickDelayStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, FluidAutoTickDelay.describeStatus());
+    }
+
+    private static String describeSeaLevelOverrideStatus(Level level) {
+        int dimensionOverride = FlowingFluids.config.dimensionSeaLevelOverrides
+                .getOrDefault(level.dimensionType().hashCode(), Integer.MIN_VALUE);
+        return "Sea level override controls the sea level used by Flowing Fluids for infinite-biome refill, surface drain, broad-water checks, and related water behaviour."
+                + "\nCurrent dimension: " + level.dimension().location()
+                + "\nVanilla sea level: " + level.getSeaLevel()
+                + "\nEffective Flowing Fluids sea level: " + FFFluidUtils.seaLevel(level)
+                + "\nCurrent dimension-type hash: " + level.dimensionType().hashCode()
+                + "\nDimension override: " + (dimensionOverride == Integer.MIN_VALUE ? "none" : dimensionOverride)
+                + "\nDefault override: " + (FlowingFluids.config.defaultSeaLevelOverride == Integer.MIN_VALUE ? "none" : FlowingFluids.config.defaultSeaLevelOverride)
+                + "\nStored dimension overrides: " + FlowingFluids.config.dimensionSeaLevelOverrides.size()
+                + "\nCommands:"
+                + "\n- here status / here set <y> / here clear / here use_vanilla"
+                + "\n- default status / default set <y> / default clear"
+                + "\n- list / clear_all";
+    }
+
+    private static String describeSeaLevelOverrideList() {
+        if (FlowingFluids.config.dimensionSeaLevelOverrides.isEmpty()) {
+            return "No dimension sea level overrides are currently stored.\nDefault override: "
+                    + (FlowingFluids.config.defaultSeaLevelOverride == Integer.MIN_VALUE ? "none" : FlowingFluids.config.defaultSeaLevelOverride);
+        }
+
+        StringBuilder builder = new StringBuilder("Stored dimension sea level overrides:");
+        for (Int2IntMap.Entry entry : FlowingFluids.config.dimensionSeaLevelOverrides.int2IntEntrySet()) {
+            builder.append("\n- dimensionTypeHash=").append(entry.getIntKey())
+                    .append(" -> seaLevel=").append(entry.getIntValue());
+        }
+        builder.append("\nDefault override: ")
+                .append(FlowingFluids.config.defaultSeaLevelOverride == Integer.MIN_VALUE ? "none" : FlowingFluids.config.defaultSeaLevelOverride);
+        return builder.toString();
+    }
+
+    private static String describeSeaLevelHereStatus(Level level) {
+        int dimensionOverride = FlowingFluids.config.dimensionSeaLevelOverrides
+                .getOrDefault(level.dimensionType().hashCode(), Integer.MIN_VALUE);
+        return "Current dimension sea level override status"
+                + "\nDimension: " + level.dimension().location()
+                + "\nDimension-type hash: " + level.dimensionType().hashCode()
+                + "\nVanilla sea level: " + level.getSeaLevel()
+                + "\nDimension override: " + (dimensionOverride == Integer.MIN_VALUE ? "none" : dimensionOverride)
+                + "\nEffective Flowing Fluids sea level: " + FFFluidUtils.seaLevel(level);
+    }
+
+    private static String describeSeaLevelDefaultStatus() {
+        return "Default sea level override status"
+                + "\nDefault override: " + (FlowingFluids.config.defaultSeaLevelOverride == Integer.MIN_VALUE ? "none" : FlowingFluids.config.defaultSeaLevelOverride)
+                + "\nStored dimension overrides: " + FlowingFluids.config.dimensionSeaLevelOverrides.size();
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> seaLevelOverrides() {
+        return Commands.literal("sea_level_override")
+                .executes(cont -> message(cont, describeSeaLevelOverrideStatus(cont.getSource().getLevel())))
+                .then(Commands.literal("status")
+                        .executes(cont -> message(cont, describeSeaLevelOverrideStatus(cont.getSource().getLevel()))))
+                .then(Commands.literal("here")
+                        .executes(cont -> message(cont, describeSeaLevelHereStatus(cont.getSource().getLevel())))
+                        .then(Commands.literal("status")
+                                .executes(cont -> message(cont, describeSeaLevelHereStatus(cont.getSource().getLevel()))))
+                        .then(Commands.literal("vanilla")
+                                .executes(cont -> message(cont, "Vanilla sea level for this dimension: " + cont.getSource().getLevel().getSeaLevel())))
+                        .then(Commands.literal("effective")
+                                .executes(cont -> message(cont, "Effective Flowing Fluids sea level for this dimension: " + FFFluidUtils.seaLevel(cont.getSource().getLevel()))))
+                        .then(Commands.literal("override")
+                                .executes(cont -> {
+                                    Level level = cont.getSource().getLevel();
+                                    int dimensionOverride = FlowingFluids.config.dimensionSeaLevelOverrides
+                                            .getOrDefault(level.dimensionType().hashCode(), Integer.MIN_VALUE);
+                                    return message(cont, "Current dimension override"
+                                            + "\nDimension: " + level.dimension().location()
+                                            + "\nDimension-type hash: " + level.dimensionType().hashCode()
+                                            + "\nDimension override: " + (dimensionOverride == Integer.MIN_VALUE ? "none" : dimensionOverride)
+                                            + "\nDefault override: " + (FlowingFluids.config.defaultSeaLevelOverride == Integer.MIN_VALUE ? "none" : FlowingFluids.config.defaultSeaLevelOverride)
+                                            + "\nEffective Flowing Fluids sea level: " + FFFluidUtils.seaLevel(level));
+                                }))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("y", IntegerArgumentType.integer(-999999, 999999))
+                                        .executes(cont -> {
+                                            int override = IntegerArgumentType.getInteger(cont, "y");
+                                            FlowingFluids.config.dimensionSeaLevelOverrides.put(cont.getSource().getLevel().dimensionType().hashCode(), override);
+                                            return messageAndSaveConfig(cont, "Sea level override for this dimension is now set to " + override + ".\nEffective Flowing Fluids sea level here is now " + FFFluidUtils.seaLevel(cont.getSource().getLevel()) + ".");
+                                        })))
+                        .then(Commands.literal("clear")
+                                .executes(cont -> {
+                                    FlowingFluids.config.dimensionSeaLevelOverrides.remove(cont.getSource().getLevel().dimensionType().hashCode());
+                                    return messageAndSaveConfig(cont, "Sea level override for this dimension has been removed.\nEffective Flowing Fluids sea level here is now " + FFFluidUtils.seaLevel(cont.getSource().getLevel()) + ".");
+                                }))
+                        .then(Commands.literal("use_vanilla")
+                                .executes(cont -> {
+                                    int vanillaSeaLevel = cont.getSource().getLevel().getSeaLevel();
+                                    FlowingFluids.config.dimensionSeaLevelOverrides.put(cont.getSource().getLevel().dimensionType().hashCode(), vanillaSeaLevel);
+                                    return messageAndSaveConfig(cont, "Sea level override for this dimension is now pinned to the current vanilla sea level: " + vanillaSeaLevel + ".");
+                                })))
+                .then(Commands.literal("default")
+                        .executes(cont -> message(cont, describeSeaLevelDefaultStatus()))
+                        .then(Commands.literal("status")
+                                .executes(cont -> message(cont, describeSeaLevelDefaultStatus())))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("y", IntegerArgumentType.integer(-999999, 999999))
+                                        .executes(cont -> {
+                                            int override = IntegerArgumentType.getInteger(cont, "y");
+                                            FlowingFluids.config.defaultSeaLevelOverride = override;
+                                            return messageAndSaveConfig(cont, "Default sea level override is now set to " + override + ".");
+                                        })))
+                        .then(Commands.literal("clear")
+                                .executes(cont -> {
+                                    FlowingFluids.config.defaultSeaLevelOverride = Integer.MIN_VALUE;
+                                    return messageAndSaveConfig(cont, "Default sea level override has been removed.");
+                                })))
+                .then(Commands.literal("list")
+                        .executes(cont -> message(cont, describeSeaLevelOverrideList())))
+                .then(Commands.literal("clear_all")
+                        .executes(cont -> {
+                            int cleared = FlowingFluids.config.dimensionSeaLevelOverrides.size();
+                            FlowingFluids.config.dimensionSeaLevelOverrides.clear();
+                            return messageAndSaveConfig(cont, "Cleared all stored dimension sea level overrides (" + cleared + ").");
+                        }));
+    }
+
+    private static int springStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, "Spring settings overview"
+                + "\nBiome-aware generation: on"
+                + "\nWet cave biomes now grow more water springs, dry and hot biomes grow fewer."
+                + "\nDeep underground lava springs now favor hotter and drier overworld biomes."
+                + "\nRandom breakage: " + FlowingFluids.config.enableSpringRandomBreakage
+                + "\nBreak chance: " + FlowingFluids.config.springRandomBreakChance
+                + "\nOverworld spawn multiplier: " + FlowingFluids.config.overworldSpringSpawnMultiplier
+                + "\nNether spawn multiplier: " + FlowingFluids.config.netherSpringSpawnMultiplier
+                + "\nDeep lava spawn multiplier: " + FlowingFluids.config.deepLavaSpringSpawnMultiplier
+                + "\nDeep lava extra reject chance: " + FlowingFluids.config.deepLavaSpringExtraRejectChance
+                + "\nDeep lava max placements per feature: " + FlowingFluids.config.deepLavaSpringMaxPlacementsPerFeature
+                + "\nCapped pressure head: " + FlowingFluids.config.enableCappedSpringPressureHead
+                + "\nWater spring emission / pulse interval: " + FlowingFluids.config.waterSpringEmissionMultiplier
+                + " / " + FlowingFluids.config.waterSpringPulseIntervalMultiplier
+                + "\nLava spring emission / pulse interval: " + FlowingFluids.config.lavaSpringEmissionMultiplier
+                + " / " + FlowingFluids.config.lavaSpringPulseIntervalMultiplier
+                + "\nTips:"
+                + "\n- Lush caves, dripstone caves, rivers, swamps: more water springs"
+                + "\n- Deserts, badlands, savannas: fewer water springs"
+                + "\n- Badlands, deserts, deep dark: more deep lava springs"
+                + "\n- Nether lava springs use their own multiplier, so you can tune them separately from the overworld"
+                + "\n- Large lava lakes now boost lava spring count and make stronger vents more likely"
+                + "\n- Capped pressure head keeps upward springs filled right under a stopper block so they can spill sideways instead of relaxing into a short pulse"
+                + "\nUse `/flowing_fluids settings springs random_breakage on|off` or `random_breakage_chance <value>` to tune collapse mode."
+                + "\nUse `/flowing_fluids settings springs overworld_spawn_multiplier <value>` and `nether_spawn_multiplier <value>` to split overworld vs nether generation."
+                + "\nUse `/flowing_fluids settings springs deep_lava_spawn_multiplier <value>` to make lava springs rarer or more common."
+                + "\nUse `/flowing_fluids settings springs water_emission_multiplier <value>` or `lava_emission_multiplier <value>` to change how hard springs push."
+                + "\nUse `/flowing_fluids settings springs water_pulse_interval_multiplier <value>` or `lava_pulse_interval_multiplier <value>` to make pulsing faster or slower."
+                + "\nUse `/flowing_fluids nether_lava info` for the Nether lava event command guide.");
+    }
+
+    private static int startFloodHere(CommandContext<CommandSourceStack> context, int radius, int durationSeconds, int waterlineY) {
+        BlockPos pos = BlockPos.containing(context.getSource().getPosition());
+        boolean started = FloodEventSystem.startFlood(
+                context.getSource().getLevel(),
+                pos,
+                radius,
+                durationSeconds * 20,
+                waterlineY
+        );
+        if (!started) {
+            return message(context, "Flood events are disabled. Enable `/flowing_fluids settings flood enable on` first.");
+        }
+        return message(context, "Started a flood event around " + pos + ".\n"
+                + FloodEventSystem.describeFlood(context.getSource().getLevel(), pos));
+    }
+
     private static String describeFlowSpeedStatus() {
         return "流速ステータス"
                 + "\nこの機能は、重い連続速度シミュレーションではなく、軽量な『擬似流速』レイヤーです。"
@@ -104,6 +306,32 @@ public class FFCommands {
 
     private static int flowSpeedStatus(CommandContext<CommandSourceStack> context) {
         return message(context, describeFlowSpeedStatus());
+    }
+
+    private static int mudificationStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, "Mudification settings"
+                + "\nEnabled: " + FlowingFluids.config.enableMudification
+                + "\nStrength: " + FlowingFluids.config.mudificationStrength
+                + "\nAffects banks: " + FlowingFluids.config.mudificationAffectsBanks
+                + "\nOnly successful flowing-water writes build exposure."
+                + "\nPlayer-placed soil stays protected, but farmland can still turn to mud.");
+    }
+
+    private static int hydraulicBlocksStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, "Hydraulic block settings"
+                + "\nEnabled: " + FlowingFluids.config.enableHydraulicBlocks
+                + "\nWaterway liner: lowers channel drag when water stays on lined beds."
+                + "\nPressure nozzle: pushes water forward only when front clearance and rear support exist.");
+    }
+
+    private static int cavityPressureStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, "Cavity pressure settings"
+                + "\nEnabled: " + FlowingFluids.config.enableCavityPressureRise
+                + "\nPressure strength: " + FlowingFluids.config.cavityPressureStrength
+                + "\nConnected head strength: " + FlowingFluids.config.connectedHeadStrength
+                + "\nHead sample distance: " + FlowingFluids.config.hydraulicSampleDistance
+                + "\nRoof probe height: " + FlowingFluids.config.shadeRoofSearchHeight
+                + "\nUse this to tune how strongly enclosed caves and pits hold water and climb upward.");
     }
 
     private static int snowmeltStatus(CommandContext<CommandSourceStack> context) {
@@ -135,6 +363,363 @@ public class FFCommands {
                 + "\n細かい調整は `/flowing_fluids settings snowmelt` 以下の各サブコマンドでできます。");
     }
 
+    private static String currentBiomeId(Level level, BlockPos pos) {
+        return level.getBiome(pos).unwrapKey()
+                .map(key -> key.location().toString())
+                .orElse("<unregistered>");
+    }
+
+    private static List<String> sortedInfiniteBiomeEntries(Iterable<String> entries) {
+        List<String> sorted = new ArrayList<>();
+        for (String entry : entries) {
+            if (entry != null && !entry.isBlank()) {
+                sorted.add(entry.trim());
+            }
+        }
+        sorted.sort(String::compareTo);
+        return sorted;
+    }
+
+    private static String describeEntryList(String title, Iterable<String> entries) {
+        List<String> sorted = sortedInfiniteBiomeEntries(entries);
+        if (sorted.isEmpty()) {
+            return title + "\n- none";
+        }
+
+        StringBuilder builder = new StringBuilder(title);
+        for (String entry : sorted) {
+            builder.append("\n- ").append(entry);
+        }
+        return builder.toString();
+    }
+
+    private static String normalizeAutoInfiniteBiomeHint(String rawEntry) {
+        if (rawEntry == null) {
+            return null;
+        }
+        String trimmed = rawEntry.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        return FFFluidUtils.normalizeConfiguredBiomeEntry(trimmed, trimmed.startsWith("#"));
+    }
+
+    private static String describeInfiniteBiomeEntryOverview(Level level, BlockPos pos) {
+        FlowingFluids.config.ensureCollections();
+        return "Infinite biome entry settings"
+                + "\nCurrent biome: " + currentBiomeId(level, pos)
+                + "\nCounts as infinite here: " + FFFluidUtils.matchInfiniteBiomes(level.getBiome(pos))
+                + "\nCustom config entries: " + FlowingFluids.config.extraInfiniteBiomeEntries.size()
+                + "\nAuto add on startup: " + FlowingFluids.config.enableAutomaticInfiniteBiomeAddition
+                + "\nAuto add modded only: " + FlowingFluids.config.automaticInfiniteBiomeAdditionModdedOnly
+                + "\nAuto tag hints: " + FlowingFluids.config.automaticInfiniteBiomeTagHints.size()
+                + "\nAuto keywords: " + FlowingFluids.config.automaticInfiniteBiomeKeywordHints.size()
+                + "\nFormat: biome namespace:path or tag #namespace:path"
+                + "\nCommands:"
+                + "\n- list"
+                + "\n- add here / add biome <id> / add tag <id>"
+                + "\n- remove here / remove biome <id> / remove tag <id>"
+                + "\n- clear_custom"
+                + "\n- auto_add status / preview / run";
+    }
+
+    private static String describeInfiniteBiomeEntryList(Level level, BlockPos pos) {
+        FlowingFluids.config.ensureCollections();
+        StringBuilder builder = new StringBuilder("Infinite biome entries");
+        builder.append("\nCurrent biome: ").append(currentBiomeId(level, pos));
+        builder.append("\nBuilt-in defaults:");
+        for (String entry : DEFAULT_INFINITE_BIOME_ENTRIES) {
+            builder.append("\n- ").append(entry);
+        }
+
+        List<String> configuredEntries = sortedInfiniteBiomeEntries(FlowingFluids.config.extraInfiniteBiomeEntries);
+        builder.append("\nCustom config entries:");
+        if (configuredEntries.isEmpty()) {
+            builder.append("\n- none");
+        } else {
+            for (String entry : configuredEntries) {
+                builder.append("\n- ").append(entry);
+            }
+        }
+        return builder.toString();
+    }
+
+    private static int addInfiniteBiomeEntry(CommandContext<CommandSourceStack> context, String rawEntry, boolean tagEntry) {
+        FlowingFluids.config.ensureCollections();
+        String normalized = FFFluidUtils.normalizeConfiguredBiomeEntry(rawEntry, tagEntry);
+        if (normalized == null) {
+            String expected = tagEntry ? "#namespace:path" : "namespace:path";
+            return message(context, "Invalid infinite biome entry: " + rawEntry + "\nExpected format: " + expected);
+        }
+        if (!FlowingFluids.config.extraInfiniteBiomeEntries.add(normalized)) {
+            return message(context, "Infinite biome entry is already stored: " + normalized);
+        }
+        return messageAndSaveConfig(context,
+                "Added infinite biome entry: " + normalized
+                        + "\nCustom entries: " + FlowingFluids.config.extraInfiniteBiomeEntries.size());
+    }
+
+    private static int removeInfiniteBiomeEntry(CommandContext<CommandSourceStack> context, String rawEntry, boolean tagEntry) {
+        FlowingFluids.config.ensureCollections();
+        String normalized = FFFluidUtils.normalizeConfiguredBiomeEntry(rawEntry, tagEntry);
+        if (normalized == null) {
+            String expected = tagEntry ? "#namespace:path" : "namespace:path";
+            return message(context, "Invalid infinite biome entry: " + rawEntry + "\nExpected format: " + expected);
+        }
+        if (!FlowingFluids.config.extraInfiniteBiomeEntries.remove(normalized)) {
+            return message(context, "That infinite biome entry is not in the config: " + normalized);
+        }
+        return messageAndSaveConfig(context,
+                "Removed infinite biome entry: " + normalized
+                        + "\nCustom entries: " + FlowingFluids.config.extraInfiniteBiomeEntries.size());
+    }
+
+    private static int addCurrentInfiniteBiomeEntry(CommandContext<CommandSourceStack> context) {
+        BlockPos pos = BlockPos.containing(context.getSource().getPosition());
+        return addInfiniteBiomeEntry(context, currentBiomeId(context.getSource().getLevel(), pos), false);
+    }
+
+    private static int removeCurrentInfiniteBiomeEntry(CommandContext<CommandSourceStack> context) {
+        BlockPos pos = BlockPos.containing(context.getSource().getPosition());
+        return removeInfiniteBiomeEntry(context, currentBiomeId(context.getSource().getLevel(), pos), false);
+    }
+
+    private static String describeAutomaticInfiniteBiomeStatus(Level level) {
+        FlowingFluids.config.ensureCollections();
+        List<FFFluidUtils.AutoInfiniteBiomeCandidate> candidates = FFFluidUtils.collectAutoInfiniteBiomeCandidates(
+                level,
+                FlowingFluids.config.automaticInfiniteBiomeAdditionModdedOnly
+        );
+        long newEntries = candidates.stream()
+                .filter(candidate -> !FlowingFluids.config.extraInfiniteBiomeEntries.contains(candidate.biomeId()))
+                .count();
+        return "Automatic infinite biome detection"
+                + "\nEnabled on startup: " + FlowingFluids.config.enableAutomaticInfiniteBiomeAddition
+                + "\nModded biomes only: " + FlowingFluids.config.automaticInfiniteBiomeAdditionModdedOnly
+                + "\nTag hints: " + FlowingFluids.config.automaticInfiniteBiomeTagHints.size()
+                + "\nKeyword hints: " + FlowingFluids.config.automaticInfiniteBiomeKeywordHints.size()
+                + "\nDetected candidates right now: " + candidates.size()
+                + "\nNew candidates not yet stored: " + newEntries;
+    }
+
+    private static String describeAutomaticInfiniteBiomePreview(Level level) {
+        FlowingFluids.config.ensureCollections();
+        List<FFFluidUtils.AutoInfiniteBiomeCandidate> candidates = FFFluidUtils.collectAutoInfiniteBiomeCandidates(
+                level,
+                FlowingFluids.config.automaticInfiniteBiomeAdditionModdedOnly
+        );
+        StringBuilder builder = new StringBuilder(describeAutomaticInfiniteBiomeStatus(level));
+        if (candidates.isEmpty()) {
+            return builder.append("\nNo auto-detect candidates were found in the loaded biome registry.").toString();
+        }
+
+        builder.append("\nCandidates:");
+        int shown = 0;
+        for (FFFluidUtils.AutoInfiniteBiomeCandidate candidate : candidates) {
+            if (shown >= 40) {
+                builder.append("\n... and ").append(candidates.size() - shown).append(" more");
+                break;
+            }
+            boolean alreadyStored = FlowingFluids.config.extraInfiniteBiomeEntries.contains(candidate.biomeId());
+            builder.append("\n- ").append(candidate.biomeId())
+                    .append(alreadyStored ? " [stored]" : " [new]")
+                    .append(" <- ").append(candidate.reason());
+            shown++;
+        }
+        return builder.toString();
+    }
+
+    private static int runAutomaticInfiniteBiomeAdd(CommandContext<CommandSourceStack> context) {
+        FlowingFluids.config.ensureCollections();
+        Level level = context.getSource().getLevel();
+        List<FFFluidUtils.AutoInfiniteBiomeCandidate> candidates = FFFluidUtils.collectAutoInfiniteBiomeCandidates(
+                level,
+                FlowingFluids.config.automaticInfiniteBiomeAdditionModdedOnly
+        );
+
+        List<FFFluidUtils.AutoInfiniteBiomeCandidate> added = new ArrayList<>();
+        for (FFFluidUtils.AutoInfiniteBiomeCandidate candidate : candidates) {
+            if (FlowingFluids.config.extraInfiniteBiomeEntries.add(candidate.biomeId())) {
+                added.add(candidate);
+            }
+        }
+
+        if (added.isEmpty()) {
+            return message(context, "No new infinite biome entries were added.\n" + describeAutomaticInfiniteBiomeStatus(level));
+        }
+
+        StringBuilder builder = new StringBuilder("Auto-added infinite biome entries: ").append(added.size());
+        int shown = 0;
+        for (FFFluidUtils.AutoInfiniteBiomeCandidate candidate : added) {
+            if (shown >= 16) {
+                builder.append("\n... and ").append(added.size() - shown).append(" more");
+                break;
+            }
+            builder.append("\n- ").append(candidate.biomeId()).append(" <- ").append(candidate.reason());
+            shown++;
+        }
+        return messageAndSaveConfig(context, builder.toString());
+    }
+
+    private static int addAutomaticInfiniteBiomeTagHint(CommandContext<CommandSourceStack> context, String rawEntry) {
+        FlowingFluids.config.ensureCollections();
+        String normalized = normalizeAutoInfiniteBiomeHint(rawEntry);
+        if (normalized == null) {
+            return message(context, "Invalid tag or biome hint: " + rawEntry + "\nUse #namespace:path or namespace:path.");
+        }
+        if (!FlowingFluids.config.automaticInfiniteBiomeTagHints.add(normalized)) {
+            return message(context, "Automatic tag hint is already stored: " + normalized);
+        }
+        return messageAndSaveConfig(context, "Added automatic infinite biome tag hint: " + normalized);
+    }
+
+    private static int removeAutomaticInfiniteBiomeTagHint(CommandContext<CommandSourceStack> context, String rawEntry) {
+        FlowingFluids.config.ensureCollections();
+        String normalized = normalizeAutoInfiniteBiomeHint(rawEntry);
+        if (normalized == null) {
+            return message(context, "Invalid tag or biome hint: " + rawEntry + "\nUse #namespace:path or namespace:path.");
+        }
+        if (!FlowingFluids.config.automaticInfiniteBiomeTagHints.remove(normalized)) {
+            return message(context, "That automatic tag hint is not stored: " + normalized);
+        }
+        return messageAndSaveConfig(context, "Removed automatic infinite biome tag hint: " + normalized);
+    }
+
+    private static int addAutomaticInfiniteBiomeKeyword(CommandContext<CommandSourceStack> context, String rawKeyword) {
+        FlowingFluids.config.ensureCollections();
+        String normalized = FFFluidUtils.normalizeConfiguredKeyword(rawKeyword);
+        if (normalized == null) {
+            return message(context, "Invalid auto-detect keyword: " + rawKeyword);
+        }
+        if (!FlowingFluids.config.automaticInfiniteBiomeKeywordHints.add(normalized)) {
+            return message(context, "Automatic keyword is already stored: " + normalized);
+        }
+        return messageAndSaveConfig(context, "Added automatic infinite biome keyword: " + normalized);
+    }
+
+    private static int removeAutomaticInfiniteBiomeKeyword(CommandContext<CommandSourceStack> context, String rawKeyword) {
+        FlowingFluids.config.ensureCollections();
+        String normalized = FFFluidUtils.normalizeConfiguredKeyword(rawKeyword);
+        if (normalized == null) {
+            return message(context, "Invalid auto-detect keyword: " + rawKeyword);
+        }
+        if (!FlowingFluids.config.automaticInfiniteBiomeKeywordHints.remove(normalized)) {
+            return message(context, "That automatic keyword is not stored: " + normalized);
+        }
+        return messageAndSaveConfig(context, "Removed automatic infinite biome keyword: " + normalized);
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> automaticInfiniteBiomeCommand() {
+        return Commands.literal("auto_add")
+                .executes(cont -> message(cont, describeAutomaticInfiniteBiomeStatus(cont.getSource().getLevel())))
+                .then(Commands.literal("status")
+                        .executes(cont -> message(cont, describeAutomaticInfiniteBiomeStatus(cont.getSource().getLevel()))))
+                .then(Commands.literal("preview")
+                        .executes(cont -> message(cont, describeAutomaticInfiniteBiomePreview(cont.getSource().getLevel()))))
+                .then(Commands.literal("run")
+                        .executes(FFCommands::runAutomaticInfiniteBiomeAdd))
+                .then(booleanCommand("enable",
+                        "Automatically scans the loaded biome registry on server start and stores new infinite biome entries.",
+                        a -> FlowingFluids.config.enableAutomaticInfiniteBiomeAddition = a,
+                        () -> FlowingFluids.config.enableAutomaticInfiniteBiomeAddition))
+                .then(booleanCommand("modded_only",
+                        "When enabled, startup auto-add ignores vanilla biomes and only stores mod-added ones.",
+                        a -> FlowingFluids.config.automaticInfiniteBiomeAdditionModdedOnly = a,
+                        () -> FlowingFluids.config.automaticInfiniteBiomeAdditionModdedOnly))
+                .then(Commands.literal("tag_hints")
+                        .executes(cont -> message(cont, describeEntryList(
+                                "Automatic infinite biome tag hints",
+                                FlowingFluids.config.automaticInfiniteBiomeTagHints)))
+                        .then(Commands.literal("list")
+                                .executes(cont -> message(cont, describeEntryList(
+                                        "Automatic infinite biome tag hints",
+                                        FlowingFluids.config.automaticInfiniteBiomeTagHints))))
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("entry", StringArgumentType.greedyString())
+                                        .executes(cont -> addAutomaticInfiniteBiomeTagHint(cont, StringArgumentType.getString(cont, "entry")))))
+                        .then(Commands.literal("remove")
+                                .then(Commands.argument("entry", StringArgumentType.greedyString())
+                                        .executes(cont -> removeAutomaticInfiniteBiomeTagHint(cont, StringArgumentType.getString(cont, "entry")))))
+                        .then(Commands.literal("reset")
+                                .executes(cont -> {
+                                    FFConfig defaults = new FFConfig();
+                                    FlowingFluids.config.automaticInfiniteBiomeTagHints = new ObjectOpenHashSet<>(defaults.automaticInfiniteBiomeTagHints);
+                                    return messageAndSaveConfig(cont, "Reset automatic infinite biome tag hints to defaults.");
+                                })))
+                .then(Commands.literal("keywords")
+                        .executes(cont -> message(cont, describeEntryList(
+                                "Automatic infinite biome keywords",
+                                FlowingFluids.config.automaticInfiniteBiomeKeywordHints)))
+                        .then(Commands.literal("list")
+                                .executes(cont -> message(cont, describeEntryList(
+                                        "Automatic infinite biome keywords",
+                                        FlowingFluids.config.automaticInfiniteBiomeKeywordHints))))
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("keyword", StringArgumentType.greedyString())
+                                        .executes(cont -> addAutomaticInfiniteBiomeKeyword(cont, StringArgumentType.getString(cont, "keyword")))))
+                        .then(Commands.literal("remove")
+                                .then(Commands.argument("keyword", StringArgumentType.greedyString())
+                                        .executes(cont -> removeAutomaticInfiniteBiomeKeyword(cont, StringArgumentType.getString(cont, "keyword")))))
+                        .then(Commands.literal("reset")
+                                .executes(cont -> {
+                                    FFConfig defaults = new FFConfig();
+                                    FlowingFluids.config.automaticInfiniteBiomeKeywordHints = new ObjectOpenHashSet<>(defaults.automaticInfiniteBiomeKeywordHints);
+                                    return messageAndSaveConfig(cont, "Reset automatic infinite biome keywords to defaults.");
+                                })));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> infiniteBiomeEntriesCommand() {
+        return Commands.literal("infinite_biomes")
+                .executes(cont -> {
+                    Level level = cont.getSource().getLevel();
+                    BlockPos pos = BlockPos.containing(cont.getSource().getPosition());
+                    return message(cont, describeInfiniteBiomeEntryOverview(level, pos));
+                })
+                .then(Commands.literal("status")
+                        .executes(cont -> {
+                            Level level = cont.getSource().getLevel();
+                            BlockPos pos = BlockPos.containing(cont.getSource().getPosition());
+                            return message(cont, describeInfiniteBiomeEntryOverview(level, pos));
+                        }))
+                .then(Commands.literal("list")
+                        .executes(cont -> {
+                            Level level = cont.getSource().getLevel();
+                            BlockPos pos = BlockPos.containing(cont.getSource().getPosition());
+                            return message(cont, describeInfiniteBiomeEntryList(level, pos));
+                        }))
+                .then(Commands.literal("add")
+                        .executes(cont -> message(cont, "Add infinite biome entries with here, biome <id>, or tag <id>."))
+                        .then(Commands.literal("here")
+                                .executes(FFCommands::addCurrentInfiniteBiomeEntry))
+                        .then(Commands.literal("biome")
+                                .then(Commands.argument("id", StringArgumentType.greedyString())
+                                        .executes(cont -> addInfiniteBiomeEntry(cont, StringArgumentType.getString(cont, "id"), false))))
+                        .then(Commands.literal("tag")
+                                .then(Commands.argument("id", StringArgumentType.greedyString())
+                                        .executes(cont -> addInfiniteBiomeEntry(cont, StringArgumentType.getString(cont, "id"), true)))))
+                .then(Commands.literal("remove")
+                        .executes(cont -> message(cont, "Remove infinite biome entries with here, biome <id>, or tag <id>."))
+                        .then(Commands.literal("here")
+                                .executes(FFCommands::removeCurrentInfiniteBiomeEntry))
+                        .then(Commands.literal("biome")
+                                .then(Commands.argument("id", StringArgumentType.greedyString())
+                                        .executes(cont -> removeInfiniteBiomeEntry(cont, StringArgumentType.getString(cont, "id"), false))))
+                        .then(Commands.literal("tag")
+                                .then(Commands.argument("id", StringArgumentType.greedyString())
+                                        .executes(cont -> removeInfiniteBiomeEntry(cont, StringArgumentType.getString(cont, "id"), true)))))
+                .then(Commands.literal("clear_custom")
+                        .executes(cont -> {
+                            FlowingFluids.config.ensureCollections();
+                            int cleared = FlowingFluids.config.extraInfiniteBiomeEntries.size();
+                            if (cleared == 0) {
+                                return message(cont, "No custom infinite biome entries are currently stored.");
+                            }
+                            FlowingFluids.config.extraInfiniteBiomeEntries.clear();
+                            return messageAndSaveConfig(cont, "Cleared custom infinite biome entries: " + cleared);
+                        }))
+                .then(automaticInfiniteBiomeCommand());
+    }
+
     private static int inspectInfiniteBiomeHere(CommandContext<CommandSourceStack> context) {
         BlockPos pos = BlockPos.containing(context.getSource().getPosition());
         return message(context, describeInfiniteBiomeStatus(context.getSource().getLevel(), pos));
@@ -148,18 +733,62 @@ public class FFCommands {
         boolean randomRefillEnabled = FFFluidUtils.isInfiniteBiomeRandomRefillEnabled();
         boolean nonConsumeEnabled = FFFluidUtils.isInfiniteBiomeNonConsumeEnabled();
         boolean surfaceDrainEnabled = FFFluidUtils.isInfiniteBiomeSurfaceDrainEnabled();
+        boolean flowingRefillEnabled = FFFluidUtils.isInfiniteBiomeFlowingRefillEnabled();
         return "Infinite biome runtime status"
                 + "\nPosition: " + pos
+                + "\nBiome: " + currentBiomeId(level, pos)
                 + "\nFluid amount: " + fluidState.getAmount()
                 + "\nInfinite biome: " + inInfiniteBiome
                 + "\nWithin refill band: " + withinBand
-                + "\nRefill chance: " + FlowingFluids.config.oceanRiverSwampRefillChance
+                + "\nPassive refill chance: " + FlowingFluids.config.oceanRiverSwampRefillChance
                 + " (enabled=" + randomRefillEnabled + ")"
                 + "\nNon-consume chance: " + FlowingFluids.config.infiniteWaterBiomeNonConsumeChance
                 + " (enabled=" + nonConsumeEnabled + ")"
+                + "\nFlowing refill chance: " + FlowingFluids.config.infiniteWaterBiomeFlowingRefillChance
+                + " (enabled=" + flowingRefillEnabled + ")"
+                + "\nFlowing refill interval: " + FlowingFluids.config.infiniteWaterBiomeFlowingRefillInterval + " ticks"
+                + "\nFlowing refill max amount: " + FlowingFluids.config.infiniteWaterBiomeFlowingRefillMaxAmount
                 + "\nSurface drain chance: " + FlowingFluids.config.infiniteWaterBiomeDrainSurfaceChance
                 + " (enabled=" + surfaceDrainEnabled + ")"
-                + "\nSea-level only refill: " + FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly;
+                + "\nSea-level only refill: " + FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly
+                + "\nCustom config entries: " + FlowingFluids.config.extraInfiniteBiomeEntries.size();
+    }
+
+    private static int applyInfiniteBiomePreset(CommandContext<CommandSourceStack> context, String presetName) {
+        FFConfig defaults = new FFConfig();
+        switch (presetName) {
+            case "boosted" -> {
+                FlowingFluids.config.oceanRiverSwampRefillChance = 0.12f;
+                FlowingFluids.config.infiniteWaterBiomeNonConsumeChance = 0.03f;
+                FlowingFluids.config.infiniteWaterBiomeFlowingRefillChance = 0.08f;
+                FlowingFluids.config.infiniteWaterBiomeFlowingRefillInterval = 8;
+                FlowingFluids.config.infiniteWaterBiomeFlowingRefillMaxAmount = 2;
+            }
+            case "aggressive" -> {
+                FlowingFluids.config.oceanRiverSwampRefillChance = 0.20f;
+                FlowingFluids.config.infiniteWaterBiomeNonConsumeChance = 0.08f;
+                FlowingFluids.config.infiniteWaterBiomeFlowingRefillChance = 0.18f;
+                FlowingFluids.config.infiniteWaterBiomeFlowingRefillInterval = 4;
+                FlowingFluids.config.infiniteWaterBiomeFlowingRefillMaxAmount = 3;
+            }
+            case "reset" -> {
+                FlowingFluids.config.oceanRiverSwampRefillChance = defaults.oceanRiverSwampRefillChance;
+                FlowingFluids.config.infiniteWaterBiomeNonConsumeChance = defaults.infiniteWaterBiomeNonConsumeChance;
+                FlowingFluids.config.infiniteWaterBiomeFlowingRefillChance = defaults.infiniteWaterBiomeFlowingRefillChance;
+                FlowingFluids.config.infiniteWaterBiomeFlowingRefillInterval = defaults.infiniteWaterBiomeFlowingRefillInterval;
+                FlowingFluids.config.infiniteWaterBiomeFlowingRefillMaxAmount = defaults.infiniteWaterBiomeFlowingRefillMaxAmount;
+            }
+            default -> {
+                return message(context, "Unknown infinite biome preset: " + presetName);
+            }
+        }
+        return messageAndSaveConfig(context,
+                "Applied infinite biome preset: " + presetName
+                        + "\nPassive refill chance: " + FlowingFluids.config.oceanRiverSwampRefillChance
+                        + "\nNon-consume chance: " + FlowingFluids.config.infiniteWaterBiomeNonConsumeChance
+                        + "\nFlowing refill chance: " + FlowingFluids.config.infiniteWaterBiomeFlowingRefillChance
+                        + "\nFlowing refill interval: " + FlowingFluids.config.infiniteWaterBiomeFlowingRefillInterval + " ticks"
+                        + "\nFlowing refill max amount: " + FlowingFluids.config.infiniteWaterBiomeFlowingRefillMaxAmount);
     }
 
     private static int applyRainPreset(CommandContext<CommandSourceStack> context, String presetName) {
@@ -345,6 +974,402 @@ public class FFCommands {
         return command;
     }
 
+    private static LiteralArgumentBuilder<CommandSourceStack> dryingCommand() {
+        return Commands.literal("drying")
+                .executes(FFCommands::dryingStatus)
+                .then(Commands.literal("status")
+                        .executes(FFCommands::dryingStatus))
+                .then(Commands.literal("heatwave")
+                        .executes(FFCommands::dryingStatus)
+                        .then(booleanCommand("enable",
+                                "Master toggle for heatwave events that raise evaporation and weaken rain refill.",
+                                a -> FlowingFluids.config.enableHeatwaveEvents = a,
+                                () -> FlowingFluids.config.enableHeatwaveEvents))
+                        .then(floatChanceCommand("start_chance_per_day",
+                                "Chance for a heatwave to begin during each daily climate roll.",
+                                a -> FlowingFluids.config.heatwaveStartChancePerDay = a,
+                                () -> FlowingFluids.config.heatwaveStartChancePerDay))
+                        .then(intCommand("min_duration_ticks",
+                                "Minimum heatwave duration in ticks.",
+                                "ticks", 20, 240000,
+                                a -> FlowingFluids.config.heatwaveMinDurationTicks = a,
+                                () -> FlowingFluids.config.heatwaveMinDurationTicks))
+                        .then(intCommand("max_duration_ticks",
+                                "Maximum heatwave duration in ticks.",
+                                "ticks", 20, 240000,
+                                a -> FlowingFluids.config.heatwaveMaxDurationTicks = a,
+                                () -> FlowingFluids.config.heatwaveMaxDurationTicks))
+                        .then(floatCommand("evaporation_multiplier",
+                                "Multiplier applied to evaporation while a heatwave is active.",
+                                "multiplier", 0.0f, 8.0f,
+                                a -> FlowingFluids.config.heatwaveEvaporationMultiplier = a,
+                                () -> FlowingFluids.config.heatwaveEvaporationMultiplier))
+                        .then(floatCommand("rain_refill_multiplier",
+                                "Multiplier applied to rain refill while a heatwave is active.",
+                                "multiplier", 0.0f, 4.0f,
+                                a -> FlowingFluids.config.heatwaveRainRefillMultiplier = a,
+                                () -> FlowingFluids.config.heatwaveRainRefillMultiplier))
+                        .then(booleanCommand("daytime_only",
+                                "When enabled, heatwave bonuses only matter during the day.",
+                                a -> FlowingFluids.config.heatwaveDaytimeOnly = a,
+                                () -> FlowingFluids.config.heatwaveDaytimeOnly)))
+                .then(Commands.literal("dry_season")
+                        .executes(FFCommands::dryingStatus)
+                        .then(booleanCommand("enable",
+                                "Master toggle for dry season events.",
+                                a -> FlowingFluids.config.enableDrySeasonEvents = a,
+                                () -> FlowingFluids.config.enableDrySeasonEvents))
+                        .then(floatChanceCommand("start_chance_per_day",
+                                "Chance for a dry season to begin during each daily climate roll.",
+                                a -> FlowingFluids.config.drySeasonStartChancePerDay = a,
+                                () -> FlowingFluids.config.drySeasonStartChancePerDay))
+                        .then(intCommand("min_duration_ticks",
+                                "Minimum dry season duration in ticks.",
+                                "ticks", 20, 480000,
+                                a -> FlowingFluids.config.drySeasonMinDurationTicks = a,
+                                () -> FlowingFluids.config.drySeasonMinDurationTicks))
+                        .then(intCommand("max_duration_ticks",
+                                "Maximum dry season duration in ticks.",
+                                "ticks", 20, 480000,
+                                a -> FlowingFluids.config.drySeasonMaxDurationTicks = a,
+                                () -> FlowingFluids.config.drySeasonMaxDurationTicks))
+                        .then(floatCommand("evaporation_multiplier",
+                                "Multiplier applied to evaporation while a dry season is active.",
+                                "multiplier", 0.0f, 8.0f,
+                                a -> FlowingFluids.config.drySeasonEvaporationMultiplier = a,
+                                () -> FlowingFluids.config.drySeasonEvaporationMultiplier))
+                        .then(floatCommand("rain_refill_multiplier",
+                                "Multiplier applied to rain refill while a dry season is active.",
+                                "multiplier", 0.0f, 4.0f,
+                                a -> FlowingFluids.config.drySeasonRainRefillMultiplier = a,
+                                () -> FlowingFluids.config.drySeasonRainRefillMultiplier)))
+                .then(Commands.literal("evaporation")
+                        .executes(FFCommands::dryingStatus)
+                        .then(floatCommand("chance_multiplier",
+                                "Multiplier layered on top of the base puddle evaporation chance.",
+                                "multiplier", 0.0f, 8.0f,
+                                a -> FlowingFluids.config.evaporationChanceMultiplier = a,
+                                () -> FlowingFluids.config.evaporationChanceMultiplier))
+                        .then(intCommand("interval_ticks",
+                                "How often surface evaporation attempts are allowed per position. Higher values slow drying.",
+                                "ticks", 1, 1200,
+                                a -> FlowingFluids.config.evaporationIntervalTicks = a,
+                                () -> FlowingFluids.config.evaporationIntervalTicks))
+                        .then(intCommand("thin_water_max_level",
+                                "Highest water level that surface drying may evaporate. Thin levels at or below this also ignore the active-flow gate.",
+                                "level", 1, 8,
+                                a -> FlowingFluids.config.evaporationThinWaterMaxLevel = a,
+                                () -> FlowingFluids.config.evaporationThinWaterMaxLevel))
+                        .then(floatCommand("nether_chance_multiplier",
+                                "Multiplier layered on top of the base ultra-warm dimension evaporation chance.",
+                                "multiplier", 0.0f, 8.0f,
+                                a -> FlowingFluids.config.evaporationNetherChanceMultiplier = a,
+                                () -> FlowingFluids.config.evaporationNetherChanceMultiplier))
+                        .then(intCommand("nether_interval_ticks",
+                                "How often ultra-warm dimension evaporation attempts are allowed per position.",
+                                "ticks", 1, 1200,
+                                a -> FlowingFluids.config.evaporationNetherIntervalTicks = a,
+                                () -> FlowingFluids.config.evaporationNetherIntervalTicks)))
+                .then(Commands.literal("hot_block_evaporation")
+                        .executes(FFCommands::dryingStatus)
+                        .then(booleanCommand("enable",
+                                "Lets nearby hot blocks dry shallow water faster.",
+                                a -> FlowingFluids.config.enableHotBlockEvaporation = a,
+                                () -> FlowingFluids.config.enableHotBlockEvaporation))
+                        .then(floatChanceCommand("chance",
+                                "Chance for nearby heat sources to evaporate water during random ticks.",
+                                a -> FlowingFluids.config.hotBlockEvaporationChance = a,
+                                () -> FlowingFluids.config.hotBlockEvaporationChance))
+                        .then(floatCommand("chance_multiplier",
+                                "Multiplier layered on top of the base hot-block evaporation chance.",
+                                "multiplier", 0.0f, 8.0f,
+                                a -> FlowingFluids.config.hotBlockEvaporationChanceMultiplier = a,
+                                () -> FlowingFluids.config.hotBlockEvaporationChanceMultiplier))
+                        .then(intCommand("interval_ticks",
+                                "How often hot-block evaporation attempts are allowed per position.",
+                                "ticks", 1, 1200,
+                                a -> FlowingFluids.config.hotBlockEvaporationIntervalTicks = a,
+                                () -> FlowingFluids.config.hotBlockEvaporationIntervalTicks))
+                        .then(intCommand("radius",
+                                "Horizontal scan radius for nearby hot blocks.",
+                                "radius", 0, 8,
+                                a -> FlowingFluids.config.hotBlockEvaporationRadius = a,
+                                () -> FlowingFluids.config.hotBlockEvaporationRadius))
+                        .then(intCommand("vertical_range",
+                                "Vertical scan range for nearby hot blocks.",
+                                "range", 0, 8,
+                                a -> FlowingFluids.config.hotBlockEvaporationVerticalRange = a,
+                                () -> FlowingFluids.config.hotBlockEvaporationVerticalRange))
+                        .then(intCommand("drain_amount",
+                                "How many fluid levels a hot-block drying tick removes.",
+                                "amount", 1, 8,
+                                a -> FlowingFluids.config.hotBlockEvaporationDrainAmount = a,
+                                () -> FlowingFluids.config.hotBlockEvaporationDrainAmount)))
+                .then(Commands.literal("shade_protection")
+                        .executes(FFCommands::dryingStatus)
+                        .then(booleanCommand("enable",
+                                "Prevents drying when a roof or canopy shields the water.",
+                                a -> FlowingFluids.config.enableShadeProtection = a,
+                                () -> FlowingFluids.config.enableShadeProtection))
+                        .then(intCommand("roof_search_height",
+                                "How far upward to search for a protective roof.",
+                                "height", 1, 32,
+                                a -> FlowingFluids.config.shadeRoofSearchHeight = a,
+                                () -> FlowingFluids.config.shadeRoofSearchHeight)))
+                .then(Commands.literal("river_drought")
+                        .executes(FFCommands::dryingStatus)
+                        .then(booleanCommand("enable",
+                                "Allows river edges to dry out during dry seasons.",
+                                a -> FlowingFluids.config.enableRiverDroughts = a,
+                                () -> FlowingFluids.config.enableRiverDroughts))
+                        .then(floatChanceCommand("refill_multiplier",
+                                "Multiplier applied to river refill during drought conditions.",
+                                a -> FlowingFluids.config.riverDroughtRefillMultiplier = a,
+                                () -> FlowingFluids.config.riverDroughtRefillMultiplier))
+                        .then(floatChanceCommand("drain_chance",
+                                "Chance for shallow river water to lose a level during drought conditions.",
+                                a -> FlowingFluids.config.riverDroughtDrainChance = a,
+                                () -> FlowingFluids.config.riverDroughtDrainChance))
+                        .then(intCommand("max_affected_level",
+                                "Highest water level that drought draining is allowed to touch.",
+                                "level", 1, 8,
+                                a -> FlowingFluids.config.riverDroughtMaxAffectedLevel = a,
+                                () -> FlowingFluids.config.riverDroughtMaxAffectedLevel))
+                        .then(floatCommand("heatwave_drain_bonus",
+                                "Extra drain multiplier applied when a heatwave overlaps a drought.",
+                                "multiplier", 1.0f, 4.0f,
+                                a -> FlowingFluids.config.riverDroughtHeatwaveDrainBonus = a,
+                                () -> FlowingFluids.config.riverDroughtHeatwaveDrainBonus)));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> floodCommand() {
+        return Commands.literal("flood")
+                .executes(FFCommands::floodStatus)
+                .then(Commands.literal("status")
+                        .executes(FFCommands::floodStatus))
+                .then(booleanCommand("enable",
+                        "Master toggle for manually triggered and rain-boosted flood events.",
+                        a -> FlowingFluids.config.enableFloodEvents = a,
+                        () -> FlowingFluids.config.enableFloodEvents))
+                .then(Commands.literal("start_here")
+                        .executes(cont -> startFloodHere(cont,
+                                FlowingFluids.config.floodDefaultRadius,
+                                Math.max(1, FlowingFluids.config.floodDefaultDurationTicks / 20),
+                                Integer.MIN_VALUE))
+                        .then(Commands.argument("radius", IntegerArgumentType.integer(8, 256))
+                                .executes(cont -> startFloodHere(cont,
+                                        cont.getArgument("radius", Integer.class),
+                                        Math.max(1, FlowingFluids.config.floodDefaultDurationTicks / 20),
+                                        Integer.MIN_VALUE))
+                                .then(Commands.argument("duration_seconds", IntegerArgumentType.integer(1, 7200))
+                                        .executes(cont -> startFloodHere(cont,
+                                                cont.getArgument("radius", Integer.class),
+                                                cont.getArgument("duration_seconds", Integer.class),
+                                                Integer.MIN_VALUE))
+                                        .then(Commands.argument("waterline_y", IntegerArgumentType.integer(-128, 512))
+                                                .executes(cont -> startFloodHere(cont,
+                                                        cont.getArgument("radius", Integer.class),
+                                                        cont.getArgument("duration_seconds", Integer.class),
+                                                        cont.getArgument("waterline_y", Integer.class)))))))
+                .then(Commands.literal("stop")
+                        .executes(cont -> message(cont,
+                                FloodEventSystem.stopFlood(cont.getSource().getLevel())
+                                        ? "Stopped the active flood event in this dimension."
+                                        : "No active flood event was running in this dimension.")))
+                .then(intCommand("default_radius",
+                        "Default radius used by `start_here` when no custom radius is provided.",
+                        "radius", 8, 256,
+                        a -> FlowingFluids.config.floodDefaultRadius = a,
+                        () -> FlowingFluids.config.floodDefaultRadius))
+                .then(intCommand("default_duration_seconds",
+                        "Default flood duration used by `start_here` when no custom duration is provided.",
+                        "seconds", 1, 7200,
+                        a -> FlowingFluids.config.floodDefaultDurationTicks = a * 20,
+                        () -> Math.max(1, FlowingFluids.config.floodDefaultDurationTicks / 20)))
+                .then(intCommand("pulse_interval_ticks",
+                        "How often an active flood attempts new water placements.",
+                        "ticks", 1, 200,
+                        a -> FlowingFluids.config.floodPulseIntervalTicks = a,
+                        () -> FlowingFluids.config.floodPulseIntervalTicks))
+                .then(intCommand("placements_per_pulse",
+                        "How many flood placements are attempted per pulse.",
+                        "placements", 1, 256,
+                        a -> FlowingFluids.config.floodPlacementsPerPulse = a,
+                        () -> FlowingFluids.config.floodPlacementsPerPulse))
+                .then(intCommand("water_amount_per_placement",
+                        "Base water amount used for each flood placement.",
+                        "amount", 1, 8,
+                        a -> FlowingFluids.config.floodWaterAmountPerPlacement = a,
+                        () -> FlowingFluids.config.floodWaterAmountPerPlacement))
+                .then(intCommand("shore_search_radius",
+                        "How far each placement checks for nearby existing water.",
+                        "radius", 1, 16,
+                        a -> FlowingFluids.config.floodShoreSearchRadius = a,
+                        () -> FlowingFluids.config.floodShoreSearchRadius))
+                .then(intCommand("max_water_rise",
+                        "Maximum height above the waterline a flood can climb when placing water.",
+                        "rise", 1, 16,
+                        a -> FlowingFluids.config.floodMaxWaterRise = a,
+                        () -> FlowingFluids.config.floodMaxWaterRise))
+                .then(floatCommand("lowland_bias",
+                        "How strongly flood placement prefers bowl-shaped low ground.",
+                        "bias", 0.0f, 4.0f,
+                        a -> FlowingFluids.config.floodLowlandBias = a,
+                        () -> FlowingFluids.config.floodLowlandBias))
+                .then(floatCommand("rain_amount_multiplier",
+                        "Extra rain refill strength granted inside an active flood zone.",
+                        "multiplier", 1.0f, 8.0f,
+                        a -> FlowingFluids.config.floodRainAmountMultiplier = a,
+                        () -> FlowingFluids.config.floodRainAmountMultiplier));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> waterPressureCommand() {
+        return Commands.literal("water_pressure")
+                .executes(FFCommands::waterPressureStatus)
+                .then(Commands.literal("status")
+                        .executes(FFCommands::waterPressureStatus))
+                .then(booleanCommand("enable",
+                        "Allows supported barriers to build up water pressure and eventually fail.",
+                        a -> FlowingFluids.config.enableWaterPressure = a,
+                        () -> FlowingFluids.config.enableWaterPressure))
+                .then(booleanCommand("doors",
+                        "Allows water pressure to target doors.",
+                        a -> FlowingFluids.config.applyPressureToDoors = a,
+                        () -> FlowingFluids.config.applyPressureToDoors))
+                .then(booleanCommand("trapdoors",
+                        "Allows water pressure to target trapdoors.",
+                        a -> FlowingFluids.config.applyPressureToTrapdoors = a,
+                        () -> FlowingFluids.config.applyPressureToTrapdoors))
+                .then(booleanCommand("fence_gates",
+                        "Allows water pressure to target fence gates.",
+                        a -> FlowingFluids.config.applyPressureToFenceGates = a,
+                        () -> FlowingFluids.config.applyPressureToFenceGates))
+                .then(floatCommand("accumulation_rate",
+                        "Base pressure added each time a tracked barrier is sampled with water contact.",
+                        "rate", 0.0f, 4.0f,
+                        a -> FlowingFluids.config.waterPressureAccumulationRate = a,
+                        () -> FlowingFluids.config.waterPressureAccumulationRate))
+                .then(floatCommand("break_threshold",
+                        "Pressure value at which a barrier finally gives way.",
+                        "threshold", 0.1f, 128.0f,
+                        a -> FlowingFluids.config.waterPressureBreakThreshold = a,
+                        () -> FlowingFluids.config.waterPressureBreakThreshold))
+                .then(floatCommand("open_state_multiplier",
+                        "Extra pressure applied while the target block is already open.",
+                        "multiplier", 1.0f, 8.0f,
+                        a -> FlowingFluids.config.waterPressureOpenStateMultiplier = a,
+                        () -> FlowingFluids.config.waterPressureOpenStateMultiplier))
+                .then(floatCommand("metal_resistance",
+                        "Additional resistance multiplier for iron doors and trapdoors.",
+                        "multiplier", 1.0f, 12.0f,
+                        a -> FlowingFluids.config.waterPressureMetalResistance = a,
+                        () -> FlowingFluids.config.waterPressureMetalResistance))
+                .then(intCommand("decay_ticks",
+                        "How long dormant tracked pressure survives without fresh water contact.",
+                        "ticks", 1, 24000,
+                        a -> FlowingFluids.config.waterPressureDecayTicks = a,
+                        () -> FlowingFluids.config.waterPressureDecayTicks))
+                .then(intCommand("updates_per_tick",
+                        "How many tracked barriers are processed each tick.",
+                        "count", 1, 512,
+                        a -> FlowingFluids.config.waterPressureUpdatesPerTick = a,
+                        () -> FlowingFluids.config.waterPressureUpdatesPerTick))
+                .then(intCommand("scan_interval",
+                        "Tick interval between random scans for new pressure targets.",
+                        "ticks", 1, 1200,
+                        a -> FlowingFluids.config.waterPressureScanInterval = a,
+                        () -> FlowingFluids.config.waterPressureScanInterval))
+                .then(intCommand("scan_attempts",
+                        "Random block samples per scanned chunk.",
+                        "attempts", 1, 64,
+                        a -> FlowingFluids.config.waterPressureScanAttempts = a,
+                        () -> FlowingFluids.config.waterPressureScanAttempts))
+                .then(intCommand("chunk_radius",
+                        "Chunk radius around players used by water pressure scanning.",
+                        "radius", 0, 4,
+                        a -> FlowingFluids.config.waterPressureChunkRadius = a,
+                        () -> FlowingFluids.config.waterPressureChunkRadius))
+                .then(intCommand("max_tracked",
+                        "Hard cap for simultaneously tracked barriers.",
+                        "count", 128, 32768,
+                        a -> FlowingFluids.config.waterPressureMaxTracked = a,
+                        () -> FlowingFluids.config.waterPressureMaxTracked))
+                .then(intCommand("data_ttl",
+                        "How long old tracked pressure entries are kept before cleanup drops them.",
+                        "ticks", 1, 240000,
+                        a -> FlowingFluids.config.waterPressureDataTtl = a,
+                        () -> FlowingFluids.config.waterPressureDataTtl));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> springCommand() {
+        return Commands.literal("springs")
+                .executes(FFCommands::springStatus)
+                .then(Commands.literal("status")
+                        .executes(FFCommands::springStatus))
+                .then(booleanCommand("random_breakage",
+                        "When enabled, active spring mouths can occasionally collapse on their own. This is off by default so ordinary worlds stay calm.",
+                        "Spring random breakage is now enabled. Active vents may occasionally collapse.",
+                        "Spring random breakage is now disabled. Springs will stay stable unless something else breaks them.",
+                        a -> FlowingFluids.config.enableSpringRandomBreakage = a,
+                        () -> FlowingFluids.config.enableSpringRandomBreakage))
+                .then(floatCommand("random_breakage_chance",
+                        "Base per-tick collapse chance checked on active spring mouths when random breakage is enabled. Stronger and lava vents strain a bit more.",
+                        "chance", 0.0f, 0.25f,
+                        a -> FlowingFluids.config.springRandomBreakChance = a,
+                        () -> FlowingFluids.config.springRandomBreakChance))
+                .then(floatCommand("overworld_spawn_multiplier",
+                        "Multiplies spring generation attempts in overworld biomes. Set this to 0 to stop overworld spring worldgen entirely.",
+                        "multiplier", 0.0f, 8.0f,
+                        a -> FlowingFluids.config.overworldSpringSpawnMultiplier = a,
+                        () -> FlowingFluids.config.overworldSpringSpawnMultiplier))
+                .then(floatCommand("nether_spawn_multiplier",
+                        "Multiplies spring generation attempts in Nether biomes. Set this to 0 to stop Nether spring worldgen entirely.",
+                        "multiplier", 0.0f, 8.0f,
+                        a -> FlowingFluids.config.netherSpringSpawnMultiplier = a,
+                        () -> FlowingFluids.config.netherSpringSpawnMultiplier))
+                .then(floatCommand("deep_lava_spawn_multiplier",
+                        "Multiplies deep underground lava spring generation attempts after biome bias is applied. Lower values make lava springs rarer.",
+                        "multiplier", 0.05f, 3.0f,
+                        a -> FlowingFluids.config.deepLavaSpringSpawnMultiplier = a,
+                        () -> FlowingFluids.config.deepLavaSpringSpawnMultiplier))
+                .then(floatCommand("deep_lava_extra_reject_chance",
+                        "Extra rejection added on top of the deep lava biome filter. Higher values make deep lava springs much rarer.",
+                        "chance", 0.0f, 0.95f,
+                        a -> FlowingFluids.config.deepLavaSpringExtraRejectChance = a,
+                        () -> FlowingFluids.config.deepLavaSpringExtraRejectChance))
+                .then(intCommand("deep_lava_max_placements",
+                        "Maximum number of deep lava springs that a single worldgen feature run may place.",
+                        "count", 1, 3,
+                        a -> FlowingFluids.config.deepLavaSpringMaxPlacementsPerFeature = a,
+                        () -> FlowingFluids.config.deepLavaSpringMaxPlacementsPerFeature))
+                .then(booleanCommand("capped_pressure_head",
+                        "When enabled, upward springs keep a full pressure column up to the last open space below a stopper block instead of dropping back to a short pulse.",
+                        "Capped spring pressure head is now enabled. Upward springs can build pressure right under a cap block.",
+                        "Capped spring pressure head is now disabled. Blocked shafts will fall back to the shorter ambient pulse band.",
+                        a -> FlowingFluids.config.enableCappedSpringPressureHead = a,
+                        () -> FlowingFluids.config.enableCappedSpringPressureHead))
+                .then(floatCommand("water_emission_multiplier",
+                        "Scales how much water each spring pulse tries to push out after its normal strength and seep bonuses are calculated. Higher values spread harder.",
+                        "multiplier", 0.25f, 4.0f,
+                        a -> FlowingFluids.config.waterSpringEmissionMultiplier = a,
+                        () -> FlowingFluids.config.waterSpringEmissionMultiplier))
+                .then(floatCommand("lava_emission_multiplier",
+                        "Scales how much lava each spring pulse tries to push out after its normal strength and pressure bonuses are calculated.",
+                        "multiplier", 0.25f, 4.0f,
+                        a -> FlowingFluids.config.lavaSpringEmissionMultiplier = a,
+                        () -> FlowingFluids.config.lavaSpringEmissionMultiplier))
+                .then(floatCommand("water_pulse_interval_multiplier",
+                        "Scales the time between water spring pressure pulses. Values below 1.0 pulse faster, values above 1.0 pulse slower.",
+                        "multiplier", 0.25f, 4.0f,
+                        a -> FlowingFluids.config.waterSpringPulseIntervalMultiplier = a,
+                        () -> FlowingFluids.config.waterSpringPulseIntervalMultiplier))
+                .then(floatCommand("lava_pulse_interval_multiplier",
+                        "Scales the time between lava spring pressure pulses. Values below 1.0 pulse faster, values above 1.0 pulse slower.",
+                        "multiplier", 0.25f, 4.0f,
+                        a -> FlowingFluids.config.lavaSpringPulseIntervalMultiplier = a,
+                        () -> FlowingFluids.config.lavaSpringPulseIntervalMultiplier));
+    }
+
     public static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher, CommandBuildContext commandBuildContext, @SuppressWarnings("unused") Commands.CommandSelection var3) {
         var notFluidException = new SimpleCommandExceptionType(new LiteralMessage("The block you provided is not a fluid block, or is not a fluid block that can flow."));
 
@@ -436,10 +1461,21 @@ public class FFCommands {
                                         "Allows you to set a block distance for fluid processing, works kinda like render distance but for fluid flowing.\n0 means infinite distance (works with chunk loaders far from players).\nThe default value is 0, and the maximum value is 256 (though it is limited by the servers processing chunk distance).\nPlease note this only affects the flowing calculation and refilling behaviours like rain.",
                                         "distance_in_blocks", 0, 256,
                                         a -> FlowingFluids.config.playerBlockDistanceForFlowing = a, () -> FlowingFluids.config.playerBlockDistanceForFlowing)
+                                ).then(seaLevelOverrides()
                                 ).then(intCommand("min_level_for_obsidian",
                                         "Controls the minimum level of lava that will convert to obsidian, this is useful for making obsidian form more consistently.\nThe default value is 6, and the maximum value is 8.",
                                         "level", 0, 8,
                                         a -> FlowingFluids.config.minLavaLevelForObsidian = a, () -> FlowingFluids.config.minLavaLevelForObsidian)
+                                ).then(enumCommand("water_processing_mode",
+                                        "Switches water-only processing between the current smarter flow model and the lighter legacy flow model from the original mod.",
+                                        a -> FlowingFluids.config.waterProcessingMode = a,
+                                        () -> FlowingFluids.config.waterProcessingMode,
+                                        Pair.of(FFConfig.WaterProcessingMode.MODERN,
+                                                "Water processing mode set to MODERN.\nWater will use the current flow analysis, adaptive scheduling, and modern equalization rules."),
+                                        Pair.of(FFConfig.WaterProcessingMode.LEGACY,
+                                                "Water processing mode set to LEGACY.\nWater will use the simpler original-style flow logic while lava and the rest of the mod stay on the current system."),
+                                        Pair.of(FFConfig.WaterProcessingMode.HYBRID,
+                                                "Water processing mode set to HYBRID.\nMoving fronts and recent changes stay on legacy flow, while settled reservoirs switch to the modern analysis path.")))
                                 ).then(Commands.literal("flow_speed")
                                         .executes(FFCommands::flowSpeedStatus)
                                         .then(Commands.literal("status")
@@ -455,6 +1491,49 @@ public class FFCommands {
                                                 "strength", 0.0f, 2.0f,
                                                 a -> FlowingFluids.config.flowSpeedStrength = a,
                                                 () -> FlowingFluids.config.flowSpeedStrength))
+                                ).then(Commands.literal("mudification")
+                                        .executes(FFCommands::mudificationStatus)
+                                        .then(Commands.literal("status")
+                                                .executes(FFCommands::mudificationStatus))
+                                        .then(booleanCommand("enable",
+                                                "Controls whether repeated fast water exposure can turn natural soil into mud.",
+                                                a -> FlowingFluids.config.enableMudification = a,
+                                                () -> FlowingFluids.config.enableMudification))
+                                        .then(floatCommand("strength",
+                                                "Adjusts how quickly exposure builds up before dirt-like blocks become mud.",
+                                                "strength", 0.0f, 4.0f,
+                                                a -> FlowingFluids.config.mudificationStrength = a,
+                                                () -> FlowingFluids.config.mudificationStrength))
+                                        .then(booleanCommand("banks",
+                                                "Controls whether FAST and TORRENT flows can also splash mudification onto nearby banks.",
+                                                a -> FlowingFluids.config.mudificationAffectsBanks = a,
+                                                () -> FlowingFluids.config.mudificationAffectsBanks))
+                                ).then(Commands.literal("hydraulic_blocks")
+                                        .executes(FFCommands::hydraulicBlocksStatus)
+                                        .then(Commands.literal("status")
+                                                .executes(FFCommands::hydraulicBlocksStatus))
+                                        .then(booleanCommand("enable",
+                                                "Controls whether waterway liners and pressure nozzles affect water flow analysis.",
+                                                a -> FlowingFluids.config.enableHydraulicBlocks = a,
+                                                () -> FlowingFluids.config.enableHydraulicBlocks))
+                                ).then(Commands.literal("cavity_pressure")
+                                        .executes(FFCommands::cavityPressureStatus)
+                                        .then(Commands.literal("status")
+                                                .executes(FFCommands::cavityPressureStatus))
+                                        .then(booleanCommand("enable",
+                                                "Controls whether enclosed caves, pits, and shafts build lightweight water head from sustained inflow.",
+                                                a -> FlowingFluids.config.enableCavityPressureRise = a,
+                                                () -> FlowingFluids.config.enableCavityPressureRise))
+                                        .then(floatCommand("strength",
+                                                "Adjusts how strongly enclosed spaces bias horizontal transfer and connected filling when water is being pushed in.",
+                                                "strength", 0.0f, 2.0f,
+                                                a -> FlowingFluids.config.cavityPressureStrength = a,
+                                                () -> FlowingFluids.config.cavityPressureStrength))
+                                        .then(floatCommand("connected_head_strength",
+                                                "Adjusts how much nearby connected higher water surfaces add to the local pressure head.",
+                                                "strength", 0.0f, 2.0f,
+                                                a -> FlowingFluids.config.connectedHeadStrength = a,
+                                                () -> FlowingFluids.config.connectedHeadStrength))
                                 ).then(Commands.literal("random_tick_level_check_distance")
                                         .executes(cont -> message(cont, "Sets the distance fluids will check for other fluids to level with during random ticks, 0 means disabled, currently set to " + FlowingFluids.config.randomTickLevelingDistance))
                                         .then(Commands.argument("distance", IntegerArgumentType.integer(0, 64))
@@ -614,7 +1693,8 @@ public class FFCommands {
                                 ).then(Commands.literal("tick_delays__aka__flow_speeds")
                                         .executes(cont -> message(cont, "Modifies the tick delay fluids will have between spreading updates\nThe vanilla value is always 5 for water but lava will vary between 10 and 30 depending on if it is in the Nether."))
                                         .then(Commands.literal("water")
-                                                .executes(cont -> message(cont, "Modifies the tick delay water will have between spreading updates.\nThe vanilla value is always 5 for water.\nWater tick delay modifier is currently set to " + FlowingFluids.config.waterTickDelay))
+                                                .executes(cont -> message(cont, "Modifies the base tick delay water will have between spreading updates.\nThe vanilla value is always 5 for water.\nWater base tick delay is currently set to " + FlowingFluids.config.waterTickDelay
+                                                        + "\n\n" + FluidAutoTickDelay.describeStatus()))
                                                 .then(Commands.argument("delay", IntegerArgumentType.integer(1, 255))
                                                         .executes(cont -> {
                                                             FlowingFluids.config.waterTickDelay = cont.getArgument("delay", Integer.class);
@@ -622,7 +1702,8 @@ public class FFCommands {
                                                         })
                                                 )
                                         ).then(Commands.literal("lava")
-                                                .executes(cont -> message(cont, "Modifies the tick delay lava will have between spreading updates in the overworld.\nThe vanilla value is always 30 for lava in the overworld.\nLava tick delay modifier is currently set to " + FlowingFluids.config.lavaTickDelay))
+                                                .executes(cont -> message(cont, "Modifies the base tick delay lava will have between spreading updates in the overworld.\nThe vanilla value is always 30 for lava in the overworld.\nLava base tick delay is currently set to " + FlowingFluids.config.lavaTickDelay
+                                                        + "\n\n" + FluidAutoTickDelay.describeStatus()))
                                                 .then(Commands.argument("delay", IntegerArgumentType.integer(1, 255))
                                                         .executes(cont -> {
                                                             FlowingFluids.config.lavaTickDelay = cont.getArgument("delay", Integer.class);
@@ -630,13 +1711,46 @@ public class FFCommands {
                                                         })
                                                 )
                                         ).then(Commands.literal("lava_nether")
-                                                .executes(cont -> message(cont, "Modifies the tick delay lava will have between spreading updates in the nether.\nThe vanilla value is always 10 for lava in the nether.\nLava tick delay modifier is currently set to " + FlowingFluids.config.lavaNetherTickDelay))
+                                                .executes(cont -> message(cont, "Modifies the base tick delay lava will have between spreading updates in the nether.\nThe vanilla value is always 10 for lava in the nether.\nLava nether base tick delay is currently set to " + FlowingFluids.config.lavaNetherTickDelay
+                                                        + "\n\n" + FluidAutoTickDelay.describeStatus()))
                                                 .then(Commands.argument("delay", IntegerArgumentType.integer(1, 255))
                                                         .executes(cont -> {
                                                             FlowingFluids.config.lavaNetherTickDelay = cont.getArgument("delay", Integer.class);
                                                             return messageAndSaveConfig(cont, "Lava_nether tick delay set to " + FlowingFluids.config.lavaNetherTickDelay);
                                                         })
                                                 )
+                                        ).then(Commands.literal("auto_tick_delay")
+                                                .executes(FFCommands::autoTickDelayStatus)
+                                                .then(Commands.literal("status")
+                                                        .executes(FFCommands::autoTickDelayStatus))
+                                                .then(booleanCommand("enable",
+                                                        "Automatically relaxes fluid tick delays at runtime when the server MSPT drifts above the configured target.",
+                                                        a -> FlowingFluids.config.enableAutoTickDelay = a,
+                                                        () -> FlowingFluids.config.enableAutoTickDelay))
+                                                .then(intCommand("update_rate_ticks",
+                                                        "How often the server samples MSPT and nudges the runtime extra delay.",
+                                                        "ticks", 20, 1200,
+                                                        a -> FlowingFluids.config.autoTickDelayUpdateRateTicks = a,
+                                                        () -> FlowingFluids.config.autoTickDelayUpdateRateTicks))
+                                                .then(floatCommand("target_mspt_multiplier",
+                                                        "Target fraction of the server tick budget before fluid delays start relaxing. Lower values react earlier.",
+                                                        "multiplier", 0.25f, 2.0f,
+                                                        a -> FlowingFluids.config.autoTickDelayTargetMsptMultiplier = a,
+                                                        () -> FlowingFluids.config.autoTickDelayTargetMsptMultiplier))
+                                                .then(intCommand("water_max_extra_delay",
+                                                        "Maximum extra runtime delay that auto mode may add to water ticks.",
+                                                        "delay", 0, 64,
+                                                        a -> FlowingFluids.config.autoTickDelayWaterMaxExtraDelay = a,
+                                                        () -> FlowingFluids.config.autoTickDelayWaterMaxExtraDelay))
+                                                .then(intCommand("lava_max_extra_delay",
+                                                        "Maximum extra runtime delay that auto mode may add to lava ticks.",
+                                                        "delay", 0, 64,
+                                                        a -> FlowingFluids.config.autoTickDelayLavaMaxExtraDelay = a,
+                                                        () -> FlowingFluids.config.autoTickDelayLavaMaxExtraDelay))
+                                                .then(booleanCommand("log_adjustments",
+                                                        "Logs when the runtime extra delay changes, which helps when tuning MSPT targets.",
+                                                        a -> FlowingFluids.config.autoTickDelayLogAdjustments = a,
+                                                        () -> FlowingFluids.config.autoTickDelayLogAdjustments))
                                         )
                                 ).then(booleanCommand("pistons_push_fluids",
                                         "Enables or disables piston pushing, if disabled pistons will no longer push fluids.",
@@ -762,14 +1876,39 @@ public class FFCommands {
                                                     return messageAndSaveConfig(cont, "Infinite biome rain fill cap set to " + FlowingFluids.config.infiniteBiomeRainFillMaxLevel);
                                                 })
                                         )
+                                ).then(floatChanceCommand("infinite_biome_flowing_refill_chance",
+                                        "Chance for flowing water in infinite biomes to regain a little amount during support ticks.",
+                                        a -> FlowingFluids.config.infiniteWaterBiomeFlowingRefillChance = a,
+                                        () -> FlowingFluids.config.infiniteWaterBiomeFlowingRefillChance)
+                                ).then(intCommand("infinite_biome_flowing_refill_interval",
+                                        "How often infinite-biome flowing refill support runs.",
+                                        "ticks", 1, 200,
+                                        a -> FlowingFluids.config.infiniteWaterBiomeFlowingRefillInterval = a,
+                                        () -> FlowingFluids.config.infiniteWaterBiomeFlowingRefillInterval)
+                                ).then(intCommand("infinite_biome_flowing_refill_max_amount",
+                                        "Maximum amount restored by the infinite-biome flowing refill support tick.",
+                                        "amount", 1, 8,
+                                        a -> FlowingFluids.config.infiniteWaterBiomeFlowingRefillMaxAmount = a,
+                                        () -> FlowingFluids.config.infiniteWaterBiomeFlowingRefillMaxAmount)
                                 ).then(booleanCommand("only_infinite_biomes_at_sea_level",
                                         "Controls if the infinite biome refilling only happens to water at exactly sea level.",
                                         a -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly = a, () -> FlowingFluids.config.fastBiomeRefillAtSeaLevelOnly)
-                                ).then(Commands.literal("inspect_infinite_here")
-                                        .executes(FFCommands::inspectInfiniteBiomeHere)
-                                ).then(Commands.literal("infinite_biome_runtime_status")
-                                        .executes(FFCommands::inspectInfiniteBiomeHere)
-                                )
+                                ).then(Commands.literal("infinite_biome_preset")
+                                        .executes(cont -> message(cont, "Infinite biome refill presets"
+                                                + "\nboosted: noticeably faster refill with a small amount increase"
+                                                + "\naggressive: strong refill for quick recovery and testing"
+                                                + "\nreset: restore the default infinite biome refill values"))
+                                        .then(Commands.literal("boosted")
+                                                .executes(cont -> applyInfiniteBiomePreset(cont, "boosted")))
+                                        .then(Commands.literal("aggressive")
+                                                .executes(cont -> applyInfiniteBiomePreset(cont, "aggressive")))
+                                        .then(Commands.literal("reset")
+                                                .executes(cont -> applyInfiniteBiomePreset(cont, "reset"))))
+                                .then(Commands.literal("inspect_infinite_here")
+                                        .executes(FFCommands::inspectInfiniteBiomeHere))
+                                .then(Commands.literal("infinite_biome_runtime_status")
+                                        .executes(FFCommands::inspectInfiniteBiomeHere))
+                                .then(infiniteBiomeEntriesCommand())
                         ).then(Commands.literal("rain")
                                 .executes(FFCommands::rainStatus)
                                 .then(Commands.literal("status")
@@ -814,6 +1953,9 @@ public class FFCommands {
                                         "チャンクキャッシュを有効にしました。",
                                         "チャンクキャッシュを無効にしました。",
                                         a -> FlowingFluids.config.rainEnableChunkCaching = a, () -> FlowingFluids.config.rainEnableChunkCaching))
+                                /* Legacy rain multithread controls intentionally hidden.
+                                   Rain placement now always runs on the tick thread. */
+                                /*
                                 .then(booleanCommand("multithread",
                                         "雨生成を並列スレッドで処理します。チャンク数が多いときに高速化します。",
                                         "雨生成の並列処理を有効にしました。",
@@ -825,6 +1967,7 @@ public class FFCommands {
                                         a -> FlowingFluids.config.rainMaxThreads = a,
                                         () -> FlowingFluids.config.rainMaxThreads,
                                         "最大スレッド数を設定しました: "))
+                                */
                                 .then(jpIntCommand("generate_interval",
                                         "雨生成を試行するtick間隔。数値が小さいほど頻繁に生成を試みます。",
                                         "ticks", 1, 200,
@@ -992,7 +2135,6 @@ public class FFCommands {
                                         a -> FlowingFluids.config.rainCacheDurationTicks = a * 20L,
                                         () -> (int)(FlowingFluids.config.rainCacheDurationTicks / 20L),
                                         "キャッシュ保持時間を設定しました(秒): "))
-                        )
                 ).then(Commands.literal("snowmelt")
                                 .executes(FFCommands::snowmeltStatus)
                                 .then(Commands.literal("status")
@@ -1055,7 +2197,11 @@ public class FFCommands {
                                         "temperature", -1.0f, 4.0f,
                                         a -> FlowingFluids.config.snowmeltMinTemperature = a,
                                         () -> FlowingFluids.config.snowmeltMinTemperature))
-                        ).then(Commands.literal("~debug").executes(cont -> message(cont, "Debug commands you probably don't need these."))
+                        ).then(dryingCommand())
+                        .then(floodCommand())
+                        .then(waterPressureCommand())
+                        .then(springCommand())
+                        .then(Commands.literal("~debug").executes(cont -> message(cont, "Debug commands you probably don't need these."))
                         .then(booleanCommand("random_ticks_printing",
                                 "Enables or disables printing of random tick events, this will spam your log with every random tick event that happens.",
                                 "Random ticks printing is now enabled.",

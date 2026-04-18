@@ -20,8 +20,10 @@
 - stairs/slabs で virtual 保持へ切り替えるときは `WATERLOGGED=false` に戻してから `ExtendedWaterlogStore` へ保存するようにした。
 - `getEffectiveFluidState(...)` は virtual store を先に見るようにして、partial amount を正しく拾うようにした。
 - Forge の `Level#setBlock(...)` 由来の更新で、周囲の virtual fluid cell を起こして「出口が開いたのに流れない」を減らした。
+- 通常セルと partial block の横流れは、片側だけが partial shape のときに厳しすぎる高さ帯一致を外して、隣の浅い水でも自然に出入りしやすくした。
 
 ## 今後の注意
 
 - 今回は Forge での流路・排出改善に絞っていて、render 高さそのものを stairs/slabs 専用に描き分ける変更はまだ入れていない。
 - もし見た目の水面高さももっと block shape に寄せたくなったら、次は render 側の height 解釈を block context 付きで見る必要がある。
+- ただし top/bottom の partial block 同士みたいに、実際の空洞帯が噛み合わない組み合わせは引き続きそのまま止めている。

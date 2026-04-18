@@ -86,7 +86,24 @@ public abstract class MixinHosePulley {
             if (fluidState.isEmpty()) return false;
 
             if (FlowingFluids.config.isFluidAllowed(fluidState) && fluidState.getType() instanceof FlowingFluid flowing) {
-                if (simulate) return true; // don't change the world
+                if (FlowingFluids.config.create_infinitePipes || drainer.isInfinite()) {
+                    if (!simulate) {
+                        ((FluidManipulationBehaviourAccessor) drainer).ff$PlayEffect(world, blockPos, flowing, true);
+                        drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY);
+                        if (drainer.isInfinite() && FluidHelper.isLava(flowing)) {
+                            drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY_LAVA);
+                        }
+                    }
+                    return true;
+                }
+
+                // override the existing hose pulley logic as water has physics now
+                var data = FFFluidUtils.collectConnectedFluidAmountAndRemoveActionCached(world, blockPos,1,8, flowing);
+                var found = data.first();
+                if (found == 0) return false; // nothing found
+
+                foundLevels.set(found);
+                if (simulate) return true; // report the actual partial amount without changing the world
 
                 // mimic advancement behaviour
                 ((FluidManipulationBehaviourAccessor) drainer).ff$PlayEffect(world, blockPos, flowing, true);
@@ -95,19 +112,7 @@ public abstract class MixinHosePulley {
                     drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY_LAVA);
                 }
 
-
-                if (FlowingFluids.config.create_infinitePipes || drainer.isInfinite()) {
-                    return true;
-                }
-
-                // override the existing hose pulley logic as water has physics now
-                var data = FFFluidUtils.collectConnectedFluidAmountAndRemoveAction(world, blockPos,1,8, flowing);
-                var found = data.first();
-                if (found == 0) return false; // nothing found
-
                 data.second().run();
-
-                foundLevels.set(found);
                 return true;
             }
         }
@@ -131,9 +136,9 @@ public abstract class MixinHosePulley {
                 //&& AllConfigs.server().fluids.pipesPlaceFluidSourceBlocks.get()
             ) {
                 var world = filler.getWorld();
-                // override the existing hose pulley logic as water has physics now
+                // Create already passes the hose tip root position here, so keep placement aligned with its search origin.
                 // don't need to place behind transaction callback as this transaction always succeeds
-                int remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainder(world, blockPos.below(), fluid,8);
+                int remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainder(world, blockPos, fluid,8);
                 if (remainder == 8) return false; // nothing placed
 
                 placedLevels.set(8 - remainder);

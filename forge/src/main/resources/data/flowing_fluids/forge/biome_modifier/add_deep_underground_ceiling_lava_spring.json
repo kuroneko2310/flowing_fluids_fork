@@ -1,0 +1,8 @@
+{
+  "type": "forge:add_features",
+  "biomes": "#minecraft:is_overworld",
+  "features": [
+    "flowing_fluids:deep_underground_ceiling_lava_spring"
+  ],
+  "step": "underground_decoration"
+}

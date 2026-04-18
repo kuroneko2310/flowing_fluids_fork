@@ -66,7 +66,10 @@ class WaterFlowProfileRegressionTest {
             false,
             true,
             4,
-            0
+            0,
+            96,
+            2,
+            240.0f
         ));
     }
 
@@ -81,7 +84,28 @@ class WaterFlowProfileRegressionTest {
             false,
             true,
             3,
-            1
+            1,
+            96,
+            2,
+            240.0f
+        ));
+    }
+
+    @Test
+    void fastCalmInteriorPathRejectsMacrosWithTooManyFrontiers() {
+        assertFalse(WaterFlowProfile.qualifiesForFastCalmInterior(
+            8,
+            false,
+            0.05f,
+            true,
+            false,
+            false,
+            true,
+            4,
+            0,
+            96,
+            24,
+            240.0f
         ));
     }
 }

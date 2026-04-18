@@ -1,7 +1,10 @@
 package traben.flowing_fluids.neoforge;
 
 
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.LevelAccessor;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLLoader;
 import net.neoforged.fml.loading.FMLPaths;
@@ -44,6 +47,20 @@ public class FlowingFluidsPlatformImpl {
             }
         } catch (Exception ignored) {
         }
+        return false;
+    }
+
+    public static void clearPlatformRuntime(ServerLevel level) {
+    }
+
+    public static void syncVirtualFluidState(ServerLevel level, BlockPos pos) {
+    }
+
+    public static boolean hasProcessingFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
+        return false;
+    }
+
+    public static boolean hasVisualFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
         return false;
     }
 }

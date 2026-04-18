@@ -2,6 +2,7 @@ package traben.flowing_fluids.drying;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
@@ -58,6 +59,13 @@ public final class DryingEventSystem {
         ACTIVE_STATES.remove(level.dimension());
     }
 
+    public static void clearDimension(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        ACTIVE_STATES.remove(level.dimension());
+    }
+
     public static void clearAll() {
         ACTIVE_STATES.clear();
     }
@@ -83,6 +91,41 @@ public final class DryingEventSystem {
             multiplier *= Math.max(0.0f, FlowingFluids.config.heatwaveEvaporationMultiplier);
         }
         return Math.max(0.0f, multiplier);
+    }
+
+    public static boolean shouldRunEvaporationTick(Level level, BlockPos pos, int intervalTicks) {
+        if (level == null) {
+            return false;
+        }
+        int interval = Math.max(1, intervalTicks);
+        if (interval <= 1) {
+            return true;
+        }
+        return Math.floorMod(level.getGameTime(), interval) == Math.floorMod(pos.hashCode(), interval);
+    }
+
+    public static float getSurfaceEvaporationChance(Level level) {
+        float baseChance = FlowingFluids.config.evaporationChanceV2
+                * FlowingFluids.config.evaporationChanceMultiplier
+                * getAmbientEvaporationMultiplier(level);
+        return Mth.clamp(baseChance, 0.0f, 1.0f);
+    }
+
+    public static int getSurfaceEvaporationMaxLevel() {
+        return Mth.clamp(FlowingFluids.config.evaporationThinWaterMaxLevel, 1, 8);
+    }
+
+    public static float getNetherEvaporationChance(Level level) {
+        float baseChance = FlowingFluids.config.evaporationNetherChance
+                * FlowingFluids.config.evaporationNetherChanceMultiplier;
+        return Mth.clamp(baseChance, 0.0f, 1.0f);
+    }
+
+    public static float getHotBlockEvaporationChance(Level level) {
+        float baseChance = FlowingFluids.config.hotBlockEvaporationChance
+                * FlowingFluids.config.hotBlockEvaporationChanceMultiplier
+                * getAmbientEvaporationMultiplier(level);
+        return Mth.clamp(baseChance, 0.0f, 1.0f);
     }
 
     public static float getRainRefillMultiplier(Level level) {
@@ -125,11 +168,34 @@ public final class DryingEventSystem {
             if (state.isAir() || !state.getFluidState().isEmpty()) {
                 continue;
             }
+            if (allowsEvaporationSkyPass(level, cursor, state)) {
+                continue;
+            }
             if (state.is(BlockTags.LEAVES) || state.canOcclude() || state.isFaceSturdy(level, cursor, Direction.DOWN)) {
                 return true;
             }
         }
         return false;
+    }
+
+    public static boolean hasEvaporationSkyAccess(Level level, BlockPos pos) {
+        if (level == null) {
+            return false;
+        }
+        BlockPos.MutableBlockPos cursor = pos.above().mutable();
+        while (cursor.getY() < level.getMaxBuildHeight()) {
+            BlockState state = level.getBlockState(cursor);
+            if (state.isAir() || !state.getFluidState().isEmpty()) {
+                cursor.move(Direction.UP);
+                continue;
+            }
+            if (allowsEvaporationSkyPass(level, cursor, state)) {
+                cursor.move(Direction.UP);
+                continue;
+            }
+            return false;
+        }
+        return true;
     }
 
     public static boolean hasNearbyHeatSource(Level level, BlockPos pos) {
@@ -208,8 +274,20 @@ public final class DryingEventSystem {
                 + " / active=" + isRiverDroughtActive(level)
                 + " / refill_multiplier=" + String.format(Locale.ROOT, "%.2f", getRiverDroughtRefillMultiplier(level))
                 + " / drain_chance=" + String.format(Locale.ROOT, "%.2f", getRiverDroughtDrainChance(level))
+                + "\nSurface evaporation: base=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.evaporationChanceV2)
+                + " / multiplier=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.evaporationChanceMultiplier)
+                + " / interval=" + FlowingFluids.config.evaporationIntervalTicks + " ticks"
+                + " / max_level=" + getSurfaceEvaporationMaxLevel()
+                + " / effective=" + String.format(Locale.ROOT, "%.2f", getSurfaceEvaporationChance(level))
+                + "\nNether evaporation: base=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.evaporationNetherChance)
+                + " / multiplier=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.evaporationNetherChanceMultiplier)
+                + " / interval=" + FlowingFluids.config.evaporationNetherIntervalTicks + " ticks"
+                + " / effective=" + String.format(Locale.ROOT, "%.2f", getNetherEvaporationChance(level))
                 + "\nHot block drying: " + FlowingFluids.config.enableHotBlockEvaporation
                 + " / chance=" + FlowingFluids.config.hotBlockEvaporationChance
+                + " / multiplier=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.hotBlockEvaporationChanceMultiplier)
+                + " / interval=" + FlowingFluids.config.hotBlockEvaporationIntervalTicks + " ticks"
+                + " / effective=" + String.format(Locale.ROOT, "%.2f", getHotBlockEvaporationChance(level))
                 + " / radius=" + FlowingFluids.config.hotBlockEvaporationRadius
                 + "\nShade roof protection: " + FlowingFluids.config.enableShadeProtection
                 + " / search_height=" + FlowingFluids.config.shadeRoofSearchHeight
@@ -284,7 +362,7 @@ public final class DryingEventSystem {
         if (!FFFluidUtils.isRiverBiome(biome)) {
             return false;
         }
-        if (!level.canSeeSky(pos.above()) || level.isRainingAt(pos.above())) {
+        if (!hasEvaporationSkyAccess(level, pos) || level.isRainingAt(pos.above())) {
             return false;
         }
         if (AdaptiveTickScheduler.isFlowActiveNow(level, pos)) {
@@ -306,11 +384,19 @@ public final class DryingEventSystem {
             }
         }
 
-        boolean nearSurface = pos.getY() >= level.getSeaLevel() - 1;
+        boolean nearSurface = pos.getY() >= FFFluidUtils.seaLevel(level) - 1;
         boolean thinWater = amount <= 2;
         boolean emptyAbove = level.getFluidState(pos.above()).isEmpty();
         boolean edgeLike = lateralWaterNeighbors <= 1 || !supportedBelow;
         return edgeLike && (nearSurface || thinWater || emptyAbove);
+    }
+
+    private static boolean allowsEvaporationSkyPass(Level level, BlockPos pos, BlockState state) {
+        if (!state.propagatesSkylightDown(level, pos)) {
+            return false;
+        }
+        String path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        return path.contains("glass");
     }
 
     private static String formatTicks(long ticks) {

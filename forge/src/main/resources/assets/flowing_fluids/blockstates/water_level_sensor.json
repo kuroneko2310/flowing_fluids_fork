@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "facing=down": { "model": "flowing_fluids:block/water_level_sensor", "x": 90 },
+    "facing=up": { "model": "flowing_fluids:block/water_level_sensor", "x": 270 },
+    "facing=north": { "model": "flowing_fluids:block/water_level_sensor" },
+    "facing=south": { "model": "flowing_fluids:block/water_level_sensor", "y": 180 },
+    "facing=west": { "model": "flowing_fluids:block/water_level_sensor", "y": 270 },
+    "facing=east": { "model": "flowing_fluids:block/water_level_sensor", "y": 90 }
+  }
+}

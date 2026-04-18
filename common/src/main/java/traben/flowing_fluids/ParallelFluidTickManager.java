@@ -207,7 +207,8 @@ public class ParallelFluidTickManager {
                 aggregatedTicks.addAll(futures.get(i).join());
             } catch (CompletionException e) {
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
-                FlowingFluids.error("Error in parallel fluid tick processing: " + cause.getMessage());
+                FlowingFluids.error("Error in parallel fluid tick processing for chunk "
+                    + snapshots.get(i).chunkPos() + "; retrying synchronously.", cause);
                 aggregatedTicks.addAll(processChunkSnapshot(snapshots.get(i), planner));
             }
         }
@@ -340,17 +341,6 @@ public class ParallelFluidTickManager {
     }
 
     /**
-     * Converts ChunkPos to a unique long key for spatial hashing.
-     */
-    private static long chunkPosToLong(ChunkPos chunk) {
-        return chunkPosToLong(chunk.x, chunk.z);
-    }
-
-    private static long chunkPosToLong(int x, int z) {
-        return (((long) x) << 32) | (z & 0xFFFFFFFFL);
-    }
-
-    /**
      * Gets the worker pool for monitoring or testing.
      */
     public static ForkJoinPool getWorkerPool() {
@@ -392,7 +382,7 @@ public class ParallelFluidTickManager {
         return new ForkJoinPool(
             PARALLELISM,
             ForkJoinPool.defaultForkJoinWorkerThreadFactory,
-            (t, e) -> FlowingFluids.error("Uncaught exception in fluid worker: " + e.getMessage()),
+            (t, e) -> FlowingFluids.error("Uncaught exception in fluid worker " + t.getName() + ".", e),
             true
         );
     }

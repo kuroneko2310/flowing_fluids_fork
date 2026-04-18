@@ -56,6 +56,10 @@ dependencies {
 //    modImplementation "dev.architectury:architectury-neoforge:$rootProject.architectury_api_version"
 
     common(project(path: ':common', configuration: 'namedElements')) { transitive = false }
+    // Forge-only profile sometimes resolves the common dev jar on compileClasspath without exposing
+    // every generated package tree to javac. Keep the existing published artifact flow, but also
+    // hand javac the compiled common outputs directly so Forge sources can resolve shared classes reliably.
+    compileOnly files(project(':common').sourceSets.main.output)
     shadowBundle project(path: ':common', configuration: 'transformProductionForge')
 
     compileOnly(annotationProcessor("io.github.llamalad7:mixinextras-common:0.4.1"))

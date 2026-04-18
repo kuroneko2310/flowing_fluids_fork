@@ -46,6 +46,10 @@ public class AdaptiveTickScheduler {
     private static final int SURGE_RELAX_TICKS = 1; // Frames to ignore flow change spikes
     private static final int SURGE_AMOUNT_THRESHOLD = FluidAmountConverter.scaleLegacyInternal(12); // Internal units considered a rapid increase
     private static final int MIN_FORCED_RECHECK_STABLE_TICKS = 40; // Safety lower bound
+    private static final int MAX_FRONTIER_WAKE_TICKS = 2; // Keep frontier wakeups local even if source activation is longer
+    private static final int CALM_MACRO_MIN_FLUID_CELLS = 32;
+    private static final float CALM_MACRO_MAX_FRONTIER_RATIO = 0.08f;
+    private static final int CALM_MACRO_MIN_AVERAGE_LEVEL = FluidAmountConverter.toInternal(7);
 
     // Equilibrium thresholds
     private static final float EQUILIBRIUM_STABLE_THRESHOLD = 0.04f; // E < 0.04 → no tick
@@ -100,6 +104,14 @@ public class AdaptiveTickScheduler {
             }
         }
         dimensionData.chunkModificationTimes.put(chunkPos, nowMillis);
+    }
+
+    private static boolean wasChunkTouchedThisTick(LevelAccessor level, SchedulerDimensionData dimensionData, ChunkPos chunkPos) {
+        if (!(level instanceof Level lvl)) {
+            return false;
+        }
+        Long touchedTick = dimensionData.chunkTouchTicks.get(chunkPos);
+        return touchedTick != null && touchedTick == lvl.getGameTime();
     }
 
     // OPTIMIZED: Single direction array for both hash and height sampling
@@ -295,6 +307,11 @@ public class AdaptiveTickScheduler {
         if (isFlowActive(level, pos)) {
             return true;
         }
+        if (fluidAmount >= CALM_MACRO_MIN_AVERAGE_LEVEL
+                && !hasForcedRecheck(level, pos)
+                && isLikelyCalmMacroInterior(level, pos)) {
+            return false;
+        }
         boolean saturatedNeighborhood = hasFluidFilledFlowNeighborhood(level, pos);
         if (!saturatedNeighborhood) {
             if (FlowingFluids.config.forceTickWhenAdjacentAir && hasAdjacentAir(level, pos)) {
@@ -310,6 +327,16 @@ public class AdaptiveTickScheduler {
         }
         float equilibriumIndex = calculateEquilibriumIndex(level, pos, fluidAmount);
         return equilibriumIndex > EQUILIBRIUM_STABLE_THRESHOLD;
+    }
+
+    private static boolean isLikelyCalmMacroInterior(LevelAccessor level, BlockPos pos) {
+        return FluidSpatialGrid.isLikelyCalmMacroCell(
+            level,
+            pos,
+            CALM_MACRO_MIN_FLUID_CELLS,
+            CALM_MACRO_MAX_FRONTIER_RATIO,
+            CALM_MACRO_MIN_AVERAGE_LEVEL
+        );
     }
 
     private static boolean hasFluidFilledFlowNeighborhood(Level level, BlockPos pos) {
@@ -590,7 +617,9 @@ public class AdaptiveTickScheduler {
         BlockState belowState = lvl.getBlockState(below);
         FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(lvl, below, belowState);
         if (belowFluid.isEmpty()) {
-            return belowState.isAir() || belowState.canBeReplaced();
+            return FFFluidUtils.isPassThroughFluidBlock(lvl, belowState, Direction.DOWN)
+                    || belowState.isAir()
+                    || belowState.canBeReplaced();
         }
         return belowFluid.getType().isSame(state.getType()) && belowFluid.getAmount() < state.getAmount();
     }
@@ -627,7 +656,7 @@ public class AdaptiveTickScheduler {
         boolean riverLikeBiome = false;
 
         if (level instanceof Level world) {
-            BlockPos samplePos = new BlockPos(chunkPos.getMiddleBlockX(), world.getSeaLevel(), chunkPos.getMiddleBlockZ());
+            BlockPos samplePos = new BlockPos(chunkPos.getMiddleBlockX(), FFFluidUtils.seaLevel(world), chunkPos.getMiddleBlockZ());
             var biome = world.getBiome(samplePos);
             oceanLikeBiome = FFFluidUtils.isOceanBiome(biome) || FFFluidUtils.isBeachBiome(biome);
             riverLikeBiome = FFFluidUtils.isRiverBiome(biome);
@@ -762,12 +791,19 @@ public class AdaptiveTickScheduler {
      */
     public static void notifyFluidChange(LevelAccessor level, BlockPos pos) {
         SchedulerDimensionData dimensionData = getData(level);
+        ChunkPos chunkPos = new ChunkPos(pos);
+        boolean chunkAlreadyTouchedThisTick = wasChunkTouchedThisTick(level, dimensionData, chunkPos);
         long posKey = pos.asLong();
         if (dimensionData.stabilityMap.remove(posKey) != null) {
             untrackPosition(dimensionData, posKey);
         }
-        if (FlowingFluids.config.flowActivationTicks > 0) {
-            markFlowActive(level, pos, FlowingFluids.config.flowActivationTicks);
+        int activationTicks = FlowingFluids.config.flowActivationTicks;
+        long frontierActivationUntil = 0L;
+        if (activationTicks > 0) {
+            markFlowActive(level, pos, activationTicks);
+            if (level instanceof Level lvl) {
+                frontierActivationUntil = lvl.getGameTime() + Math.min(activationTicks, MAX_FRONTIER_WAKE_TICKS);
+            }
         }
 
         // Also invalidate neighbors as they may be affected
@@ -786,8 +822,14 @@ public class AdaptiveTickScheduler {
             }
         }
 
+        if (frontierActivationUntil > 0L && !chunkAlreadyTouchedThisTick) {
+            // Wake already-tracked flow-front cells briefly so nearby changes propagate without reviving whole pools.
+            for (Direction direction : FLOW_CHECK_DIRECTIONS) {
+                extendTrackedFlowActivity(dimensionData.stabilityMap.get(pos.relative(direction).asLong()), frontierActivationUntil);
+            }
+        }
+
         // Update chunk modification time
-        ChunkPos chunkPos = new ChunkPos(pos);
         touchChunk(level, dimensionData, chunkPos, System.currentTimeMillis());
     }
 
@@ -804,9 +846,15 @@ public class AdaptiveTickScheduler {
         SchedulerDimensionData dimensionData = getData(level);
         LongOpenHashSet uniquePositions = new LongOpenHashSet();
         LongOpenHashSet neighbors = new LongOpenHashSet();
+        LongOpenHashSet frontierNeighbors = new LongOpenHashSet();
         HashSet<ChunkPos> touchedChunks = new HashSet<>();
+        HashSet<ChunkPos> frontierWakeChunks = new HashSet<>();
         final long now = System.currentTimeMillis();
         int activationTicks = FlowingFluids.config.flowActivationTicks;
+        long frontierActivationUntil = 0L;
+        if (activationTicks > 0 && level instanceof Level lvl) {
+            frontierActivationUntil = lvl.getGameTime() + Math.min(activationTicks, MAX_FRONTIER_WAKE_TICKS);
+        }
 
         for (BlockPos pos : positions) {
             if (pos == null) continue;
@@ -819,7 +867,11 @@ public class AdaptiveTickScheduler {
             if (activationTicks > 0) {
                 markFlowActive(level, pos, activationTicks);
             }
-            touchedChunks.add(new ChunkPos(pos));
+            ChunkPos chunkPos = new ChunkPos(pos);
+            touchedChunks.add(chunkPos);
+            if (frontierActivationUntil > 0L && !wasChunkTouchedThisTick(level, dimensionData, chunkPos)) {
+                frontierWakeChunks.add(chunkPos);
+            }
 
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dy = -1; dy <= 1; dy++) {
@@ -838,6 +890,27 @@ public class AdaptiveTickScheduler {
             if (neighborData != null) {
                 neighborData.currentDelay = BASE_DELAY;
                 neighborData.stabilityCounter = 0;
+            }
+        }
+
+        if (frontierActivationUntil > 0L) {
+            for (LongIterator it = uniquePositions.iterator(); it.hasNext(); ) {
+                long posKey = it.nextLong();
+                BlockPos pos = BlockPos.of(posKey);
+                if (!frontierWakeChunks.contains(new ChunkPos(pos))) {
+                    continue;
+                }
+                for (Direction direction : FLOW_CHECK_DIRECTIONS) {
+                    long neighborKey = pos.relative(direction).asLong();
+                    if (!uniquePositions.contains(neighborKey)) {
+                        frontierNeighbors.add(neighborKey);
+                    }
+                }
+            }
+            for (LongIterator it = frontierNeighbors.iterator(); it.hasNext(); ) {
+                long frontierKey = it.nextLong();
+                if (uniquePositions.contains(frontierKey)) continue;
+                extendTrackedFlowActivity(dimensionData.stabilityMap.get(frontierKey), frontierActivationUntil);
             }
         }
 
@@ -970,8 +1043,22 @@ public class AdaptiveTickScheduler {
         }
     }
 
+    private static void extendTrackedFlowActivity(FluidStabilityData data, long until) {
+        if (data != null && until > data.forceTickUntil) {
+            data.forceTickUntil = until;
+        }
+    }
+
     public static boolean isFlowActiveNow(LevelAccessor level, BlockPos pos) {
         return isFlowActive(level, pos);
+    }
+
+    public static boolean wasChunkTouchedRecently(LevelAccessor level, BlockPos pos, int maxAgeTicks) {
+        if (!(level instanceof Level lvl) || pos == null || maxAgeTicks < 0) {
+            return false;
+        }
+        Long touchedTick = getData(level).chunkTouchTicks.get(new ChunkPos(pos));
+        return touchedTick != null && lvl.getGameTime() - touchedTick <= maxAgeTicks;
     }
 
     private static boolean isFlowActive(LevelAccessor level, BlockPos pos) {

@@ -1,0 +1,22 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " A ",
+    " S ",
+    " D "
+  ],
+  "key": {
+    "A": {
+      "item": "minecraft:amethyst_shard"
+    },
+    "S": {
+      "item": "minecraft:spyglass"
+    },
+    "D": {
+      "item": "flowing_fluids:flow_anchor_droplet"
+    }
+  },
+  "result": {
+    "item": "flowing_fluids:flow_anchor_surveyor"
+  }
+}

@@ -81,13 +81,23 @@ public final class ParallelFluidEqualizer {
         QUEUED.computeIfAbsent(DimensionKey.of(level), ignored -> ConcurrentHashMap.newKeySet()).add(pos.asLong());
     }
 
+    public static boolean hasQueued(LevelAccessor level) {
+        if (level == null) {
+            return false;
+        }
+        Set<Long> queued = QUEUED.get(DimensionKey.of(level));
+        return queued != null && !queued.isEmpty();
+    }
+
     public static int flush(ServerLevel level) {
         Set<Long> queued = QUEUED.remove(DimensionKey.of(level));
         if (queued == null || queued.isEmpty()) {
             return 0;
         }
 
-        List<ScanCandidate> representativeSources = selectRepresentativeSources(level, queued);
+        SelectionResult selection = selectRepresentativeSources(level, queued);
+        requeueDeferred(level, selection.deferred());
+        List<ScanCandidate> representativeSources = selection.selected();
         if (representativeSources.isEmpty()) {
             return 0;
         }
@@ -232,16 +242,38 @@ public final class ParallelFluidEqualizer {
         }
     }
 
-    private static List<ScanCandidate> selectRepresentativeSources(Level level, Set<Long> queued) {
+    private static SelectionResult selectRepresentativeSources(Level level, Set<Long> queued) {
         int horizontalBucketSize = getSelectionBucketSize();
         int verticalBucketSize = Math.max(4, horizontalBucketSize / 2);
         Map<Fluid, Long2ObjectOpenHashMap<List<ScanCandidate>>> bucketsByFluid = new LinkedHashMap<>();
         Map<Fluid, Set<Integer>> seenComponentsByFluid = new LinkedHashMap<>();
+        LongOpenHashSet deferred = new LongOpenHashSet();
         int candidateCount = 0;
+        int momentumAge = FlowingFluids.config != null
+            ? Math.max(8, FlowingFluids.config.flowInertiaMaxAgeTicks / 2)
+            : 20;
 
         for (long posKey : queued) {
             if (ACTIVE.contains(posKey)) {
                 continue;
+            }
+            BlockPos pos = BlockPos.of(posKey);
+            if (!level.isLoaded(pos)) {
+                continue;
+            }
+            if (!AdaptiveTickScheduler.hasForcedRecheck(level, pos)
+                && AdaptiveTickScheduler.wasChunkTouchedRecently(level, pos, 0)) {
+                int queuedAmount = FluidSpatialGrid.getFluidAmount(level, pos);
+                if (queuedAmount > 0
+                    && shouldSkipQueuedSurgeCandidate(
+                        false,
+                        true,
+                        AdaptiveTickScheduler.isFlowActiveNow(level, pos),
+                        AdaptiveTickScheduler.getFlowMomentum(level, pos, momentumAge),
+                        queuedAmount)) {
+                    deferred.add(posKey);
+                    continue;
+                }
             }
             ScanCandidate candidate = scanCandidate(level, posKey);
             if (candidate == null) {
@@ -268,7 +300,7 @@ public final class ParallelFluidEqualizer {
         }
 
         if (candidateCount == 0) {
-            return List.of();
+            return new SelectionResult(List.of(), deferred);
         }
 
         List<ScanCandidate> selected = new ArrayList<>(Math.max(16, candidateCount / 2));
@@ -277,7 +309,17 @@ public final class ParallelFluidEqualizer {
                 selectBucketRepresentatives(bucketCandidates, selected, horizontalBucketSize, verticalBucketSize);
             }
         }
-        return selected;
+        return new SelectionResult(selected, deferred);
+    }
+
+    private static void requeueDeferred(LevelAccessor level, LongOpenHashSet deferred) {
+        if (level == null || deferred == null || deferred.isEmpty()) {
+            return;
+        }
+        Set<Long> queue = QUEUED.computeIfAbsent(DimensionKey.of(level), ignored -> ConcurrentHashMap.newKeySet());
+        for (long posKey : deferred) {
+            queue.add(posKey);
+        }
     }
 
     private static ScanCandidate scanCandidate(Level level, long posKey) {
@@ -382,6 +424,20 @@ public final class ParallelFluidEqualizer {
         return Math.max(MIN_SELECTION_BUCKET_SIZE, Math.min(MAX_SELECTION_BUCKET_SIZE, configuredRadius / 2));
     }
 
+    static boolean shouldSkipComponentCandidate(Long2ObjectOpenHashMap<Set<Integer>> seenByBucket,
+                                                long bucketKey,
+                                                int componentId) {
+        if (seenByBucket == null || componentId <= 0) {
+            return false;
+        }
+        Set<Integer> seenComponents = seenByBucket.get(bucketKey);
+        if (seenComponents == null) {
+            seenComponents = new HashSet<>();
+            seenByBucket.put(bucketKey, seenComponents);
+        }
+        return !seenComponents.add(componentId);
+    }
+
     private static Request prepare(Level level, ScanCandidate candidate, FluidSectionDataCache captureCache) {
         if (!level.isLoaded(candidate.pos())) {
             return null;
@@ -391,6 +447,9 @@ public final class ParallelFluidEqualizer {
         boolean forcedRecheck = candidate.forcedRecheck() && AdaptiveTickScheduler.consumeForcedRecheck(level, startPos);
         boolean shouldRunBfs = AdaptiveTickScheduler.shouldRunBFS(level, startPos, candidate.amount());
         if (!shouldRunBfs && !forcedRecheck) {
+            return null;
+        }
+        if (!forcedRecheck && shouldDelayFreshSurgeEqualization(level, startPos, candidate.amount())) {
             return null;
         }
 
@@ -436,6 +495,39 @@ public final class ParallelFluidEqualizer {
             Snapshot.capture(level, startPos, snapshotRadius, candidate.fluidType(), captureCache),
             flowProfile
         );
+    }
+
+    private static boolean shouldDelayFreshSurgeEqualization(Level level, BlockPos pos, int amount) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        int momentumAge = FlowingFluids.config != null
+            ? Math.max(8, FlowingFluids.config.flowInertiaMaxAgeTicks / 2)
+            : 20;
+        return shouldSkipQueuedSurgeCandidate(
+            false,
+            AdaptiveTickScheduler.wasChunkTouchedRecently(level, pos, 0),
+            AdaptiveTickScheduler.isFlowActiveNow(level, pos),
+            AdaptiveTickScheduler.getFlowMomentum(level, pos, momentumAge),
+            amount
+        );
+    }
+
+    static boolean shouldSkipQueuedSurgeCandidate(boolean forcedRecheck,
+                                                  boolean chunkTouchedRecently,
+                                                  boolean flowActive,
+                                                  float flowMomentum,
+                                                  int amount) {
+        if (forcedRecheck || !chunkTouchedRecently) {
+            return false;
+        }
+        if (flowActive) {
+            return true;
+        }
+        if (flowMomentum > 0.2f) {
+            return true;
+        }
+        return amount >= FluidAmountConverter.toInternal(7);
     }
 
     private static Result computeResult(Request request) {
@@ -676,6 +768,9 @@ public final class ParallelFluidEqualizer {
     }
 
     private record ScanCandidate(BlockPos pos, Fluid fluidType, int amount, boolean forcedRecheck, int componentId) {
+    }
+
+    private record SelectionResult(List<ScanCandidate> selected, LongOpenHashSet deferred) {
     }
 
     private record ComputationResult(LongArrayList targets, LongArrayList componentPositions) {

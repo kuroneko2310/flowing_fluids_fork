@@ -13,7 +13,9 @@ import net.minecraft.world.level.material.FluidState;
 import org.jetbrains.annotations.Nullable;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
+import traben.flowing_fluids.FluidAmountConverter;
 import traben.flowing_fluids.FluidSectionDataCache;
+import traben.flowing_fluids.FluidSpatialGrid;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.ParallelFluidTickManager;
 
@@ -95,6 +97,7 @@ public final class WaterFlowProfile {
             ? AdaptiveTickScheduler.getFlowMomentum(level, pos, FlowingFluids.config.flowInertiaMaxAgeTicks)
             : 0.0f;
         BasicNeighborhoodMetrics basicMetrics = sampleBasicNeighborhood(level, pos, fluidType, amount, sectionCache);
+        FluidSpatialGrid.MacroFluidHint macroHint = FluidSpatialGrid.getMacroFluidHint(level, pos);
 
         var biome = level.getBiome(pos);
         boolean oceanLikeBiome = FFFluidUtils.isOceanBiome(biome) || FFFluidUtils.isBeachBiome(biome);
@@ -105,7 +108,8 @@ public final class WaterFlowProfile {
             flowMomentum,
             oceanLikeBiome,
             riverLikeBiome,
-            basicMetrics
+            basicMetrics,
+            macroHint
         );
         if (fastPathProfile != null) {
             return fastPathProfile;
@@ -187,7 +191,8 @@ public final class WaterFlowProfile {
     static boolean qualifiesForFastCalmInterior(int amount, boolean flowActive, float flowMomentum,
                                                 boolean oceanLikeBiome, boolean riverLikeBiome,
                                                 boolean hasFluidAbove, boolean supportedBelow,
-                                                int lateralWaterNeighbors, int surfaceEdgeCount) {
+                                                int lateralWaterNeighbors, int surfaceEdgeCount,
+                                                int macroFluidCount, int macroFrontierCount, float macroAverageLevel) {
         if (amount < 8
                 || flowActive
                 || flowMomentum > 0.12f
@@ -198,12 +203,16 @@ public final class WaterFlowProfile {
                 || surfaceEdgeCount > 0) {
             return false;
         }
-        return oceanLikeBiome || lateralWaterNeighbors >= 4;
+        return (oceanLikeBiome || lateralWaterNeighbors >= 4)
+                && macroFluidCount >= 32
+                && macroAverageLevel >= FluidAmountConverter.toInternal(7)
+                && macroFrontierCount <= Math.max(2, macroFluidCount / 16);
     }
 
     private static @Nullable WaterFlowProfile tryFastCalmInteriorProfile(int amount, boolean flowActive, float flowMomentum,
                                                                          boolean oceanLikeBiome, boolean riverLikeBiome,
-                                                                         BasicNeighborhoodMetrics metrics) {
+                                                                         BasicNeighborhoodMetrics metrics,
+                                                                         FluidSpatialGrid.MacroFluidHint macroHint) {
         if (!qualifiesForFastCalmInterior(
             amount,
             flowActive,
@@ -213,7 +222,10 @@ public final class WaterFlowProfile {
             metrics.hasFluidAbove(),
             metrics.supportedBelow(),
             metrics.lateralWaterNeighbors(),
-            metrics.surfaceEdgeCount()
+            metrics.surfaceEdgeCount(),
+            macroHint.fluidCount(),
+            macroHint.frontierCount(),
+            macroHint.averageLevel()
         )) {
             return null;
         }
@@ -798,7 +810,7 @@ public final class WaterFlowProfile {
     }
 
     private static boolean isSubterranean(Level level, BlockPos pos) {
-        if (pos.getY() > level.getSeaLevel() - 2) {
+        if (pos.getY() > FFFluidUtils.seaLevel(level) - 2) {
             return false;
         }
         if (level.getBrightness(LightLayer.SKY, pos) > 0) {

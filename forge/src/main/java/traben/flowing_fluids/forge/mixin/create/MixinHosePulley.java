@@ -86,17 +86,14 @@ public abstract class MixinHosePulley {
             if (fluidState.isEmpty()) return false;
 
             if (FlowingFluids.config.isFluidAllowed(fluidState) && fluidState.getType() instanceof FlowingFluid flowing) {
-                if (simulate) return true; // don't change the world
-
-                // mimic advancement behaviour
-                ((FluidManipulationBehaviourAccessor) drainer).ff$PlayEffect(world, blockPos, flowing, true);
-                drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY);
-                if (drainer.isInfinite() && FluidHelper.isLava(flowing)) {
-                    drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY_LAVA);
-                }
-
-
                 if (FlowingFluids.config.create_infinitePipes || drainer.isInfinite()) {
+                    if (!simulate) {
+                        ((FluidManipulationBehaviourAccessor) drainer).ff$PlayEffect(world, blockPos, flowing, true);
+                        drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY);
+                        if (drainer.isInfinite() && FluidHelper.isLava(flowing)) {
+                            drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY_LAVA);
+                        }
+                    }
                     return true;
                 }
 
@@ -105,9 +102,17 @@ public abstract class MixinHosePulley {
                 var found = data.first();
                 if (found == 0) return false; // nothing found
 
-                data.second().run();
-
                 foundLevels.set(found);
+                if (simulate) return true; // report the actual partial amount without changing the world
+
+                // mimic advancement behaviour
+                ((FluidManipulationBehaviourAccessor) drainer).ff$PlayEffect(world, blockPos, flowing, true);
+                drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY);
+                if (drainer.isInfinite() && FluidHelper.isLava(flowing)) {
+                    drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY_LAVA);
+                }
+
+                data.second().run();
                 return true;
             }
         }
@@ -131,9 +136,12 @@ public abstract class MixinHosePulley {
                 //&& AllConfigs.server().fluids.pipesPlaceFluidSourceBlocks.get()
             ) {
                 var world = filler.getWorld();
-                // override the existing hose pulley logic as water has physics now
-                // don't need to place behind transaction callback as this transaction always succeeds
-                int remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainder(world, blockPos.below(), fluid,8);
+                // Keep Create's root position, but do not stop at a single-cell top-up.
+                // Overflow needs to keep searching outward/downward or basin dents remain untouched.
+                int remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainder(world, blockPos, fluid, 8);
+                if (remainder > 0 && fluid instanceof FlowingFluid flowing) {
+                    remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainderAndTrySpreadIfFull(world, blockPos, flowing, remainder, false, true);
+                }
                 if (remainder == 8) return false; // nothing placed
 
                 placedLevels.set(8 - remainder);

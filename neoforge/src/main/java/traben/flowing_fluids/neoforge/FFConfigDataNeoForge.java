@@ -6,6 +6,7 @@ import net.minecraft.network.codec.StreamCodec;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.loading.FMLEnvironment;
 import org.jetbrains.annotations.NotNull;
+import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
 import traben.flowing_fluids.config.FFConfigData;
 
@@ -38,11 +39,10 @@ public class FFConfigDataNeoForge extends FFConfigData {
         FFConfigDataNeoForge packet;
         if (FMLEnvironment.dist == Dist.CLIENT) {
             try {
-                System.out.println("[Solid mobs] - Server Config packet received");
+                FlowingFluids.info("- Server Config packet received");
                 packet = new FFConfigDataNeoForge(new FFConfig(buffer));
             } catch (Exception e) {
-                System.out.println("[Solid mobs] - Server Config packet decoding failed because:\n" + e);
-                e.printStackTrace();
+                FlowingFluids.error("- Server Config packet decoding failed.", e);
                 packet = new FFConfigDataNeoForge(null);
             }
         } else {

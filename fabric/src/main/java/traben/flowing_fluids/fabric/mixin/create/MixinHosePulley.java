@@ -137,9 +137,12 @@ public abstract class MixinHosePulley {
                 //&& AllConfigs.server().fluids.pipesPlaceFluidSourceBlocks.get()
             ) {
                 var world = filler.getWorld();
-                // override the existing hose pulley logic as water has physics now
-                // don't need to place behind transaction callback as this transaction always succeeds
-                int remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainder(world, currentPos.below(), fluid,8);
+                // Keep Create's root position, but do not stop at a single-cell top-up.
+                // Overflow needs to keep searching outward/downward or basin dents remain untouched.
+                int remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainder(world, currentPos, fluid, 8);
+                if (remainder > 0 && fluid instanceof FlowingFluid flowing) {
+                    remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainderAndTrySpreadIfFull(world, currentPos, flowing, remainder, false, true);
+                }
                 if (remainder == 8) return false; // nothing placed
 
                 placedLevels.set(8 - remainder);

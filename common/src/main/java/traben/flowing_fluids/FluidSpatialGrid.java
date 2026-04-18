@@ -5,6 +5,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -12,6 +13,7 @@ import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import traben.flowing_fluids.util.DimensionKey;
 
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,6 +30,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Performance improvement: 60-80% reduction in BFS search nodes, O(1) queries
  */
 public class FluidSpatialGrid {
+    private static final MacroFluidHint EMPTY_MACRO_FLUID_HINT = new MacroFluidHint(0, 0, 0.0f);
+    private static final int CHUNK_INITIALIZATION_BUDGET_PER_MAINTENANCE = 4;
+    private static final int FRONTIER_REBUILD_BUDGET_PER_MAINTENANCE = 8;
 
     private static final ConcurrentHashMap<DimensionKey, DimensionStorage> DIMENSION_STORES = new ConcurrentHashMap<>();
 
@@ -43,7 +48,9 @@ public class FluidSpatialGrid {
     }
 
     private static void cleanupStorageIfEmpty(LevelAccessor level, DimensionStorage storage) {
-        if (storage.chunkGrids.isEmpty()) {
+        if (storage.chunkGrids.isEmpty()
+                && storage.dirtyFrontierChunks.isEmpty()
+                && storage.pendingChunkInitializations.isEmpty()) {
             DIMENSION_STORES.remove(DimensionKey.of(level), storage);
         }
     }
@@ -81,6 +88,10 @@ public class FluidSpatialGrid {
         storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
         ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
         grid.setFluidAt(pos, hasFluid, amount);
+        refreshFrontierNeighborhood(level, pos);
+        if (!grid.isFrontierDirty()) {
+            storage.dirtyFrontierChunks.remove(chunkPos);
+        }
         if (!grid.isEmpty()) {
             AdaptiveTickScheduler.autoDetectAreaType(level, chunkPos, grid.getFluidCount());
         } else {
@@ -89,7 +100,62 @@ public class FluidSpatialGrid {
         if (grid.isEmpty()) {
             storage.chunkGrids.remove(chunkPos, grid);
             storage.chunkAccessTimes.remove(chunkPos);
+            storage.dirtyFrontierChunks.remove(chunkPos);
             cleanupStorageIfEmpty(level, storage);
+        }
+    }
+
+    static void markChunksDirtyForBulkFluidChanges(LevelAccessor level, Iterable<ChunkPos> touchedChunks) {
+        if (level == null || touchedChunks == null) {
+            return;
+        }
+        DimensionStorage storage = getStorage(level);
+        for (ChunkPos chunkPos : touchedChunks) {
+            if (chunkPos == null) {
+                continue;
+            }
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    ChunkPos affectedChunk = new ChunkPos(chunkPos.x + dx, chunkPos.z + dz);
+                    ChunkFluidGrid grid = storage.chunkGrids.get(affectedChunk);
+                    if (grid != null) {
+                        markChunkFrontierDirty(storage, affectedChunk, grid);
+                    }
+                }
+            }
+        }
+    }
+
+    static void setFluidAtFromBuffer(LevelAccessor level, BlockPos pos, boolean hasFluid, int amount) {
+        DimensionStorage storage = getStorage(level);
+        ChunkPos chunkPos = new ChunkPos(pos);
+        storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
+        ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
+        grid.setFluidAt(pos, hasFluid, amount);
+
+        if (grid.isEmpty()) {
+            storage.chunkGrids.remove(chunkPos, grid);
+            storage.chunkAccessTimes.remove(chunkPos);
+            storage.dirtyFrontierChunks.remove(chunkPos);
+            cleanupStorageIfEmpty(level, storage);
+        }
+    }
+
+    static void refreshAreaTypesForChunks(LevelAccessor level, Iterable<ChunkPos> touchedChunks) {
+        if (level == null || touchedChunks == null) {
+            return;
+        }
+        DimensionStorage storage = getStorage(level);
+        for (ChunkPos chunkPos : touchedChunks) {
+            if (chunkPos == null) {
+                continue;
+            }
+            ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
+            if (grid == null || grid.isEmpty()) {
+                AdaptiveTickScheduler.setAreaType(level, chunkPos, AdaptiveTickScheduler.AreaType.NORMAL);
+            } else {
+                AdaptiveTickScheduler.autoDetectAreaType(level, chunkPos, grid.getFluidCount());
+            }
         }
     }
 
@@ -178,6 +244,22 @@ public class FluidSpatialGrid {
         return grid.getMacroAverageLevel(pos);
     }
 
+    public static MacroFluidHint getMacroFluidHint(LevelAccessor level, BlockPos pos) {
+        DimensionStorage storage = getStorage(level);
+        ChunkPos chunkPos = new ChunkPos(pos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
+        if (grid == null) {
+            return EMPTY_MACRO_FLUID_HINT;
+        }
+        return grid.getMacroFluidHint(pos);
+    }
+
+    public static boolean isLikelyCalmMacroCell(LevelAccessor level, BlockPos pos,
+                                                int minimumFluidCells, float maxFrontierRatio,
+                                                float minimumAverageLevel) {
+        return getMacroFluidHint(level, pos).isLikelyCalm(minimumFluidCells, maxFrontierRatio, minimumAverageLevel);
+    }
+
     /**
      * Invalidates component IDs in a region, forcing BFS recalculation.
      * Call this when fluid changes significantly.
@@ -207,9 +289,14 @@ public class FluidSpatialGrid {
         ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid != null) {
             grid.setFluidAt(pos, false, 0);
+            refreshFrontierNeighborhood(level, pos);
+            if (!grid.isFrontierDirty()) {
+                storage.dirtyFrontierChunks.remove(chunkPos);
+            }
             if (grid.isEmpty()) {
                 storage.chunkGrids.remove(chunkPos, grid);
                 storage.chunkAccessTimes.remove(chunkPos);
+                storage.dirtyFrontierChunks.remove(chunkPos);
                 cleanupStorageIfEmpty(level, storage);
             }
         }
@@ -223,10 +310,58 @@ public class FluidSpatialGrid {
      * @param chunkPos Chunk position to initialize
      */
     public static void initializeChunk(Level level, ChunkPos chunkPos) {
-        if (level == null) return;
+        queueChunkInitialization(level, chunkPos);
+    }
 
+    public static void queueChunkInitialization(LevelAccessor level, ChunkPos chunkPos) {
+        if (level == null || chunkPos == null) {
+            return;
+        }
         DimensionStorage storage = getStorage(level);
-        ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
+        storage.pendingChunkInitializations.put(chunkPos, Boolean.TRUE);
+    }
+
+    public static int processPendingChunkInitializations(Level level, int budget) {
+        if (level == null || budget <= 0) {
+            return 0;
+        }
+
+        DimensionStorage storage = DIMENSION_STORES.get(DimensionKey.of(level));
+        if (storage == null || storage.pendingChunkInitializations.isEmpty()) {
+            return 0;
+        }
+
+        int processed = 0;
+        for (ChunkPos chunkPos : storage.pendingChunkInitializations.keySet()) {
+            if (processed >= budget) {
+                break;
+            }
+            if (!level.hasChunk(chunkPos.x, chunkPos.z)) {
+                storage.pendingChunkInitializations.remove(chunkPos);
+                continue;
+            }
+
+            initializeChunkNow(level, chunkPos, storage);
+            storage.pendingChunkInitializations.remove(chunkPos);
+            processed++;
+        }
+        return processed;
+    }
+
+    public static boolean hasPendingChunkInitializations(LevelAccessor level) {
+        if (level == null) {
+            return false;
+        }
+        DimensionStorage storage = DIMENSION_STORES.get(DimensionKey.of(level));
+        return storage != null && !storage.pendingChunkInitializations.isEmpty();
+    }
+
+    private static void initializeChunkNow(Level level, ChunkPos chunkPos, DimensionStorage storage) {
+        if (level == null || chunkPos == null || storage == null) {
+            return;
+        }
+
+        ChunkFluidGrid grid = new ChunkFluidGrid();
         storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
 
         int minX = chunkPos.getMinBlockX();
@@ -263,14 +398,19 @@ public class FluidSpatialGrid {
                 }
             }
         }
-
-        AdaptiveTickScheduler.autoDetectAreaType(level, chunkPos, grid.getFluidCount());
+        markChunkFrontierDirty(storage, chunkPos, grid);
 
         if (grid.isEmpty()) {
-            storage.chunkGrids.remove(chunkPos, grid);
+            storage.chunkGrids.remove(chunkPos);
             storage.chunkAccessTimes.remove(chunkPos);
+            storage.dirtyFrontierChunks.remove(chunkPos);
+            AdaptiveTickScheduler.setAreaType(level, chunkPos, AdaptiveTickScheduler.AreaType.NORMAL);
             cleanupStorageIfEmpty(level, storage);
+            return;
         }
+
+        storage.chunkGrids.put(chunkPos, grid);
+        AdaptiveTickScheduler.autoDetectAreaType(level, chunkPos, grid.getFluidCount());
     }
 
     /**
@@ -281,6 +421,8 @@ public class FluidSpatialGrid {
         DimensionStorage storage = getStorage(level);
         storage.chunkGrids.remove(chunkPos);
         storage.chunkAccessTimes.remove(chunkPos);
+        storage.dirtyFrontierChunks.remove(chunkPos);
+        storage.pendingChunkInitializations.remove(chunkPos);
         cleanupStorageIfEmpty(level, storage);
     }
 
@@ -312,6 +454,8 @@ public class FluidSpatialGrid {
         if (removed != null) {
             removed.chunkGrids.clear();
             removed.chunkAccessTimes.clear();
+            removed.dirtyFrontierChunks.clear();
+            removed.pendingChunkInitializations.clear();
         }
     }
 
@@ -320,6 +464,10 @@ public class FluidSpatialGrid {
      * FIXED: Implements proper LRU eviction instead of random removal.
      */
     public static void performMaintenance(LevelAccessor level) {
+        if (level instanceof Level lvl) {
+            processPendingChunkInitializations(lvl, CHUNK_INITIALIZATION_BUDGET_PER_MAINTENANCE);
+            processPendingFrontierRebuilds(lvl, FRONTIER_REBUILD_BUDGET_PER_MAINTENANCE);
+        }
         cleanupStorage(DimensionKey.of(level));
     }
 
@@ -343,10 +491,13 @@ public class FluidSpatialGrid {
                 .forEach(chunkPos -> {
                     storage.chunkGrids.remove(chunkPos);
                     storage.chunkAccessTimes.remove(chunkPos);
+                    storage.dirtyFrontierChunks.remove(chunkPos);
                 });
         }
 
-        if (storage.chunkGrids.isEmpty()) {
+        if (storage.chunkGrids.isEmpty()
+                && storage.dirtyFrontierChunks.isEmpty()
+                && storage.pendingChunkInitializations.isEmpty()) {
             DIMENSION_STORES.remove(key, storage);
         }
     }
@@ -354,6 +505,23 @@ public class FluidSpatialGrid {
     private static class DimensionStorage {
         final ConcurrentHashMap<ChunkPos, ChunkFluidGrid> chunkGrids = new ConcurrentHashMap<>();
         final ConcurrentHashMap<ChunkPos, Long> chunkAccessTimes = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<ChunkPos, Boolean> dirtyFrontierChunks = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<ChunkPos, Boolean> pendingChunkInitializations = new ConcurrentHashMap<>();
+    }
+
+    public record MacroFluidHint(int fluidCount, int frontierCount, float averageLevel) {
+        public float frontierRatio() {
+            if (fluidCount <= 0) {
+                return 1.0f;
+            }
+            return frontierCount / (float) fluidCount;
+        }
+
+        public boolean isLikelyCalm(int minimumFluidCells, float maxFrontierRatio, float minimumAverageLevel) {
+            return fluidCount >= Math.max(1, minimumFluidCells)
+                    && averageLevel >= minimumAverageLevel
+                    && frontierRatio() <= Math.max(0.0f, maxFrontierRatio);
+        }
     }
 
     /**
@@ -387,7 +555,10 @@ public class FluidSpatialGrid {
 
         // Layer 2: Fine-grained fluid presence and amounts (0-255 internal precision)
         private final BitSet fluidPresence = new BitSet(GRID_SIZE);
+        private final BitSet frontierPresence = new BitSet(GRID_SIZE);
         private final byte[] fluidAmounts = new byte[GRID_SIZE]; // 0-255, stored as signed bytes
+        private final int[] macroFrontierCounts = new int[MACRO_GRID_SIZE];
+        private volatile boolean frontierDirty = false;
 
         // Layer 3: Connected component IDs - LAZILY INITIALIZED to save ~400KB per chunk
         // Most chunks never need component tracking, so we only allocate when first accessed
@@ -494,6 +665,33 @@ public class FluidSpatialGrid {
             return macroAverageLevels[macroIndex];
         }
 
+        public MacroFluidHint getMacroFluidHint(BlockPos pos) {
+            int macroIndex = posToMacroIndex(pos);
+            int fluidCount = macroFluidCounts[macroIndex];
+            int frontierCount = frontierDirty && fluidCount > 0
+                    ? fluidCount
+                    : macroFrontierCounts[macroIndex];
+            return new MacroFluidHint(
+                fluidCount,
+                frontierCount,
+                macroAverageLevels[macroIndex]
+            );
+        }
+
+        public void setFrontierAt(BlockPos pos, boolean frontier) {
+            int index = posToIndex(pos);
+            boolean wasFrontier = frontierPresence.get(index);
+            if (wasFrontier == frontier) {
+                return;
+            }
+            frontierPresence.set(index, frontier);
+            int macroIndex = posToMacroIndex(pos);
+            macroFrontierCounts[macroIndex] += frontier ? 1 : -1;
+            if (macroFrontierCounts[macroIndex] < 0) {
+                recomputeMacroFrontierCount(pos);
+            }
+        }
+
         /**
          * Invalidates all component IDs, forcing BFS recalculation.
          * OPTIMIZED: Simply nullify the array instead of iterating - GC will clean up
@@ -574,6 +772,44 @@ public class FluidSpatialGrid {
             macroAverageLevels[macroIndex] = fluidCount > 0 ? (float) totalAmount / fluidCount : 0.0f;
         }
 
+        private void recomputeMacroFrontierCount(BlockPos pos) {
+            int macroIndex = posToMacroIndex(pos);
+            int macroY = (pos.getY() - MIN_HEIGHT) / MACRO_CELL_SIZE;
+            int frontierCount = 0;
+
+            int startYRelative = macroY * MACRO_CELL_SIZE;
+            int endYRelative = Math.min(startYRelative + MACRO_CELL_SIZE, TOTAL_HEIGHT);
+
+            for (int y = startYRelative; y < endYRelative; y++) {
+                int yOffset = y * CHUNK_SIZE * CHUNK_SIZE;
+                for (int z = 0; z < CHUNK_SIZE; z++) {
+                    int zOffset = z * CHUNK_SIZE;
+                    for (int x = 0; x < CHUNK_SIZE; x++) {
+                        int idx = yOffset + zOffset + x;
+                        if (frontierPresence.get(idx)) {
+                            frontierCount++;
+                        }
+                    }
+                }
+            }
+
+            macroFrontierCounts[macroIndex] = frontierCount;
+        }
+
+        public void clearFrontierData() {
+            frontierPresence.clear();
+            Arrays.fill(macroFrontierCounts, 0);
+            frontierDirty = false;
+        }
+
+        public void markFrontierDirty() {
+            frontierDirty = true;
+        }
+
+        public boolean isFrontierDirty() {
+            return frontierDirty;
+        }
+
         /**
          * Returns the approximate number of fluid positions in this chunk.
          */
@@ -587,5 +823,234 @@ public class FluidSpatialGrid {
         public boolean isEmpty() {
             return fluidPresence.isEmpty();
         }
+    }
+
+    private static void rebuildChunkFrontier(Level level, ChunkPos chunkPos, ChunkFluidGrid grid) {
+        if (level == null || grid == null) {
+            return;
+        }
+
+        grid.clearFrontierData();
+        int minX = chunkPos.getMinBlockX();
+        int minZ = chunkPos.getMinBlockZ();
+        int minY = level.getMinBuildHeight();
+        BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
+        LevelChunk chunk = level.getChunk(chunkPos.x, chunkPos.z);
+        LevelChunkSection[] sections = chunk.getSections();
+
+        for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+            LevelChunkSection section = sections[sectionIndex];
+            if (section == null || section.hasOnlyAir()) {
+                continue;
+            }
+
+            int baseY = minY + (sectionIndex * 16);
+            for (int localY = 0; localY < 16; localY++) {
+                int worldY = baseY + localY;
+                for (int localZ = 0; localZ < 16; localZ++) {
+                    int worldZ = minZ + localZ;
+                    for (int localX = 0; localX < 16; localX++) {
+                        BlockState state = section.getBlockState(localX, localY, localZ);
+                        FluidState fluidState = state.getFluidState();
+                        if (fluidState.isEmpty() || fluidState.getAmount() <= 0) {
+                            continue;
+                        }
+
+                        scanPos.set(minX + localX, worldY, worldZ);
+                        grid.setFrontierAt(scanPos, isChunkLocalFrontierCell(
+                                level, chunkPos, sections, minY, localX, worldY, localZ, fluidState));
+                    }
+                }
+            }
+        }
+        grid.frontierDirty = false;
+    }
+
+    public static int processPendingFrontierRebuilds(Level level, int budget) {
+        if (level == null || budget <= 0) {
+            return 0;
+        }
+
+        DimensionStorage storage = DIMENSION_STORES.get(DimensionKey.of(level));
+        if (storage == null || storage.dirtyFrontierChunks.isEmpty()) {
+            return 0;
+        }
+
+        int processed = 0;
+        for (ChunkPos chunkPos : storage.dirtyFrontierChunks.keySet()) {
+            if (processed >= budget) {
+                break;
+            }
+
+            ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
+            if (grid == null || grid.isEmpty()) {
+                storage.dirtyFrontierChunks.remove(chunkPos);
+                continue;
+            }
+            if (!level.hasChunk(chunkPos.x, chunkPos.z)) {
+                continue;
+            }
+
+            rebuildChunkFrontier(level, chunkPos, grid);
+            storage.dirtyFrontierChunks.remove(chunkPos);
+            processed++;
+        }
+        return processed;
+    }
+
+    public static boolean hasPendingFrontierRebuilds(LevelAccessor level) {
+        if (level == null) {
+            return false;
+        }
+        DimensionStorage storage = DIMENSION_STORES.get(DimensionKey.of(level));
+        if (storage == null) {
+            return false;
+        }
+        return !storage.dirtyFrontierChunks.isEmpty();
+    }
+
+    private static void markChunkFrontierDirty(DimensionStorage storage, ChunkPos chunkPos, ChunkFluidGrid grid) {
+        if (storage == null || chunkPos == null || grid == null || grid.isEmpty()) {
+            return;
+        }
+        grid.markFrontierDirty();
+        storage.dirtyFrontierChunks.put(chunkPos, Boolean.TRUE);
+    }
+
+    private static void refreshFrontierNeighborhood(LevelAccessor levelAccessor, BlockPos center) {
+        if (!(levelAccessor instanceof Level level) || center == null) {
+            return;
+        }
+
+        refreshFrontierAt(level, center);
+        for (Direction direction : Direction.values()) {
+            refreshFrontierAt(level, center.relative(direction));
+        }
+    }
+
+    private static void refreshFrontierAt(Level level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return;
+        }
+        DimensionStorage storage = getStorage(level);
+        ChunkPos chunkPos = new ChunkPos(pos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
+        if (grid == null) {
+            return;
+        }
+
+        BlockState state = level.getBlockState(pos);
+        FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, pos, state);
+        if (fluidState.isEmpty() || fluidState.getAmount() <= 0) {
+            grid.setFrontierAt(pos, false);
+            return;
+        }
+        grid.setFrontierAt(pos, isFrontierCell(level, pos, fluidState, state));
+    }
+
+    /**
+     * Chunk load runs inside vanilla's chunk future pipeline.
+     * Keep the initial frontier pass chunk-local so we never synchronously wait on neighbors here.
+     */
+    private static boolean isChunkLocalFrontierCell(Level level, ChunkPos chunkPos, LevelChunkSection[] sections,
+                                                    int minY, int localX, int worldY, int localZ,
+                                                    FluidState fluidState) {
+        if (fluidState.isEmpty() || fluidState.getAmount() <= 0) {
+            return false;
+        }
+        if (fluidState.getAmount() < 8) {
+            return true;
+        }
+
+        Fluid sourceFluid = fluidState.getType();
+        int sourceAmount = fluidState.getAmount();
+        BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.values()) {
+            int neighborLocalX = localX + direction.getStepX();
+            int neighborWorldY = worldY + direction.getStepY();
+            int neighborLocalZ = localZ + direction.getStepZ();
+
+            if (neighborLocalX < 0 || neighborLocalX >= 16 || neighborLocalZ < 0 || neighborLocalZ >= 16) {
+                return true;
+            }
+
+            BlockState neighborState = getChunkLocalState(sections, minY, neighborLocalX, neighborWorldY, neighborLocalZ);
+            if (neighborState == null) {
+                return true;
+            }
+
+            neighborPos.set(chunkPos.getMinBlockX() + neighborLocalX, neighborWorldY, chunkPos.getMinBlockZ() + neighborLocalZ);
+            FluidState neighborFluid = FFFluidUtils.getEffectiveFluidState(level, neighborPos, neighborState);
+            if (!neighborFluid.isEmpty()) {
+                if (!neighborFluid.getType().isSame(sourceFluid) || neighborFluid.getAmount() < sourceAmount) {
+                    return true;
+                }
+                continue;
+            }
+
+            if (direction == Direction.UP) {
+                continue;
+            }
+
+            if (neighborState.isAir()
+                    || neighborState.canBeReplaced(sourceFluid)
+                    || FFFluidUtils.supportsVirtualFluidState(level, neighborState)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static BlockState getChunkLocalState(LevelChunkSection[] sections, int minY,
+                                                 int localX, int worldY, int localZ) {
+        int relativeY = worldY - minY;
+        if (relativeY < 0 || relativeY >= sections.length * 16) {
+            return null;
+        }
+
+        LevelChunkSection section = sections[relativeY >> 4];
+        if (section == null || section.hasOnlyAir()) {
+            return Blocks.AIR.defaultBlockState();
+        }
+        return section.getBlockState(localX, relativeY & 15, localZ);
+    }
+
+    private static boolean isFrontierCell(Level level, BlockPos pos, FluidState fluidState, BlockState state) {
+        if (fluidState.isEmpty() || fluidState.getAmount() <= 0) {
+            return false;
+        }
+        if (fluidState.getAmount() < 8) {
+            return true;
+        }
+
+        Fluid sourceFluid = fluidState.getType();
+        int sourceAmount = fluidState.getAmount();
+        BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.values()) {
+            neighborPos.setWithOffset(pos, direction);
+            if (!level.isLoaded(neighborPos)) {
+                return true;
+            }
+
+            BlockState neighborState = level.getBlockState(neighborPos);
+            FluidState neighborFluid = FFFluidUtils.getEffectiveFluidState(level, neighborPos, neighborState);
+            if (!neighborFluid.isEmpty()) {
+                if (!neighborFluid.getType().isSame(sourceFluid) || neighborFluid.getAmount() < sourceAmount) {
+                    return true;
+                }
+                continue;
+            }
+
+            if (direction == Direction.UP) {
+                continue;
+            }
+
+            if (neighborState.isAir()
+                    || neighborState.canBeReplaced(sourceFluid)
+                    || FFFluidUtils.supportsVirtualFluidState(level, neighborState)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

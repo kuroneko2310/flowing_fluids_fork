@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "flowing_fluids:block/pressure_nozzle" },
+    "facing=east": { "model": "flowing_fluids:block/pressure_nozzle", "y": 90 },
+    "facing=south": { "model": "flowing_fluids:block/pressure_nozzle", "y": 180 },
+    "facing=west": { "model": "flowing_fluids:block/pressure_nozzle", "y": 270 }
+  }
+}

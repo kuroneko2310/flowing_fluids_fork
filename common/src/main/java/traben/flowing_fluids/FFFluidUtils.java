@@ -8,10 +8,12 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.tags.TagKey;
@@ -34,15 +36,24 @@ import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BucketPickup;
+import net.minecraft.world.level.block.BushBlock;
+import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.KelpBlock;
+import net.minecraft.world.level.block.KelpPlantBlock;
 import net.minecraft.world.level.block.LiquidBlockContainer;
+import net.minecraft.world.level.block.SaplingBlock;
+import net.minecraft.world.level.block.SeagrassBlock;
 import net.minecraft.world.level.block.SlabBlock;
 import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.SweetBerryBushBlock;
+import net.minecraft.world.level.block.TallSeagrassBlock;
 import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.material.FlowingFluid;
@@ -78,6 +89,7 @@ public class FFFluidUtils {
     private static final double FLOWING_WATER_CURRENT_HORIZONTAL_EPSILON = 1.0E-4D;
     private static final double FLOWING_WATER_CURRENT_PUSH_MULTIPLIER = 2.5D;
     private static final float FLOWING_WATER_CURRENT_MOVE_INPUT_MULTIPLIER = 0.7F;
+    private static final double PARTIAL_FLUID_HEIGHT_EPSILON = 1.0E-4D;
     private static final double SHAPE_FACE_SAMPLE_DEPTH = 1.0D / 32.0D;
     private static final double SHAPE_SAMPLE_EPSILON = 1.0E-5D;
     private static final double[] FACE_OPENING_SAMPLES = {0.125D, 0.375D, 0.625D, 0.875D};
@@ -380,6 +392,12 @@ public class FFFluidUtils {
     public record DiscreteFlowBalance(int sourceAmount, int destinationAmount) {
     }
 
+    private record VirtualFluidCavity(double minY, double maxY) {
+        double height() {
+            return Math.max(0.0D, maxY - minY);
+        }
+    }
+
     public static DiscreteFlowBalance resolveDiscreteFlowBalance(int sourceAmount, int destinationAmount,
                                                                  int minSourceAmount, float destinationBiasLevels) {
         int clampedSource = Math.max(0, Math.min(8, sourceAmount));
@@ -484,6 +502,156 @@ public class FFFluidUtils {
             return state.getValue(BlockStateProperties.SLAB_TYPE) != SlabType.DOUBLE;
         }
         return state.getBlock() instanceof StairBlock;
+    }
+
+    @Nullable
+    private static VirtualFluidCavity getVirtualFluidCavity(BlockState state) {
+        if (state == null) {
+            return null;
+        }
+        if (state.getBlock() instanceof SlabBlock && state.hasProperty(BlockStateProperties.SLAB_TYPE)) {
+            return getVirtualFluidCavity(state.getValue(BlockStateProperties.SLAB_TYPE));
+        }
+        return null;
+    }
+
+    @Nullable
+    private static VirtualFluidCavity getVirtualFluidCavity(@Nullable SlabType slabType) {
+        if (slabType == SlabType.BOTTOM) {
+            return new VirtualFluidCavity(0.5D, 1.0D);
+        }
+        if (slabType == SlabType.TOP) {
+            return new VirtualFluidCavity(0.0D, 0.5D);
+        }
+        return null;
+    }
+
+    static double getVirtualFluidFloorY(BlockState state) {
+        VirtualFluidCavity cavity = getVirtualFluidCavity(state);
+        return cavity == null ? 0.0D : cavity.minY();
+    }
+
+    static double getVirtualFluidCeilingY(BlockState state) {
+        VirtualFluidCavity cavity = getVirtualFluidCavity(state);
+        return cavity == null ? 1.0D : cavity.maxY();
+    }
+
+    static double getVirtualFluidSurfaceY(BlockGetter blockGetter, BlockPos pos, BlockState state, FluidState fluidState) {
+        VirtualFluidCavity cavity = getVirtualFluidCavity(state);
+        return getVirtualFluidSurfaceY(cavity, blockGetter, pos, fluidState);
+    }
+
+    static double getVirtualFluidSurfaceY(@Nullable SlabType slabType, FluidState fluidState) {
+        return getVirtualFluidSurfaceY(getVirtualFluidCavity(slabType), null, null, fluidState);
+    }
+
+    static double getVirtualFluidSurfaceY(@Nullable SlabType slabType, float normalizedHeight) {
+        return getVirtualFluidSurfaceY(getVirtualFluidCavity(slabType), Mth.clamp(normalizedHeight, 0.0F, 1.0F));
+    }
+
+    static boolean hasCompatibleVirtualFluidHeights(BlockGetter blockGetter,
+                                                    BlockPos sourcePos,
+                                                    BlockState sourceState,
+                                                    FluidState sourceFluidState,
+                                                    Direction direction,
+                                                    BlockPos targetPos,
+                                                    BlockState targetState,
+                                                    FluidState targetFluidState) {
+        VirtualFluidCavity sourceCavity = getVirtualFluidCavity(sourceState);
+        VirtualFluidCavity targetCavity = getVirtualFluidCavity(targetState);
+        return hasCompatibleVirtualFluidHeights(sourceCavity, blockGetter, sourcePos, sourceState, sourceFluidState,
+                direction, targetCavity, targetPos, targetFluidState);
+    }
+
+    static boolean hasCompatibleVirtualFluidHeights(@Nullable SlabType sourceSlabType,
+                                                    FluidState sourceFluidState,
+                                                    Direction direction,
+                                                    @Nullable SlabType targetSlabType) {
+        return hasCompatibleVirtualFluidHeights(getVirtualFluidCavity(sourceSlabType), null, null, null,
+                sourceFluidState, direction, getVirtualFluidCavity(targetSlabType), null, Fluids.EMPTY.defaultFluidState());
+    }
+
+    static boolean hasCompatibleVirtualFluidHeights(@Nullable SlabType sourceSlabType,
+                                                    float sourceNormalizedHeight,
+                                                    Direction direction,
+                                                    @Nullable SlabType targetSlabType) {
+        return hasCompatibleVirtualFluidHeights(getVirtualFluidCavity(sourceSlabType),
+                getVirtualFluidSurfaceY(getVirtualFluidCavity(sourceSlabType), Mth.clamp(sourceNormalizedHeight, 0.0F, 1.0F)),
+                direction, getVirtualFluidCavity(targetSlabType));
+    }
+
+    private static boolean hasCompatibleVirtualFluidHeights(@Nullable VirtualFluidCavity sourceCavity,
+                                                            BlockGetter blockGetter,
+                                                            BlockPos sourcePos,
+                                                            BlockState sourceState,
+                                                            FluidState sourceFluidState,
+                                                            Direction direction,
+                                                            @Nullable VirtualFluidCavity targetCavity,
+                                                            BlockPos targetPos,
+                                                            FluidState targetFluidState) {
+        if (sourceCavity == null && targetCavity == null) {
+            return true;
+        }
+
+        double sourceFloor = sourceCavity == null ? 0.0D : sourceCavity.minY();
+        double sourceSurface = getVirtualFluidSurfaceY(sourceCavity, blockGetter, sourcePos, sourceFluidState);
+        return hasCompatibleVirtualFluidHeights(sourceCavity, sourceSurface, direction, targetCavity);
+    }
+
+    private static double getVirtualFluidSurfaceY(@Nullable VirtualFluidCavity cavity,
+                                                  BlockGetter blockGetter,
+                                                  BlockPos pos,
+                                                  FluidState fluidState) {
+        double floorY = cavity == null ? 0.0D : cavity.minY();
+        if (fluidState == null || fluidState.isEmpty() || fluidState.getAmount() <= 0) {
+            return floorY;
+        }
+
+        double normalizedHeight = Mth.clamp(blockGetter == null || pos == null
+                ? fluidState.getOwnHeight()
+                : fluidState.getHeight(blockGetter, pos), 0.0F, 1.0F);
+        if (cavity == null) {
+            return normalizedHeight;
+        }
+        return cavity.minY() + normalizedHeight * cavity.height();
+    }
+
+    private static double getVirtualFluidSurfaceY(@Nullable VirtualFluidCavity cavity, double normalizedHeight) {
+        if (cavity == null) {
+            return normalizedHeight;
+        }
+        return cavity.minY() + normalizedHeight * cavity.height();
+    }
+
+    private static boolean hasCompatibleVirtualFluidHeights(@Nullable VirtualFluidCavity sourceCavity,
+                                                            double sourceSurface,
+                                                            Direction direction,
+                                                            @Nullable VirtualFluidCavity targetCavity) {
+        if (sourceCavity == null && targetCavity == null) {
+            return true;
+        }
+
+        double sourceFloor = sourceCavity == null ? 0.0D : sourceCavity.minY();
+        double targetFloor = targetCavity == null ? 0.0D : targetCavity.minY();
+        double targetCeiling = targetCavity == null ? 1.0D : targetCavity.maxY();
+
+        if (direction == Direction.DOWN) {
+            return sourceSurface > targetFloor + PARTIAL_FLUID_HEIGHT_EPSILON;
+        }
+        if (direction == Direction.UP) {
+            return targetCeiling > sourceFloor + PARTIAL_FLUID_HEIGHT_EPSILON;
+        }
+
+        if ((sourceCavity == null) != (targetCavity == null)) {
+            // When only one side is a partial-shape virtual cell, treat the horizontal opening as the
+            // entry band. Requiring a strict overlap against the cavity band makes slabs/stairs accept
+            // side water only once the source surface rises unnaturally high.
+            return sourceSurface > sourceFloor + PARTIAL_FLUID_HEIGHT_EPSILON;
+        }
+
+        double overlapMin = Math.max(sourceFloor, targetFloor);
+        double overlapMax = Math.min(sourceSurface, targetCeiling);
+        return overlapMax > overlapMin + PARTIAL_FLUID_HEIGHT_EPSILON;
     }
 
     static boolean hasShapeAwareFluidOpening(BlockState state, @Nullable Direction direction) {
@@ -725,6 +893,9 @@ public class FFFluidUtils {
             return false;
         }
         ExtendedWaterlogStore.remove(levelAccessor, pos);
+        if (levelAccessor instanceof net.minecraft.server.level.ServerLevel level) {
+            FlowingFluidsPlatform.syncVirtualFluidState(level, pos);
+        }
         recordFluidCacheChange(levelAccessor, pos, Fluids.WATER, 0, false);
         return true;
     }
@@ -1004,6 +1175,75 @@ public class FFFluidUtils {
         level.scheduleTick(pos, fluid, 1);
     }
 
+    private static boolean isAquaticPlantFluidHolder(BlockState state) {
+        Block block = state.getBlock();
+        return block instanceof SeagrassBlock
+                || block instanceof TallSeagrassBlock
+                || block instanceof KelpPlantBlock
+                || block instanceof KelpBlock;
+    }
+
+    private static boolean shouldBreakAquaticPlantFluidCell(LevelAccessor levelAccessor, BlockPos pos, BlockState state) {
+        if (!isAquaticPlantFluidHolder(state)) {
+            return false;
+        }
+        if (!state.canSurvive(levelAccessor, pos)) {
+            return true;
+        }
+        return canFluidFlowToNeighbourFromPos(levelAccessor, pos, state, Fluids.WATER, 8);
+    }
+
+    private static boolean clearAquaticPlantPart(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid,
+                                                 boolean invalidateConnectedComponents) {
+        BlockState currentState = levelAccessor.getBlockState(pos);
+        if (!isAquaticPlantFluidHolder(currentState)) {
+            return false;
+        }
+        boolean changed = levelAccessor.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+        if (changed) {
+            recordFluidCacheChange(levelAccessor, pos, fluid, 0, invalidateConnectedComponents);
+        }
+        return changed;
+    }
+
+    private static boolean clearAquaticPlantFluidCell(LevelAccessor levelAccessor, BlockPos pos, BlockState state, Fluid fluid,
+                                                      boolean invalidateConnectedComponents) {
+        if (!fluid.isSame(Fluids.WATER) || !isAquaticPlantFluidHolder(state)) {
+            return false;
+        }
+
+        boolean changed = clearAquaticPlantPart(levelAccessor, pos, fluid, invalidateConnectedComponents);
+        if (state.getBlock() instanceof TallSeagrassBlock
+                && state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)) {
+            BlockPos otherPos = state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER
+                    ? pos.below()
+                    : pos.above();
+            changed |= clearAquaticPlantPart(levelAccessor, otherPos, fluid, invalidateConnectedComponents);
+        }
+        return changed;
+    }
+
+    private static void recheckAquaticPlantSurvival(LevelAccessor levelAccessor, BlockPos pos) {
+        BlockState state = levelAccessor.getBlockState(pos);
+        if (!shouldBreakAquaticPlantFluidCell(levelAccessor, pos, state)) {
+            return;
+        }
+        clearAquaticPlantFluidCell(levelAccessor, pos, state, Fluids.WATER, true);
+    }
+
+    private static void recheckNearbyAquaticPlantSurvival(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid) {
+        if (pos == null || fluid == null || !fluid.isSame(Fluids.WATER)) {
+            return;
+        }
+
+        recheckAquaticPlantSurvival(levelAccessor, pos);
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.values()) {
+            cursor.setWithOffset(pos, direction);
+            recheckAquaticPlantSurvival(levelAccessor, cursor);
+        }
+    }
+
     private static boolean prepareBlockForVirtualFluidStorage(LevelAccessor levelAccessor, BlockPos pos, BlockState blockState) {
         if (!shouldOverrideVanillaWaterlogging(blockState)
                 || !blockState.getValue(BlockStateProperties.WATERLOGGED)) {
@@ -1089,8 +1329,12 @@ public class FFFluidUtils {
                 return false;
             }
             ExtendedWaterlogStore.set(levelAccessor, pos, fluid, normalizedAmount);
+            if (levelAccessor instanceof net.minecraft.server.level.ServerLevel level) {
+                FlowingFluidsPlatform.syncVirtualFluidState(level, pos);
+            }
             notifyCaches(levelAccessor, pos, fluid, normalizedAmount, invalidateConnectedComponents);
             wakeVirtualFluidCell(levelAccessor, pos, fluid, existingState, normalizedAmount);
+            recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
             return true;
         }
         if (isVanillaWaterloggable(blockState)) {
@@ -1099,12 +1343,14 @@ public class FFFluidUtils {
                 boolean result = liquidBlockContainer.placeLiquid(levelAccessor, pos, blockState, getStateForFluidByAmount(fluid, normalizedAmount));
                 if (result) {
                     notifyCaches(levelAccessor, pos, fluid, normalizedAmount, invalidateConnectedComponents);
+                    recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
                 }
                 return result;
             }
             BucketPickup bucketPickup = (BucketPickup) blockState.getBlock();
             bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
             recordFluidCacheChange(levelAccessor, pos, fluid, 0, invalidateConnectedComponents);
+            recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
             return true;
         }
         if (blockState.getBlock() instanceof LiquidBlockContainer) {
@@ -1113,14 +1359,38 @@ public class FFFluidUtils {
             }
         }
 
-        if (!blockState.isAir() && fluid instanceof FlowingFluid flowingFluid) {
+        if (!blockState.isAir()
+                && fluid instanceof FlowingFluid flowingFluid
+                && !shouldSuppressDecorativePlantDropsForFluidReplacement(blockState, fluid)) {
             flowingFluid.beforeDestroyingBlock(levelAccessor, pos, blockState);
         }
         boolean result = levelAccessor.setBlock(pos, getStateForFluidByAmount(fluid, normalizedAmount).createLegacyBlock(), 3);
         if (result) {
             notifyCaches(levelAccessor, pos, fluid, normalizedAmount, invalidateConnectedComponents);
+            recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
         }
         return result;
+    }
+
+    static boolean shouldSuppressDecorativePlantDropsForFluidReplacement(BlockState blockState, Fluid fluid) {
+        if (blockState == null || fluid == null || blockState.isAir() || !fluid.isSame(Fluids.WATER)) {
+            return false;
+        }
+
+        Block block = blockState.getBlock();
+        if (!(block instanceof BushBlock) || blockState.hasBlockEntity()) {
+            return false;
+        }
+
+        if (block instanceof CropBlock
+                || block instanceof SaplingBlock
+                || blockState.is(BlockTags.CROPS)
+                || blockState.is(BlockTags.SAPLINGS)
+                || block instanceof SweetBerryBushBlock) {
+            return false;
+        }
+
+        return true;
     }
 
     public static int transferFluidAmount(LevelAccessor levelAccessor, BlockPos fromPos, BlockPos toPos,
@@ -1230,6 +1500,10 @@ public class FFFluidUtils {
         var blockState = levelAccessor.getBlockState(pos);
         FluidState existingState = getEffectiveFluidState(levelAccessor, pos, blockState);
         boolean invalidateConnectedComponents = !existingState.isEmpty() && existingState.getAmount() > 0;
+        if (clearAquaticPlantFluidCell(levelAccessor, pos, blockState, fluid, invalidateConnectedComponents)) {
+            recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
+            return true;
+        }
         if (supportsVirtualFluidState(levelAccessor, blockState) || ExtendedWaterlogStore.has(levelAccessor, pos)) {
             boolean cleared = clearStoredVirtualFluidState(levelAccessor, pos);
             if (!cleared
@@ -1243,12 +1517,16 @@ public class FFFluidUtils {
             if (cleared && invalidateConnectedComponents) {
                 invalidateConnectedFluidComponents(levelAccessor, pos);
             }
+            if (cleared) {
+                recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
+            }
             return cleared;
         }
         if (blockState.getBlock() instanceof LiquidBlockContainer
                 && blockState.getBlock() instanceof BucketPickup bucketPickup) {
             bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
             recordFluidCacheChange(levelAccessor, pos, fluid, 0, invalidateConnectedComponents);
+            recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
             return true;
         }
 
@@ -1259,6 +1537,7 @@ public class FFFluidUtils {
         boolean result = levelAccessor.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
         if (result) {
             recordFluidCacheChange(levelAccessor, pos, fluid, 0, invalidateConnectedComponents);
+            recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
         }
         return result;
     }
@@ -1321,12 +1600,17 @@ public class FFFluidUtils {
     public static boolean canFluidFlowFromPosToDirection(FlowingFluid fluid, int amount, LevelAccessor levelAccessor, BlockPos fromPos, Direction direction) {
         var blockPos2 = fromPos.relative(direction);
         var blockState2 = levelAccessor.getBlockState(blockPos2);
-        var fluidState2 = blockState2.getFluidState();
+        var fluidState2 = getEffectiveFluidState(levelAccessor, blockPos2, blockState2);
         return canFluidFlowFromPosToDirection(fluid, amount, levelAccessor, fromPos, levelAccessor.getBlockState(fromPos), direction, blockPos2, blockState2, fluidState2);
     }
     public static boolean canFluidFlowFromPosToDirection(FlowingFluid sourceFluid, int sourceAmount, BlockGetter blockGetter,
                                                          BlockPos blockPos, BlockState blockState, Direction direction,
                                                          BlockPos blockPos2, BlockState blockState2, FluidState fluidState2) {
+        FluidState sourceFluidState = blockGetter instanceof LevelAccessor accessor
+                ? getEffectiveFluidState(accessor, blockPos, blockState)
+                : (!blockState.getFluidState().isEmpty() && blockState.getFluidState().getType().isSame(sourceFluid)
+                    ? blockState.getFluidState()
+                    : getStateForFluidByAmount(sourceFluid, sourceAmount));
         // consider virtual waterlogged fluid
         if (blockGetter instanceof LevelAccessor accessor) {
             fluidState2 = getEffectiveFluidState(accessor, blockPos2, blockState2);
@@ -1335,13 +1619,16 @@ public class FFFluidUtils {
         boolean porousSource = blockGetter instanceof LevelAccessor accessor
                 && isDirectionalVirtualFluidPassableBlock(accessor, blockState, direction);
         boolean porousTarget = blockGetter instanceof LevelAccessor accessor
-                && isDirectionalVirtualFluidPassableBlock(accessor, blockState2, direction);
+                && isDirectionalVirtualFluidPassableBlock(accessor, blockState2, direction.getOpposite());
         boolean virtualTarget = blockGetter instanceof LevelAccessor accessor
                 && supportsVirtualFluidState(accessor, blockState2);
+        boolean compatibleHeights = hasCompatibleVirtualFluidHeights(
+                blockGetter, blockPos, blockState, sourceFluidState, direction, blockPos2, blockState2, fluidState2);
         //add extra fluid check for replacing into self
         return (replaceableTarget
                 || fluidState2.canBeReplacedWith(blockGetter, blockPos2, sourceFluid, direction)
                 || canFitIntoFluid(sourceFluid, fluidState2, direction, sourceAmount, blockState2))
+                && compatibleHeights
                 && (porousSource
                     || porousTarget
                     || sourceFluid.canPassThroughWall(direction, blockGetter, blockPos, blockState, blockPos2, blockState2))
@@ -1351,14 +1638,23 @@ public class FFFluidUtils {
     public static boolean canFluidFlowFromPosToDirectionFitOverride(FlowingFluid sourceFluid, BlockGetter blockGetter,
                                                          BlockPos blockPos, BlockState blockState, Direction direction,
                                                          BlockPos blockPos2, BlockState blockState2) {
+        FluidState sourceFluidState = blockGetter instanceof LevelAccessor accessor
+                ? getEffectiveFluidState(accessor, blockPos, blockState)
+                : blockState.getFluidState();
+        FluidState targetFluidState = blockGetter instanceof LevelAccessor accessor
+                ? getEffectiveFluidState(accessor, blockPos2, blockState2)
+                : blockState2.getFluidState();
         boolean porousSource = blockGetter instanceof LevelAccessor accessor
                 && isDirectionalVirtualFluidPassableBlock(accessor, blockState, direction);
         boolean porousTarget = blockGetter instanceof LevelAccessor accessor
-                && isDirectionalVirtualFluidPassableBlock(accessor, blockState2, direction);
+                && isDirectionalVirtualFluidPassableBlock(accessor, blockState2, direction.getOpposite());
         boolean virtualTarget = blockGetter instanceof LevelAccessor accessor
                 && supportsVirtualFluidState(accessor, blockState2);
+        boolean compatibleHeights = hasCompatibleVirtualFluidHeights(
+                blockGetter, blockPos, blockState, sourceFluidState, direction, blockPos2, blockState2, targetFluidState);
         //add extra fluid check for replacing into self
-        return (porousSource
+        return compatibleHeights
+                && (porousSource
                 || porousTarget
                 || sourceFluid.canPassThroughWall(direction, blockGetter, blockPos, blockState, blockPos2, blockState2))
                 && (blockState2.canBeReplaced(sourceFluid) || virtualTarget || sourceFluid.canHoldFluid(blockGetter, blockPos2, blockState2, sourceFluid));
@@ -1379,17 +1675,20 @@ public class FFFluidUtils {
 
         FluidState resolvedToFluid = toFluidState != null ? toFluidState : getEffectiveFluidState(levelAccessor, toPos, toState);
         boolean porousSource = isDirectionalVirtualFluidPassableBlock(levelAccessor, fromState, direction);
-        boolean porousTarget = isDirectionalVirtualFluidPassableBlock(levelAccessor, toState, direction);
+        boolean porousTarget = isDirectionalVirtualFluidPassableBlock(levelAccessor, toState, direction.getOpposite());
         boolean facePassable = porousSource
                 || porousTarget
                 || sourceFluid.canPassThroughWall(direction, levelAccessor, fromPos, fromState, toPos, toState);
+        FluidState sourceFluidState = getEffectiveFluidState(levelAccessor, fromPos, fromState);
+        boolean compatibleHeights = hasCompatibleVirtualFluidHeights(
+                levelAccessor, fromPos, fromState, sourceFluidState, direction, toPos, toState, resolvedToFluid);
         boolean targetSameFluid = !resolvedToFluid.isEmpty() && resolvedToFluid.getType().isSame(sourceFluid);
         boolean targetHasOtherFluid = !resolvedToFluid.isEmpty() && !targetSameFluid;
         boolean targetVirtual = supportsVirtualFluidState(levelAccessor, toState);
         boolean targetCanHoldFluid = sourceFluid.canHoldFluid(levelAccessor, toPos, toState, sourceFluid);
 
         return FluidRegressionLogic.shouldTraverseFluidAdjacency(
-                facePassable,
+                facePassable && compatibleHeights,
                 targetSameFluid,
                 targetHasOtherFluid,
                 toState.isAir(),
@@ -2102,9 +2401,117 @@ public class FFFluidUtils {
     public static boolean matchInfiniteBiomes(Holder<Biome> biome){
         return FlowingFluids.infiniteBiomeTags.stream().anyMatch(biome::is)
                 || FlowingFluids.infiniteBiomes.stream().anyMatch(biome::is)
+                || matchesConfiguredBiome(biome, FlowingFluids.config.extraInfiniteBiomeEntries)
                 || isOceanBiome(biome)
                 || isRiverBiome(biome)
                 || isBeachBiome(biome);
+    }
+
+    public static String normalizeConfiguredBiomeEntry(String rawEntry, boolean tagEntry) {
+        if (rawEntry == null) {
+            return null;
+        }
+
+        String trimmed = rawEntry.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        String idText;
+        if (tagEntry) {
+            idText = trimmed.startsWith("#") ? trimmed.substring(1) : trimmed;
+        } else {
+            if (trimmed.startsWith("#")) {
+                return null;
+            }
+            idText = trimmed;
+        }
+
+        ResourceLocation resourceLocation = ResourceLocation.tryParse(idText);
+        if (resourceLocation == null) {
+            return null;
+        }
+
+        return tagEntry ? "#" + resourceLocation : resourceLocation.toString();
+    }
+
+    public static String normalizeConfiguredKeyword(String rawKeyword) {
+        if (rawKeyword == null) {
+            return null;
+        }
+        String trimmed = rawKeyword.trim().toLowerCase(Locale.ROOT);
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    public record AutoInfiniteBiomeCandidate(String biomeId, String reason) {
+    }
+
+    public static List<AutoInfiniteBiomeCandidate> collectAutoInfiniteBiomeCandidates(Level level, boolean moddedOnly) {
+        if (level == null || FlowingFluids.config == null) {
+            return List.of();
+        }
+
+        Registry<Biome> biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
+        List<AutoInfiniteBiomeCandidate> candidates = new ArrayList<>();
+        for (ResourceKey<Biome> biomeKey : biomeRegistry.registryKeySet()) {
+            if (moddedOnly && "minecraft".equals(biomeKey.location().getNamespace())) {
+                continue;
+            }
+
+            Holder.Reference<Biome> biomeHolder = biomeRegistry.getHolderOrThrow(biomeKey);
+            AutoInfiniteBiomeCandidate candidate = classifyAutoInfiniteBiomeCandidate(biomeKey, biomeHolder);
+            if (candidate != null) {
+                candidates.add(candidate);
+            }
+        }
+        candidates.sort(Comparator.comparing(AutoInfiniteBiomeCandidate::biomeId));
+        return candidates;
+    }
+
+    private static @Nullable AutoInfiniteBiomeCandidate classifyAutoInfiniteBiomeCandidate(ResourceKey<Biome> biomeKey,
+                                                                                           Holder<Biome> biome) {
+        if (FlowingFluids.config == null || biomeKey == null) {
+            return null;
+        }
+
+        List<String> reasons = new ArrayList<>();
+        if (biome.is(BiomeTags.IS_OCEAN)) {
+            reasons.add("#minecraft:is_ocean");
+        }
+        if (biome.is(BiomeTags.IS_RIVER)) {
+            reasons.add("#minecraft:is_river");
+        }
+        if (biome.is(BiomeTags.IS_BEACH)) {
+            reasons.add("#minecraft:is_beach");
+        }
+
+        List<String> tagReasons = findMatchingConfiguredBiomeEntries(biome, FlowingFluids.config.automaticInfiniteBiomeTagHints);
+        List<String> keywordReasons = findMatchingConfiguredKeywords(biomeKey, FlowingFluids.config.automaticInfiniteBiomeKeywordHints);
+
+        boolean hasDirectWaterTag = reasons.stream().anyMatch(reason -> reason.contains("ocean") || reason.contains("river") || reason.contains("beach"))
+                || tagReasons.stream().anyMatch(FFFluidUtils::isDirectWaterTagHint);
+        if (!hasDirectWaterTag && keywordReasons.isEmpty()) {
+            return null;
+        }
+
+        reasons.addAll(tagReasons);
+        reasons.addAll(keywordReasons);
+        return new AutoInfiniteBiomeCandidate(biomeKey.location().toString(), String.join(", ", reasons));
+    }
+
+    private static boolean isDirectWaterTagHint(String entry) {
+        if (entry == null) {
+            return false;
+        }
+        if (!entry.startsWith("#")) {
+            return true;
+        }
+        String lowered = entry.toLowerCase(Locale.ROOT);
+        return lowered.contains("water")
+                || lowered.contains("swamp")
+                || lowered.contains("ocean")
+                || lowered.contains("river")
+                || lowered.contains("beach");
     }
 
     public static boolean isInfiniteBiomeRefillEnabled() {
@@ -2735,6 +3142,48 @@ public class FFFluidUtils {
         }
 
         return false;
+    }
+
+    private static List<String> findMatchingConfiguredBiomeEntries(Holder<Biome> biome, Collection<String> configuredBiomes) {
+        List<String> matches = new ArrayList<>();
+        if (configuredBiomes == null || configuredBiomes.isEmpty()) {
+            return matches;
+        }
+
+        for (String configured : configuredBiomes) {
+            if (configured == null || configured.isBlank()) {
+                continue;
+            }
+            String trimmed = configured.trim();
+            if (trimmed.startsWith("#")) {
+                ResourceLocation res = ResourceLocation.tryParse(trimmed.substring(1));
+                if (res != null && biome.is(TagKey.create(Registries.BIOME, res))) {
+                    matches.add("#" + res);
+                }
+            } else {
+                ResourceLocation res = ResourceLocation.tryParse(trimmed);
+                if (res != null && biome.is(ResourceKey.create(Registries.BIOME, res))) {
+                    matches.add(res.toString());
+                }
+            }
+        }
+        return matches;
+    }
+
+    private static List<String> findMatchingConfiguredKeywords(ResourceKey<Biome> biomeKey, Collection<String> configuredKeywords) {
+        List<String> matches = new ArrayList<>();
+        if (biomeKey == null || configuredKeywords == null || configuredKeywords.isEmpty()) {
+            return matches;
+        }
+
+        String search = biomeKey.location().toString().toLowerCase(Locale.ROOT);
+        for (String configuredKeyword : configuredKeywords) {
+            String normalizedKeyword = normalizeConfiguredKeyword(configuredKeyword);
+            if (normalizedKeyword != null && search.contains(normalizedKeyword)) {
+                matches.add("keyword:" + normalizedKeyword);
+            }
+        }
+        return matches;
     }
 
     private static boolean isAutoDetectedWaterBiome(Holder<Biome> biome, String... keywords) {

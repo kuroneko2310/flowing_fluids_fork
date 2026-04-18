@@ -30,7 +30,8 @@ public final class FlowingFluidsNeoForge {
     @SubscribeEvent
     public static void onRegisterCommandEvent(RegisterCommandsEvent event) {
         FlowingFluids.info("commands registered");
-        FFCommands.registerCommands(event.getDispatcher(), event.getBuildContext(), event.getCommandSelection());
+        ff$registerCommandGroup("common", () ->
+            FFCommands.registerCommands(event.getDispatcher(), event.getBuildContext(), event.getCommandSelection()));
     }
 
     @SubscribeEvent
@@ -75,6 +76,15 @@ public final class FlowingFluidsNeoForge {
         traben.flowing_fluids.FluidTickBuffer.clearBuffer();
         traben.flowing_fluids.FluidActivityTracker.clearAll();
     }
+
+    private static void ff$registerCommandGroup(String label, Runnable registration) {
+        try {
+            registration.run();
+        } catch (LinkageError | RuntimeException exception) {
+            FlowingFluids.error("Failed to register NeoForge " + label
+                    + " commands. World loading will continue without this command set.", exception);
+        }
+    }
 }
 
 @EventBusSubscriber(modid = "flowing_fluids", bus = EventBusSubscriber.Bus.MOD)
@@ -94,7 +104,7 @@ class ModRegister {
                     throw new RuntimeException("[Flowing Fluids] - Server Config data received and failed to sync, invalid data");
                 }
             } catch (Exception e) {
-                FlowingFluids.error("- Server Config data received and failed to sync, exception");
+                FlowingFluids.error("- Server Config data received and failed to sync.", e);
                 throw new RuntimeException("[Flowing Fluids] - Server Config data received and failed to sync, exception", e);
             }
         });

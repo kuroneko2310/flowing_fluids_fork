@@ -1,0 +1,22 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " N ",
+    "CAC",
+    " N "
+  ],
+  "key": {
+    "N": {
+      "item": "minecraft:nautilus_shell"
+    },
+    "C": {
+      "item": "minecraft:conduit"
+    },
+    "A": {
+      "item": "flowing_fluids:flow_anchor_wellspring"
+    }
+  },
+  "result": {
+    "item": "flowing_fluids:flow_anchor_lakeheart"
+  }
+}

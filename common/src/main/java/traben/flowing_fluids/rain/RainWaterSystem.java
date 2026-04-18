@@ -31,13 +31,15 @@ import traben.flowing_fluids.flood.FloodEventSystem;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -55,6 +57,9 @@ public final class RainWaterSystem {
     private static final ConcurrentHashMap<String, ChunkBiomeCache> chunkCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Biome>, Float> PRECIP_MUL = new ConcurrentHashMap<>();
     private static final RainWetnessCache WETNESS_CACHE = new RainWetnessCache();
+    private static final ConcurrentHashMap<ResourceKey<Level>, ConcurrentHashMap<Long, Long>> activeRainChunks = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ResourceKey<Level>, ConcurrentHashMap<UUID, Long>> lastPlayerRainChunks = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ResourceKey<Level>, Boolean> lastRainState = new ConcurrentHashMap<>();
 
     private static final ConcurrentLinkedQueue<RainPlacementTask> placementQueue = new ConcurrentLinkedQueue<>();
     private static final AtomicInteger placementQueueSize = new AtomicInteger(0);
@@ -78,9 +83,8 @@ public final class RainWaterSystem {
     };
     private static final int MIN_PLACEMENT_QUEUE_CAPACITY = 1;
 
-    private static ForkJoinPool executorService = null;
     private static final long FALLBACK_CACHE_RESYNC_TICKS = 20L * 60L * 5L;
-    private static volatile boolean warnedUnsafeMultithreading = false;
+    private static final long MIN_WAKE_TTL_TICKS = 200L;
 
     private RainWaterSystem() {
     }
@@ -91,10 +95,12 @@ public final class RainWaterSystem {
 
     public static void reloadConfig() {
         updateBiomeMultipliers();
-        initializeExecutorService();
         placementQueue.clear();
         placementQueueSize.set(0);
         WETNESS_CACHE.clearAll();
+        activeRainChunks.clear();
+        lastPlayerRainChunks.clear();
+        lastRainState.clear();
 
         if (!FlowingFluids.config.rainEnableChunkCaching) {
             chunkCache.clear();
@@ -111,38 +117,26 @@ public final class RainWaterSystem {
         if (!level.dimensionType().hasSkyLight()) return;
 
         final long now = level.getGameTime();
+        final ResourceKey<Level> key = level.dimension();
         performCacheMaintenanceIfNeeded(level, now);
+        final List<ChunkPos> playerChunks = new ArrayList<>();
+        refreshWakeChunks(level, key, now, playerChunks);
+        if (!level.isRaining()) {
+            purgeQueuedPlacements(key);
+            clearWakeState(key);
+            return;
+        }
         processPlacementQueue();
 
-        if (!level.isRaining()) return;
-
-        final ResourceKey<Level> key = level.dimension();
         final long last = lastRunTick.getOrDefault(key, Long.MIN_VALUE);
         final int interval = FlowingFluids.config.rainGenerateIntervalTicks;
         if (last != Long.MIN_VALUE && (now - last) < interval) return;
         lastRunTick.put(key, now);
 
         final RandomSource random = level.getRandom();
-        final int chunkRadius = getEffectiveChunkRadius(level, FlowingFluids.config.rainChunkRadius);
         final int maxChunksPerTick = FlowingFluids.config.rainMaxChunksPerTick;
-
-        reusableChunkCollector.clear();
-        for (ServerPlayer p : level.getPlayers(__ -> true)) {
-            final int pcx = p.chunkPosition().x;
-            final int pcz = p.chunkPosition().z;
-            for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
-                for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
-                    reusableChunkCollector.add(ChunkPos.asLong(pcx + dx, pcz + dz));
-                }
-            }
-        }
-        if (reusableChunkCollector.isEmpty()) return;
-
-        long[] chunkArray = reusableChunkCollector.toLongArray();
-        if (maxChunksPerTick > 0 && chunkArray.length > maxChunksPerTick) {
-            chunkArray = Arrays.copyOf(chunkArray, maxChunksPerTick);
-        }
-
+        long[] chunkArray = collectActiveRainChunks(key, now);
+        if (chunkArray.length == 0) return;
         final int minBuildY = level.getMinBuildHeight();
         final List<ChunkProcessingData> validChunks = new ArrayList<>();
         final long currentTime = level.getGameTime();
@@ -161,22 +155,29 @@ public final class RainWaterSystem {
             if (FlowingFluids.config.rainSkipInfiniteWaterBiomes && cache.isInfiniteWaterBiome) {
                 continue;
             }
-            validChunks.add(new ChunkProcessingData(packed, cache));
+            validChunks.add(new ChunkProcessingData(
+                    packed,
+                    cache,
+                    computeNearestPlayerChunkRing(cx, cz, playerChunks)
+            ));
         }
 
         if (validChunks.isEmpty()) return;
 
-        final boolean useMultithreading = FlowingFluids.config.rainEnableMultithreading
-                && validChunks.size() > FlowingFluids.config.rainMultithreadThreshold;
-        if (useMultithreading) {
-            warnUnsafeMultithreading();
+        final List<ChunkProcessingData> chunksToProcess;
+        if (maxChunksPerTick > 0 && validChunks.size() > maxChunksPerTick) {
+            // Rain already only exists inside the loaded simulation window, so when we must cap work,
+            // spread the sample across player rings instead of truncating to a stable near-player subset.
+            chunksToProcess = selectChunksForTick(validChunks, maxChunksPerTick, currentTime, level.getSeed());
+        } else {
+            chunksToProcess = validChunks;
         }
 
         final BlockPos.MutableBlockPos mPos = new BlockPos.MutableBlockPos();
         final BlockPos.MutableBlockPos mAbove = new BlockPos.MutableBlockPos();
         final BlockPos.MutableBlockPos mCursor = new BlockPos.MutableBlockPos();
 
-        for (ChunkProcessingData chunkData : validChunks) {
+        for (ChunkProcessingData chunkData : chunksToProcess) {
             final int cx = ChunkPos.getX(chunkData.packedPos);
             final int cz = ChunkPos.getZ(chunkData.packedPos);
             final RainIntensityStage intensityStage = RainMath.chooseRainIntensityStage(
@@ -200,6 +201,7 @@ public final class RainWaterSystem {
         clearChunkCacheForLevel(levelKey);
         WETNESS_CACHE.clearLevel(levelKey);
         purgeQueuedPlacements(levelKey);
+        clearWakeState(levelKey);
 
         traben.flowing_fluids.AdaptiveTickScheduler.clearDimension(level);
         traben.flowing_fluids.FluidSpatialGrid.clearDimension(level);
@@ -224,10 +226,12 @@ public final class RainWaterSystem {
                 + "\nWeather: raining=" + level.isRaining() + ", thundering=" + level.isThundering()
                 + "\nIntensity stage: " + stage.name().toLowerCase(Locale.ROOT)
                 + "\nPlacement queue: " + placementQueueSize.get() + "/" + FlowingFluids.config.rainPlacementQueueSize
+                + "\nActive wake chunks: " + countActiveWakeChunks(levelKey, level.getGameTime())
                 + "\nWetness samples: " + wetnessEntries
                 + "\nChunk cache entries: " + cachedChunks
                 + "\nCache enabled=" + FlowingFluids.config.rainEnableChunkCaching
-                + " / multithread requested=" + FlowingFluids.config.rainEnableMultithreading;
+                + " / placement mode=single-threaded"
+                + " / wake mode=event-driven";
     }
 
     public static String inspectRainAt(ServerLevel level, BlockPos probePos) {
@@ -577,6 +581,10 @@ public final class RainWaterSystem {
                 break;
             }
             placementQueueSize.decrementAndGet();
+            if (!shouldExecuteQueuedRainPlacement(task.level(), task.pos())) {
+                processed++;
+                continue;
+            }
             mergePlacementTask(aggregated, task);
             processed++;
         }
@@ -607,7 +615,34 @@ public final class RainWaterSystem {
     }
 
     private static void executeWaterPlacement(ServerLevel level, BlockPos pos, int amount) {
+        if (!shouldExecuteQueuedRainPlacement(level, pos)) {
+            return;
+        }
         RAIN_API.addRainWater(level, pos, amount);
+    }
+
+    static boolean shouldExecuteQueuedRainPlacement(ServerLevel level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        if (!FlowingFluids.config.enableRainSystem
+                || FlowingFluids.config.isDimensionExcluded(level)
+                || !level.dimensionType().hasSkyLight()) {
+            return false;
+        }
+        if (!level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) {
+            return false;
+        }
+        if (!isWakeChunkActive(level.dimension(), ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4), level.getGameTime())) {
+            return false;
+        }
+
+        BlockPos rainCheckPos = pos.above();
+        return traben.flowing_fluids.FluidRegressionLogic.shouldAllowRainDrivenWaterPlacement(
+                level.isRaining(),
+                level.isRainingAt(rainCheckPos),
+                level.getBiome(rainCheckPos).value().coldEnoughToSnow(rainCheckPos)
+        );
     }
 
     private static int getEffectiveChunkRadius(ServerLevel level, int configuredRadius) {
@@ -619,6 +654,164 @@ public final class RainWaterSystem {
         return clampedConfigured;
     }
 
+    private static int computeNearestPlayerChunkRing(int chunkX, int chunkZ, List<ChunkPos> playerChunks) {
+        if (playerChunks.isEmpty()) {
+            return 0;
+        }
+
+        int nearest = Integer.MAX_VALUE;
+        for (ChunkPos playerChunk : playerChunks) {
+            int ring = Math.max(Math.abs(chunkX - playerChunk.x), Math.abs(chunkZ - playerChunk.z));
+            if (ring < nearest) {
+                nearest = ring;
+            }
+        }
+        return nearest == Integer.MAX_VALUE ? 0 : nearest;
+    }
+
+    private static List<ChunkProcessingData> selectChunksForTick(List<ChunkProcessingData> validChunks,
+                                                                 int maxChunksPerTick,
+                                                                 long currentTime,
+                                                                 long seedSalt) {
+        long[] packedPositions = new long[validChunks.size()];
+        int[] playerRings = new int[validChunks.size()];
+        Map<Long, ChunkProcessingData> byPacked = new HashMap<>(validChunks.size());
+
+        for (int i = 0; i < validChunks.size(); i++) {
+            ChunkProcessingData chunkData = validChunks.get(i);
+            packedPositions[i] = chunkData.packedPos();
+            playerRings[i] = chunkData.nearestPlayerRing();
+            byPacked.put(chunkData.packedPos(), chunkData);
+        }
+
+        long[] selected = RainMath.selectDistributedChunkSample(packedPositions, playerRings, maxChunksPerTick, currentTime, seedSalt);
+        List<ChunkProcessingData> result = new ArrayList<>(selected.length);
+        for (long packed : selected) {
+            ChunkProcessingData chunkData = byPacked.get(packed);
+            if (chunkData != null) {
+                result.add(chunkData);
+            }
+        }
+        return result;
+    }
+
+    private static void refreshWakeChunks(ServerLevel level, ResourceKey<Level> levelKey, long now, List<ChunkPos> playerChunks) {
+        boolean raining = level.isRaining();
+        boolean wasRaining = lastRainState.getOrDefault(levelKey, Boolean.FALSE);
+        lastRainState.put(levelKey, raining);
+
+        if (!raining) {
+            return;
+        }
+
+        ConcurrentHashMap<Long, Long> wakeChunks = activeRainChunks.computeIfAbsent(levelKey, ignored -> new ConcurrentHashMap<>());
+        ConcurrentHashMap<UUID, Long> playerState = lastPlayerRainChunks.computeIfAbsent(levelKey, ignored -> new ConcurrentHashMap<>());
+        Set<UUID> activePlayers = new HashSet<>();
+
+        int chunkRadius = getEffectiveChunkRadius(level, FlowingFluids.config.rainChunkRadius);
+        long fullWakeExpiry = now + computeWakeTtl(level, chunkRadius);
+        long ringWakeExpiry = now + computeWakeTtl(level, Math.max(1, chunkRadius));
+        long wakeSlice = Math.max(1L, now / Math.max(1L, FlowingFluids.config.rainGenerateIntervalTicks));
+
+        for (ServerPlayer player : level.getPlayers(__ -> true)) {
+            ChunkPos playerChunk = player.chunkPosition();
+            playerChunks.add(playerChunk);
+            activePlayers.add(player.getUUID());
+
+            long packedChunk = playerChunk.toLong();
+            Long previousChunk = playerState.put(player.getUUID(), packedChunk);
+            if (!wasRaining || previousChunk == null || previousChunk.longValue() != packedChunk) {
+                wakeChunkArea(wakeChunks, playerChunk.x, playerChunk.z, chunkRadius, fullWakeExpiry);
+                continue;
+            }
+
+            int ring = chunkRadius <= 0
+                    ? 0
+                    : Math.floorMod((int) (wakeSlice + player.getUUID().hashCode()), chunkRadius + 1);
+            wakeChunkRing(wakeChunks, playerChunk.x, playerChunk.z, ring, ringWakeExpiry);
+        }
+
+        playerState.keySet().removeIf(uuid -> !activePlayers.contains(uuid));
+        wakeChunks.entrySet().removeIf(entry -> entry.getValue() < now);
+    }
+
+    private static long[] collectActiveRainChunks(ResourceKey<Level> levelKey, long now) {
+        ConcurrentHashMap<Long, Long> wakeChunks = activeRainChunks.get(levelKey);
+        if (wakeChunks == null || wakeChunks.isEmpty()) {
+            return new long[0];
+        }
+
+        reusableChunkCollector.clear();
+        wakeChunks.forEach((packedChunk, expiryTick) -> {
+            if (expiryTick >= now) {
+                reusableChunkCollector.add(packedChunk.longValue());
+            }
+        });
+        return reusableChunkCollector.toLongArray();
+    }
+
+    private static long computeWakeTtl(ServerLevel level, int chunkRadius) {
+        long interval = Math.max(1L, FlowingFluids.config.rainGenerateIntervalTicks);
+        long cycle = Math.max(4L, (long) Math.max(0, chunkRadius) + 2L);
+        return Math.max(MIN_WAKE_TTL_TICKS, interval * cycle);
+    }
+
+    private static void wakeChunkArea(ConcurrentHashMap<Long, Long> wakeChunks, int centerChunkX, int centerChunkZ,
+                                      int radius, long expiryTick) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                wakeChunks.merge(ChunkPos.asLong(centerChunkX + dx, centerChunkZ + dz), expiryTick, Math::max);
+            }
+        }
+    }
+
+    private static void wakeChunkRing(ConcurrentHashMap<Long, Long> wakeChunks, int centerChunkX, int centerChunkZ,
+                                      int ring, long expiryTick) {
+        if (ring <= 0) {
+            wakeChunks.merge(ChunkPos.asLong(centerChunkX, centerChunkZ), expiryTick, Math::max);
+            return;
+        }
+
+        for (int offset = -ring; offset <= ring; offset++) {
+            wakeChunks.merge(ChunkPos.asLong(centerChunkX + offset, centerChunkZ - ring), expiryTick, Math::max);
+            wakeChunks.merge(ChunkPos.asLong(centerChunkX + offset, centerChunkZ + ring), expiryTick, Math::max);
+        }
+        for (int offset = -ring + 1; offset <= ring - 1; offset++) {
+            wakeChunks.merge(ChunkPos.asLong(centerChunkX - ring, centerChunkZ + offset), expiryTick, Math::max);
+            wakeChunks.merge(ChunkPos.asLong(centerChunkX + ring, centerChunkZ + offset), expiryTick, Math::max);
+        }
+    }
+
+    private static boolean isWakeChunkActive(ResourceKey<Level> levelKey, long packedChunk, long now) {
+        ConcurrentHashMap<Long, Long> wakeChunks = activeRainChunks.get(levelKey);
+        if (wakeChunks == null) {
+            return false;
+        }
+        Long expiryTick = wakeChunks.get(packedChunk);
+        if (expiryTick == null) {
+            return false;
+        }
+        if (expiryTick.longValue() < now) {
+            wakeChunks.remove(packedChunk, expiryTick);
+            return false;
+        }
+        return true;
+    }
+
+    private static long countActiveWakeChunks(ResourceKey<Level> levelKey, long now) {
+        ConcurrentHashMap<Long, Long> wakeChunks = activeRainChunks.get(levelKey);
+        if (wakeChunks == null || wakeChunks.isEmpty()) {
+            return 0L;
+        }
+        return wakeChunks.values().stream().filter(expiry -> expiry >= now).count();
+    }
+
+    private static void clearWakeState(ResourceKey<Level> levelKey) {
+        activeRainChunks.remove(levelKey);
+        lastPlayerRainChunks.remove(levelKey);
+        lastRainState.remove(levelKey);
+    }
+
     private static void updateBiomeMultipliers() {
         PRECIP_MUL.clear();
         PRECIP_MUL.put(Biomes.JUNGLE, FlowingFluids.config.rainPrecipJungle);
@@ -628,26 +821,6 @@ public final class RainWaterSystem {
         PRECIP_MUL.put(Biomes.PLAINS, FlowingFluids.config.rainPrecipPlains);
         PRECIP_MUL.put(Biomes.FOREST, FlowingFluids.config.rainPrecipForest);
         PRECIP_MUL.put(Biomes.TAIGA, FlowingFluids.config.rainPrecipTaiga);
-    }
-
-    private static void initializeExecutorService() {
-        if (executorService != null && !executorService.isShutdown()) {
-            executorService.shutdown();
-            executorService = null;
-        }
-
-        if (!FlowingFluids.config.rainEnableMultithreading) {
-            return;
-        }
-        warnUnsafeMultithreading();
-    }
-
-    private static void warnUnsafeMultithreading() {
-        if (!warnedUnsafeMultithreading) {
-            warnedUnsafeMultithreading = true;
-            LOGGER.warn("[{}] Rain multithreading disabled to avoid unsafe world access. Running single-threaded.",
-                    FlowingFluids.MOD_ID);
-        }
     }
 
     private static ChunkBiomeCache getOrCreateChunkCache(ServerLevel level, long packedChunkPos, long currentTime) {
@@ -855,7 +1028,7 @@ public final class RainWaterSystem {
                                       int candidateAmount, int effectiveAmount, float absorbedWetness) {
     }
 
-    private record ChunkProcessingData(long packedPos, ChunkBiomeCache cache) {
+    private record ChunkProcessingData(long packedPos, ChunkBiomeCache cache, int nearestPlayerRing) {
     }
 
     private record ChunkBiomeCache(ResourceKey<Biome> biomeKey, float precipMul,

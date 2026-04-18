@@ -11,9 +11,13 @@
     "MixinWaterPushing",
     "create.FluidDrainingBehaviourAccessor",
     "create.FluidManipulationBehaviourAccessor",
+    "create.MixinGenericItemEmptying_HandlesItemDrain",
     "create.MixinHosePulley",
     "create.MixinPipe",
-    "create.MixinWaterWheel"
+    "create.MixinWaterWheel",
+    "mekanism.MixinFluidTankItemDispenseBehavior",
+    "mekanism.MixinItemBlockFluidTank",
+    "mekanism.MixinTileEntityElectricPump"
   ],
   "injectors": {
     "defaultRequire": 1

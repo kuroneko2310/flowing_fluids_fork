@@ -1,0 +1,8 @@
+{
+  "replace": false,
+  "values": [
+    "flowing_fluids:waterway_liner",
+    "minecraft:bricks",
+    "minecraft:stone_bricks"
+  ]
+}

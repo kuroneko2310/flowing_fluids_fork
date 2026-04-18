@@ -27,6 +27,7 @@ import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -64,10 +65,44 @@ public final class WaterPressureSystem {
         }
     }
 
+    public static void clearDimension(ServerLevel level) {
+        onLevelUnload(level);
+    }
+
+    public static void clearAll() {
+        LEVEL_STATE.values().forEach(state -> {
+            state.data.clear();
+            state.positions.clear();
+            state.positionIndex.clear();
+        });
+        LEVEL_STATE.clear();
+    }
+
     /**
      * Entry point for platform tick hooks.
      */
     public static void handleLevelTick(ServerLevel level) {
+        // Retired to keep the mod event-driven and avoid permanent server-side scans.
+        clearDimension(level);
+    }
+
+    /**
+     * Called when neighbouring blocks or fluids change to prime tracking.
+     */
+    public static void handleNeighborUpdate(LevelAccessor accessor, BlockPos pos) {
+        if (accessor instanceof ServerLevel level) {
+            clearDimension(level);
+        }
+    }
+
+    public static String describeStatus(ServerLevel level, BlockPos referencePos) {
+        return "Water pressure status"
+                + "\nRuntime: retired"
+                + "\nReason: removed from live ticking to avoid constant server-side scans."
+                + "\nConfig values are kept for compatibility, but the system no longer runs.";
+    }
+
+    private static void handleLevelTickLegacy(ServerLevel level) {
         FFConfig config = FlowingFluids.config;
         if (!config.enableMod || !config.enableWaterPressure) {
             return;
@@ -95,9 +130,9 @@ public final class WaterPressureSystem {
     }
 
     /**
-     * Called when neighbouring blocks or fluids change to prime tracking.
+     * Legacy retained for reference while the runtime path stays retired.
      */
-    public static void handleNeighborUpdate(LevelAccessor accessor, BlockPos pos) {
+    private static void handleNeighborUpdateLegacy(LevelAccessor accessor, BlockPos pos) {
         if (!(accessor instanceof ServerLevel level)) {
             return;
         }

@@ -7,9 +7,11 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelAccessor;
 import traben.flowing_fluids.util.DimensionKey;
 
+import java.util.HashSet;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -29,6 +31,7 @@ public class ChunkLocalSlopeCache {
     // (cache evictions were happening every few ticks). 192 entries keeps typical
     // puddle/river footprints hot without meaningful memory growth.
     private static final int CACHE_SIZE_PER_CHUNK = 192;
+    private static final int CROSS_CHUNK_INVALIDATION_MARGIN = 2;
 
     private static final ConcurrentHashMap<DimensionKey, DimensionCache> DIMENSION_CACHES = new ConcurrentHashMap<>();
     private static final DimensionKey FALLBACK_KEY = DimensionKey.ofIdentity(ChunkLocalSlopeCache.class);
@@ -181,6 +184,63 @@ public class ChunkLocalSlopeCache {
         DimensionCache cache = getDimensionCache(level);
         cache.chunkCaches.remove(chunkPos);
         cache.chunkLocks.remove(chunkPos);
+    }
+
+    /**
+     * Fluid pathfinding results are stored under the source chunk, but a slope search often
+     * crosses one chunk seam before deciding whether a front can continue. When a change
+     * happens close to a seam, invalidate the touching neighbor chunks too so a cached
+     * "no downhill path" result does not outlive the terrain it depended on.
+     */
+    public static void clearForFluidChange(LevelAccessor level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return;
+        }
+        Set<ChunkPos> affectedChunks = new HashSet<>(4);
+        collectAffectedChunks(pos, affectedChunks);
+        for (ChunkPos chunkPos : affectedChunks) {
+            clearChunk(level, chunkPos);
+        }
+    }
+
+    static void collectAffectedChunks(BlockPos pos, Set<ChunkPos> affectedChunks) {
+        if (pos == null || affectedChunks == null) {
+            return;
+        }
+        ChunkPos originChunk = new ChunkPos(pos);
+        affectedChunks.add(originChunk);
+
+        int localX = pos.getX() & 15;
+        int localZ = pos.getZ() & 15;
+        boolean touchWest = localX <= CROSS_CHUNK_INVALIDATION_MARGIN;
+        boolean touchEast = localX >= 15 - CROSS_CHUNK_INVALIDATION_MARGIN;
+        boolean touchNorth = localZ <= CROSS_CHUNK_INVALIDATION_MARGIN;
+        boolean touchSouth = localZ >= 15 - CROSS_CHUNK_INVALIDATION_MARGIN;
+
+        if (touchWest) {
+            affectedChunks.add(new ChunkPos(originChunk.x - 1, originChunk.z));
+        }
+        if (touchEast) {
+            affectedChunks.add(new ChunkPos(originChunk.x + 1, originChunk.z));
+        }
+        if (touchNorth) {
+            affectedChunks.add(new ChunkPos(originChunk.x, originChunk.z - 1));
+        }
+        if (touchSouth) {
+            affectedChunks.add(new ChunkPos(originChunk.x, originChunk.z + 1));
+        }
+        if (touchWest && touchNorth) {
+            affectedChunks.add(new ChunkPos(originChunk.x - 1, originChunk.z - 1));
+        }
+        if (touchWest && touchSouth) {
+            affectedChunks.add(new ChunkPos(originChunk.x - 1, originChunk.z + 1));
+        }
+        if (touchEast && touchNorth) {
+            affectedChunks.add(new ChunkPos(originChunk.x + 1, originChunk.z - 1));
+        }
+        if (touchEast && touchSouth) {
+            affectedChunks.add(new ChunkPos(originChunk.x + 1, originChunk.z + 1));
+        }
     }
 
     /**

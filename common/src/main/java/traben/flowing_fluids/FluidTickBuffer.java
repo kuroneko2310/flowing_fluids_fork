@@ -11,6 +11,7 @@ import traben.flowing_fluids.util.DimensionKey;
 import java.lang.ref.WeakReference;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -32,6 +33,7 @@ public class FluidTickBuffer {
 
     // Thread-safe map to collect buffers from all threads during parallel ticking
     private static final ConcurrentHashMap<Long, ThreadBufferEntry> threadBuffers = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<DimensionKey, AtomicInteger> pendingSignals = new ConcurrentHashMap<>();
 
     // Thread ID tracker for cleanup
     private static final ThreadLocal<Long> currentThreadId = ThreadLocal.withInitial(() -> {
@@ -65,6 +67,7 @@ public class FluidTickBuffer {
     public static void bufferFluidChange(LevelAccessor level, BlockPos pos, int newAmount, boolean hasFluid, Fluid fluid) {
         TickBuffer buffer = getCurrentBuffer();
         buffer.putFluidChange(level, pos, new FluidChange(newAmount, hasFluid, fluid));
+        markPending(level);
     }
 
     /**
@@ -76,6 +79,7 @@ public class FluidTickBuffer {
     public static void bufferGradientChange(LevelAccessor level, BlockPos pos, Direction gradient) {
         TickBuffer buffer = getCurrentBuffer();
         buffer.putGradientChange(level, pos, gradient);
+        markPending(level);
     }
 
     /**
@@ -86,6 +90,7 @@ public class FluidTickBuffer {
     public static void bufferSlopeCacheInvalidation(LevelAccessor level, BlockPos pos) {
         TickBuffer buffer = getCurrentBuffer();
         buffer.addSlopeInvalidation(level, pos);
+        markPending(level);
     }
 
     /**
@@ -97,6 +102,7 @@ public class FluidTickBuffer {
     public static void bufferComponentInvalidation(LevelAccessor level, BlockPos center, int radius) {
         TickBuffer buffer = getCurrentBuffer();
         buffer.addComponentInvalidation(level, new ComponentInvalidation(center.immutable(), radius));
+        markPending(level);
     }
 
     /**
@@ -107,7 +113,7 @@ public class FluidTickBuffer {
      *
      * @param level The level context for updates
      */
-    public static void applyAll(Level level) {
+    public static int applyAll(Level level) {
         // Periodically clean up dead threads (every 60 seconds)
         long currentTime = System.currentTimeMillis();
         if (currentTime - lastCleanupTime > 60000) {
@@ -118,8 +124,14 @@ public class FluidTickBuffer {
         // Collect all buffers from all threads
         DimensionKey dimensionKey = DimensionKey.of(level);
         if (threadBuffers.isEmpty()) {
-            return;
+            return 0;
         }
+
+        AtomicInteger pending = pendingSignals.get(dimensionKey);
+        if (pending == null || pending.get() <= 0) {
+            return 0;
+        }
+        pending.getAndSet(0);
 
         boolean hasAnyChanges = false;
         for (ThreadBufferEntry entry : threadBuffers.values()) {
@@ -129,7 +141,7 @@ public class FluidTickBuffer {
             }
         }
         if (!hasAnyChanges) {
-            return;
+            return 0;
         }
         Map<BlockPos, FluidChange> allFluidChanges = new HashMap<>();
         Map<BlockPos, Direction> allGradientChanges = new HashMap<>();
@@ -160,14 +172,21 @@ public class FluidTickBuffer {
         // 1. Apply fluid changes to spatial grid
         if (!allFluidChanges.isEmpty()) {
             List<BlockPos> changedPositions = new ArrayList<>(allFluidChanges.size());
+            Set<ChunkPos> touchedChunks = new HashSet<>();
+            for (BlockPos pos : allFluidChanges.keySet()) {
+                touchedChunks.add(new ChunkPos(pos));
+            }
+            FluidSpatialGrid.markChunksDirtyForBulkFluidChanges(level, touchedChunks);
             for (Map.Entry<BlockPos, FluidChange> entry : allFluidChanges.entrySet()) {
                 BlockPos pos = entry.getKey();
                 FluidChange change = entry.getValue();
 
-                // Update spatial grid with precise amount
-                FluidSpatialGrid.setFluidAt(level, pos, change.hasFluid, change.amount);
+                // Buffer application already knows the full change set, so update the fine grid
+                // directly and defer frontier refresh / area classification to one pass per chunk.
+                FluidSpatialGrid.setFluidAtFromBuffer(level, pos, change.hasFluid, change.amount);
                 changedPositions.add(pos);
             }
+            FluidSpatialGrid.refreshAreaTypesForChunks(level, touchedChunks);
 
             // Notify adaptive scheduler in bulk to reset neighbor delays per chunk
             AdaptiveTickScheduler.notifyFluidChangesBulk(level, changedPositions);
@@ -193,6 +212,25 @@ public class FluidTickBuffer {
             FluidSpatialGrid.invalidateComponentsInRegion(level, invalidation.center, invalidation.radius);
         }
 
+        return allFluidChanges.size()
+                + allGradientChanges.size()
+                + chunksToInvalidate.size()
+                + allComponentInvalidations.size();
+    }
+
+    public static boolean hasPendingChanges(LevelAccessor level) {
+        if (level == null) {
+            return false;
+        }
+        AtomicInteger pending = pendingSignals.get(DimensionKey.of(level));
+        return pending != null && pending.get() > 0;
+    }
+
+    private static void markPending(LevelAccessor level) {
+        if (level == null) {
+            return;
+        }
+        pendingSignals.computeIfAbsent(DimensionKey.of(level), ignored -> new AtomicInteger()).incrementAndGet();
     }
 
     /**
@@ -203,6 +241,7 @@ public class FluidTickBuffer {
         for (ThreadBufferEntry entry : threadBuffers.values()) {
             entry.buffer.clearAll();
         }
+        pendingSignals.clear();
     }
 
     /**
@@ -215,6 +254,7 @@ public class FluidTickBuffer {
         for (ThreadBufferEntry entry : threadBuffers.values()) {
             entry.buffer.clearDimension(key);
         }
+        pendingSignals.remove(key);
     }
 
     /**

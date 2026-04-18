@@ -11,6 +11,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.Fluids;
+import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.api.FlowingFluidsAPI;
 
@@ -53,6 +54,17 @@ public final class FloodEventSystem {
         ACTIVE_FLOODS.remove(level.dimension());
     }
 
+    public static void clearDimension(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        ACTIVE_FLOODS.remove(level.dimension());
+    }
+
+    public static void clearAll() {
+        ACTIVE_FLOODS.clear();
+    }
+
     public static boolean startFlood(ServerLevel level, BlockPos center, int radius, int durationTicks, int waterlineY) {
         if (!FlowingFluids.config.enableFloodEvents) {
             return false;
@@ -60,7 +72,7 @@ public final class FloodEventSystem {
 
         int surfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, center.getX(), center.getZ()) - 1;
         int resolvedWaterline = waterlineY == Integer.MIN_VALUE
-                ? Math.max(level.getSeaLevel() - 1, surfaceY)
+                ? Math.max(FFFluidUtils.seaLevel(level) - 1, surfaceY)
                 : waterlineY;
 
         FloodEvent event = new FloodEvent(

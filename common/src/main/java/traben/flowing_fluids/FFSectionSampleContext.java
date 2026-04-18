@@ -14,6 +14,10 @@ public final class FFSectionSampleContext {
     private final Long2ObjectOpenHashMap<CachedWaterProfile> waterProfiles = new Long2ObjectOpenHashMap<>();
     private int sampleReads;
     private long gameTime = Long.MIN_VALUE;
+    private long lastProfilePos = Long.MIN_VALUE;
+    private Fluid lastProfileFluid;
+    private int lastProfileAmount = Integer.MIN_VALUE;
+    private WaterFlowProfile lastProfileValue;
 
     public void begin(Level level) {
         this.level = level;
@@ -21,6 +25,7 @@ public final class FFSectionSampleContext {
         this.sampleReads = 0;
         this.waterProfiles.clear();
         this.gameTime = level == null ? Long.MIN_VALUE : level.getGameTime();
+        clearLastProfile();
     }
 
     public void end() {
@@ -38,6 +43,7 @@ public final class FFSectionSampleContext {
             this.sampleReads = 0;
             this.waterProfiles.clear();
             this.gameTime = currentGameTime;
+            clearLastProfile();
         }
     }
 
@@ -64,14 +70,23 @@ public final class FFSectionSampleContext {
         }
         ensureFresh(level);
         long key = pos.asLong();
-        CachedWaterProfile cached = waterProfiles.get(key);
         Fluid fluidType = fluidState.getType();
+        if (lastProfileValue != null
+                && lastProfilePos == key
+                && lastProfileAmount == amount
+                && lastProfileFluid != null
+                && lastProfileFluid.isSame(fluidType)) {
+            return lastProfileValue;
+        }
+        CachedWaterProfile cached = waterProfiles.get(key);
         if (cached != null && cached.amount == amount && cached.fluid.isSame(fluidType)) {
+            rememberLastProfile(key, fluidType, amount, cached.profile);
             return cached.profile;
         }
         FluidSectionDataCache sectionCache = sampleThreshold > 0 ? sampleCache(level, sampleThreshold) : null;
         WaterFlowProfile profile = WaterFlowProfile.analyze(level, pos, fluidState, amount, sectionCache);
         waterProfiles.put(key, new CachedWaterProfile(fluidType, amount, profile));
+        rememberLastProfile(key, fluidType, amount, profile);
         return profile;
     }
 
@@ -89,6 +104,7 @@ public final class FFSectionSampleContext {
             }
         }
         waterProfiles.clear();
+        clearLastProfile();
     }
 
     static boolean shouldBuildSectionCache(int sampleReads, int sampleThreshold) {
@@ -111,5 +127,20 @@ public final class FFSectionSampleContext {
         this.sampleReads = 0;
         this.waterProfiles.clear();
         this.gameTime = Long.MIN_VALUE;
+        clearLastProfile();
+    }
+
+    private void rememberLastProfile(long posKey, Fluid fluidType, int amount, WaterFlowProfile profile) {
+        this.lastProfilePos = posKey;
+        this.lastProfileFluid = fluidType;
+        this.lastProfileAmount = amount;
+        this.lastProfileValue = profile;
+    }
+
+    private void clearLastProfile() {
+        this.lastProfilePos = Long.MIN_VALUE;
+        this.lastProfileFluid = null;
+        this.lastProfileAmount = Integer.MIN_VALUE;
+        this.lastProfileValue = null;
     }
 }

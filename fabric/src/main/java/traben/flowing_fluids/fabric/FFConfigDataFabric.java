@@ -40,7 +40,7 @@ public class FFConfigDataFabric extends FFConfigData {
                 FlowingFluids.info("- Server Config packet received");
                 return new FFConfigDataFabric(new FFConfig(buffer));
             } catch (Exception e) {
-                FlowingFluids.error("- Server Config packet decoding failed because:\n" + e);
+                FlowingFluids.error("- Server Config packet decoding failed.", e);
                 throw e;//crash
             }
         } else {

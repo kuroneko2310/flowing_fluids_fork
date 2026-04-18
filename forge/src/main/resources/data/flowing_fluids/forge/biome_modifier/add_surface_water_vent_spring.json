@@ -1,0 +1,8 @@
+{
+  "type": "forge:add_features",
+  "biomes": "#minecraft:is_overworld",
+  "features": [
+    "flowing_fluids:surface_water_vent_spring"
+  ],
+  "step": "local_modifications"
+}

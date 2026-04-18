@@ -3,8 +3,11 @@ package traben.flowing_fluids.fabric;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.LevelAccessor;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
 
@@ -32,5 +35,19 @@ public class FlowingFluidsPlatformImpl {
 
     public static boolean isThisModLoaded(final String modId) {
         return FabricLoader.getInstance().isModLoaded(modId);
+    }
+
+    public static void clearPlatformRuntime(ServerLevel level) {
+    }
+
+    public static void syncVirtualFluidState(ServerLevel level, BlockPos pos) {
+    }
+
+    public static boolean hasProcessingFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
+        return false;
+    }
+
+    public static boolean hasVisualFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
+        return false;
     }
 }

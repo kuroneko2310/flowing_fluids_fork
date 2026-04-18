@@ -4,7 +4,8 @@
       "Bash(find:*)",
       "Bash(./gradlew build:*)",
       "Bash(gradle build:*)",
-      "Bash(javac:*)"
+      "Bash(javac:*)",
+      "Bash(cd /d/CurseForge/Instances/main \\\\\\(1\\\\\\)/createmod/flowfix/flowing_fluids)"
     ],
     "deny": [],
     "ask": []

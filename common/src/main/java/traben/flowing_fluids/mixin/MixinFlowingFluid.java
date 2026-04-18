@@ -858,7 +858,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             short key = ffCacheKey(blockPos, posDir);
             int distance;
             if (FFFluidUtils.getEffectiveFluidState(level, posDir).getAmount() < (amount - 1)
-                    || flowing_fluids$getSetFlowDownCache(key, level, posCanFlowDown, posDir, fluidState.getType(), requiresSlope)) {
+                    || flowing_fluids$getSetFlowDownCache(key, level, posCanFlowDown, posDir, fluidState.getType(), amount, requiresSlope)) {
                 distance = 0;
             } else {
                 distance = ff$legacyGetSlopeDistance(level, blockPos, 1, dir.getOpposite(), fluidState.getType(), amount + 1,
@@ -898,7 +898,7 @@ public abstract class MixinFlowingFluid extends Fluid {
 
                 if (searchStates.getSecond().getAmount() < (sourceAmount - 2)
                         || flowing_fluids$getSetFlowDownCache(searchKey, level, posCanFlowDown, searchPos,
-                        sourceFluid, forceSlopeDownSameOrEmpty)) {
+                        sourceFluid, sourceAmount, forceSlopeDownSameOrEmpty)) {
                     return searchDistance;
                 }
 
@@ -1457,6 +1457,8 @@ public abstract class MixinFlowingFluid extends Fluid {
             Level level, BlockPos blockPos, FluidState fluidState, int amount, final boolean requiresSlope) {
 
         Short2ObjectOpenHashMap<Pair<BlockState, FluidState>> statesAtPos = ff$getStateCache();
+        Short2BooleanMap quickFlowDown = ff$getFlowDownCache();
+        quickFlowDown.clear();
         ff$ASYNC_SLOPE_PENDING.get()[0] = false;
         try {
             Direction[] shuffled = FFFluidUtils.getCardinalsShuffle(level.random);
@@ -1484,6 +1486,10 @@ public abstract class MixinFlowingFluid extends Fluid {
                 boolean canFlow = flowing_fluids$canSpreadToOptionallySameOrEmpty(fluidState.getType(), amount, level, blockPos,
                         sourceState, direction, mutablePos, stateDir, fluidStateDir, requiresSlope);
                 if (canFlow) {
+                    if (flowing_fluids$getSetFlowDownCache(key, level, quickFlowDown, mutablePos.immutable(), fluidState.getType(), amount, requiresSlope)) {
+                        immediateLowDir = direction;
+                        break;
+                    }
                     if (!anyFlowableNeighbours2LevelsLowerOrMore) {
                         anyFlowableNeighbours2LevelsLowerOrMore = amountDir < amount - 1;
                     }
@@ -1559,6 +1565,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         } finally {
             ff$ASYNC_SLOPE_PENDING.get()[0] = false;
             statesAtPos.clear();
+            quickFlowDown.clear();
         }
     }
 
@@ -1663,7 +1670,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                 short key = ffCacheKey(blockPos, mutablePos);
 
                 // Early exit: if we found a much lower neighbor or can flow down, return immediately
-                if (directionAmounts[i] < amount - 1 || flowing_fluids$getSetFlowDownCache(key, level, posCanFlowDown, mutablePos, sourceFluid, requiresSlope)) {
+                if (directionAmounts[i] < amount - 1 || flowing_fluids$getSetFlowDownCache(key, level, posCanFlowDown, mutablePos, sourceFluid, amount, requiresSlope)) {
                     return dir;
                 }
 
@@ -1791,7 +1798,7 @@ public abstract class MixinFlowingFluid extends Fluid {
 
                     // if we can flow down, cache the result of this and return this distance as it's the smallest
                     if (searchStates.getSecond().getAmount() < (sourceAmount - 2)
-                            || flowing_fluids$getSetFlowDownCache(searchKey, level, posCanFlowDown, searchPos, sourceFluid, forceSlopeDownSameOrEmpty)) {
+                            || flowing_fluids$getSetFlowDownCache(searchKey, level, posCanFlowDown, searchPos, sourceFluid, sourceAmount, forceSlopeDownSameOrEmpty)) {
                         //cache the result to both keys as we may also come back to this position from another direction
                         return searchDistance;
                     }
@@ -1830,14 +1837,20 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Unique
-    private boolean flowing_fluids$getSetFlowDownCache(short key, LevelReader level, Short2BooleanMap boolAtPos, BlockPos pos, Fluid sourceFluid, boolean forceSlopeDownSameOrEmpty) {
+    private boolean flowing_fluids$getSetFlowDownCache(short key, LevelReader level, Short2BooleanMap boolAtPos, BlockPos pos, Fluid sourceFluid, int sourceAmount, boolean forceSlopeDownSameOrEmpty) {
         return boolAtPos.computeIfAbsent(key, (sx) -> {
-            var posDown = pos.below();
+            LevelAccessor accessor = (LevelAccessor) level;
+            BlockState stateAtPos = level.getBlockState(pos);
+            FluidState fluidAtPos = FFFluidUtils.getStateForFluidByAmount(sourceFluid, Math.max(1, sourceAmount));
+            BlockPos posDown = pos.below();
             BlockState downState = level.getBlockState(posDown);
-            FluidState downFluid = FFFluidUtils.getEffectiveFluidState((LevelAccessor) level, posDown, downState);
-            return (flowing_fluids$canSpreadToOptionallySameOrEmpty(sourceFluid, 8, level, pos, level.getBlockState(pos),
-                    Direction.DOWN, posDown, downState, downFluid,
-                    forceSlopeDownSameOrEmpty));
+            FFDownwardFlowTarget downwardTarget = flowing_fluids$resolveDownwardFlowTarget((Level) level, posDown, downState, sourceFluid);
+            if (!flowing_fluids$canUseDownwardPassThroughTarget((Level) level, pos, stateAtPos, fluidAtPos, posDown, downState, downwardTarget)) {
+                return false;
+            }
+            return flowing_fluids$canSpreadToOptionallySameOrEmpty(sourceFluid, Math.max(1, fluidAtPos.getAmount()), level,
+                    pos, stateAtPos, Direction.DOWN, downwardTarget.targetPos(), downwardTarget.targetState(),
+                    downwardTarget.targetFluidState(), forceSlopeDownSameOrEmpty);
         });
     }
 

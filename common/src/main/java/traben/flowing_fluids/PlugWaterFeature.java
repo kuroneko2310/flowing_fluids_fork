@@ -60,7 +60,7 @@ public class PlugWaterFeature {
     }
 
     public static void processChunk(LevelAccessor level, ChunkPos chunk, ChunkAccess chunkAccess) {
-        int seaLevel = level.getSeaLevel();
+        int seaLevel = FFFluidUtils.seaLevel(level);
         LongOpenHashSet sources = new LongOpenHashSet();
 
         collectSourceBlocks(level, chunkAccess, 0, 0, 0, 16, 16, 16, sources, seaLevel);

@@ -1,6 +1,7 @@
 package traben.flowing_fluids;
 
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.junit.jupiter.api.Test;
@@ -39,5 +40,45 @@ class FFFluidUtilsShapeOpeningTest {
         for (Direction direction : Direction.values()) {
             assertFalse(FFFluidUtils.hasShapeFaceOpening(fullCube, direction));
         }
+    }
+
+    @Test
+    void shallowWaterCanReachBottomSlabSideCavityFromFullCell() {
+        assertTrue(FFFluidUtils.hasCompatibleVirtualFluidHeights(
+                null,
+                3.0F / 9.0F,
+                Direction.EAST,
+                SlabType.BOTTOM
+        ));
+    }
+
+    @Test
+    void fullWaterReachesBottomSlabSideCavity() {
+        assertTrue(FFFluidUtils.hasCompatibleVirtualFluidHeights(
+                null,
+                1.0F,
+                Direction.EAST,
+                SlabType.BOTTOM
+        ));
+    }
+
+    @Test
+    void topAndBottomSlabsDoNotShareHorizontalWaterBand() {
+        assertFalse(FFFluidUtils.hasCompatibleVirtualFluidHeights(
+                SlabType.TOP,
+                1.0F,
+                Direction.EAST,
+                SlabType.BOTTOM
+        ));
+    }
+
+    @Test
+    void shallowBottomSlabWaterCanFlowSidewaysIntoFullCell() {
+        assertTrue(FFFluidUtils.hasCompatibleVirtualFluidHeights(
+                SlabType.BOTTOM,
+                1.0F / 9.0F,
+                Direction.EAST,
+                null
+        ));
     }
 }

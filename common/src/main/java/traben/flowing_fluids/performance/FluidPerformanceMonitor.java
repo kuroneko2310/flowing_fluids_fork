@@ -37,6 +37,7 @@ public class FluidPerformanceMonitor {
     // Tick counter for logging
     private int tickCounter = 0;
     private int logInterval = 200; // 10 seconds at 20 TPS
+    private final AtomicInteger lastServerTick = new AtomicInteger(Integer.MIN_VALUE);
 
     private FluidPerformanceMonitor() {
     }
@@ -107,7 +108,22 @@ public class FluidPerformanceMonitor {
     public void tick(boolean enabled, int interval) {
         if (!enabled) return;
 
-        this.logInterval = interval;
+        this.logInterval = Math.max(20, interval);
+        tickCounter++;
+
+        if (tickCounter >= logInterval) {
+            logPerformanceData();
+            tickCounter = 0;
+        }
+    }
+
+    public void tick(int serverTick, boolean enabled, int interval) {
+        if (!enabled) return;
+
+        this.logInterval = Math.max(20, interval);
+        if (lastServerTick.getAndSet(serverTick) == serverTick) {
+            return;
+        }
         tickCounter++;
 
         if (tickCounter >= logInterval) {

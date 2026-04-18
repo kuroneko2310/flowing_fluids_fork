@@ -16,6 +16,9 @@ public class RainWaterApiImpl implements RainWaterApi {
 
     @Override
     public void addRainWater(ServerLevel level, BlockPos pos, int amount) {
+        if (!RainWaterSystem.shouldExecuteQueuedRainPlacement(level, pos)) {
+            return;
+        }
         BlockState state = level.getBlockState(pos);
         if (!state.getFluidState().isSource() && (state.isAir() || state.canBeReplaced())) {
             level.setBlockAndUpdate(pos, Fluids.WATER.defaultFluidState().createLegacyBlock());

@@ -6,6 +6,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import traben.flowing_fluids.ExtendedWaterlogStore;
 import traben.flowing_fluids.FlowingFluids;
 
 @Mixin(Minecraft.class)
@@ -17,6 +18,7 @@ public class MixinDisconnect {
     #endif
     private void ff$disconnect(final Screen screen, final CallbackInfo ci) {
         //reset config to remove possible external server config data
+        ExtendedWaterlogStore.clearAll();
         FlowingFluids.loadConfig();
     }
 }

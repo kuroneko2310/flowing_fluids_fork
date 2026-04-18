@@ -22,10 +22,17 @@
 - `FluidSectionDataCache.invalidate(pos)` で touched section だけ無効化する
 - water profile cache は安全側で全クリアしつつ、section cache 自体は生かす
 
+3. `FluidSpatialGrid` / `AdaptiveTickScheduler`
+- macro cell ごとの `frontierCount` を追加
+- fluid change 時だけ変更セルと隣接 6 マスの frontier 状態を再計算する
+- chunk 初期化時は frontier を再構築する
+- scheduler は frontier 密度が低い dense macro cell を calm interior 候補として早めに寝かせる
+
 ## 期待している効果
 
 - 広い静水面での `canFluidFlowFromPosToDirection(...)` 呼び出し回数の削減
 - 同 tick 内で連続的に起こる局所更新後の section cache 再構築量の削減
+- macro section 単位で frontier 密度を持つことで、静水域の `shouldTick(...)` 再判定を O(1) ヒントで早く抜けられる
 - 既存の tick / equalizer / scheduler の流れを崩さないまま、前線だけ精密に見る方向へ寄せる
 
 ## ロールバックしやすい単位
@@ -42,6 +49,15 @@
   - `invalidate(...)`
   - `shouldBuildSectionCache(...)`
   - `dirtyTick` 削除まわり
+
+3. macro frontier helper だけ戻したい場合
+- `common/src/main/java/traben/flowing_fluids/FluidSpatialGrid.java`
+  - `MacroFluidHint`
+  - frontier count / rebuild / refresh まわり
+- `common/src/main/java/traben/flowing_fluids/AdaptiveTickScheduler.java`
+  - calm macro early-return
+- `common/src/main/java/traben/flowing_fluids/optimization/WaterFlowProfile.java`
+  - macro hint を使う fast calm 判定の追加引数
 
 ## 注意
 

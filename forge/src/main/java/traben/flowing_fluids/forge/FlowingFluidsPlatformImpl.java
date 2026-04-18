@@ -1,6 +1,9 @@
 package traben.flowing_fluids.forge;
 
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.LevelAccessor;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.loading.FMLLoader;
 import net.minecraftforge.fml.loading.FMLPaths;
@@ -9,6 +12,8 @@ import net.minecraftforge.fml.loading.moddiscovery.ModInfo;
 import net.minecraftforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.forge.hydraulic.FlowAnchorRuntime;
+import traben.flowing_fluids.forge.nether.NetherLavaEventSystem;
 
 import java.nio.file.Path;
 
@@ -47,5 +52,22 @@ public class FlowingFluidsPlatformImpl {
         } catch (Exception ignored) {
         }
         return false;
+    }
+
+    public static void clearPlatformRuntime(ServerLevel level) {
+        FlowAnchorRuntime.clearDimension(level);
+        NetherLavaEventSystem.clearDimension(level);
+    }
+
+    public static void syncVirtualFluidState(ServerLevel level, BlockPos pos) {
+        ForgePacketHandler.sendVirtualFluidState(level, pos);
+    }
+
+    public static boolean hasProcessingFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
+        return FlowAnchorRuntime.hasProcessingAnchorNearby(level, pos);
+    }
+
+    public static boolean hasVisualFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
+        return FlowAnchorRuntime.hasVisualAnchorNearby(level, pos);
     }
 }

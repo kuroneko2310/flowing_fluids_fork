@@ -8,6 +8,8 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.util.DimensionKey;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -94,6 +96,32 @@ public final class ExtendedWaterlogStore {
         STORE.remove(DimensionKey.of(level));
     }
 
+    public static void clearAll() {
+        STORE.clear();
+    }
+
+    public static List<StoredFluidEntry> getChunkEntries(LevelAccessor level, ChunkPos chunkPos) {
+        DimensionStore store = STORE.get(DimensionKey.of(level));
+        if (store == null) {
+            return List.of();
+        }
+
+        Set<Long> positions = store.chunkIndex.get(chunkKey(chunkPos.x, chunkPos.z));
+        if (positions == null || positions.isEmpty()) {
+            return List.of();
+        }
+
+        ArrayList<StoredFluidEntry> entries = new ArrayList<>(positions.size());
+        for (Long posKey : positions) {
+            StoredFluid stored = store.byPosition.get(posKey);
+            if (stored == null) {
+                continue;
+            }
+            entries.add(new StoredFluidEntry(BlockPos.of(posKey), stored.fluid(), stored.amount()));
+        }
+        return entries;
+    }
+
     private static void removeFromChunkIndex(DimensionStore store, long posKey) {
         long chunkKey = chunkKeyFromPos(posKey);
         Set<Long> set = store.chunkIndex.get(chunkKey);
@@ -129,5 +157,8 @@ public final class ExtendedWaterlogStore {
             }
             return fluid.defaultFluidState();
         }
+    }
+
+    public record StoredFluidEntry(BlockPos pos, Fluid fluid, int amount) {
     }
 }

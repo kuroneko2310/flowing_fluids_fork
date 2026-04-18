@@ -11,6 +11,8 @@ import traben.flowing_fluids.util.DimensionKey;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class FlowingFluidsTick {
+    private static final int CHUNK_INITIALIZATION_BUDGET_PER_TICK = 1;
+    private static final int FRONTIER_REBUILD_BUDGET_PER_TICK = 1;
     private static final long MAINTENANCE_INTERVAL_TICKS = 200L;
     private static final ConcurrentHashMap<DimensionKey, Long> lastMaintenanceTick = new ConcurrentHashMap<>();
 
@@ -29,9 +31,20 @@ public final class FlowingFluidsTick {
         }
         DryingEventSystem.onLevelTick(level);
         SnowmeltWaterSystem.onLevelTick(level);
+        if (FluidSpatialGrid.hasPendingChunkInitializations(level)) {
+            FluidSpatialGrid.processPendingChunkInitializations(level, CHUNK_INITIALIZATION_BUDGET_PER_TICK);
+        }
         ParallelFluidTickManager.flushQueuedDistantStableTicks(level);
-        ParallelFluidEqualizer.flush(level);
-        FluidTickBuffer.applyAll(level);
+        if (FluidTickBuffer.hasPendingChanges(level)) {
+            FluidTickBuffer.applyAll(level);
+        }
+        if (ParallelFluidEqualizer.hasQueued(level) && ParallelFluidEqualizer.flush(level) > 0
+                && FluidTickBuffer.hasPendingChanges(level)) {
+            FluidTickBuffer.applyAll(level);
+        }
+        if (FluidSpatialGrid.hasPendingFrontierRebuilds(level)) {
+            FluidSpatialGrid.processPendingFrontierRebuilds(level, FRONTIER_REBUILD_BUDGET_PER_TICK);
+        }
 
         long now = level.getGameTime();
         DimensionKey key = DimensionKey.of(level);
@@ -52,6 +65,9 @@ public final class FlowingFluidsTick {
 
     public static void onChunkUnload(LevelAccessor level, ChunkPos chunkPos) {
         AdaptiveTickScheduler.clearChunk(level, chunkPos);
+        if (level instanceof ServerLevel serverLevel) {
+            AsyncSlopeSearchPlanner.clearChunk(serverLevel, chunkPos);
+        }
         FluidSpatialGrid.clearChunk(level, chunkPos);
         ChunkLocalSlopeCache.clearChunk(level, chunkPos);
         FluidActivityTracker.clearChunk(level, chunkPos);
@@ -65,6 +81,7 @@ public final class FlowingFluidsTick {
         lastMaintenanceTick.remove(DimensionKey.of(level));
         DryingEventSystem.onLevelUnload(level);
         SnowmeltWaterSystem.onLevelUnload(level);
+        AsyncSlopeSearchPlanner.clearDimension(level);
         ParallelFluidEqualizer.clearDimension(level);
         ParallelFluidTickManager.clearDimension(level);
         ExtendedWaterlogStore.clearDimension(level);

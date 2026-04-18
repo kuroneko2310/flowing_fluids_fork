@@ -19,6 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.performance.FluidAutoTickDelay;
 
 @Mixin(LavaFluid.class)
 public abstract class MixinLavaFluid extends FlowingFluid {
@@ -59,10 +60,11 @@ public abstract class MixinLavaFluid extends FlowingFluid {
     private void ff$modifyTickDelay(final LevelReader level, final CallbackInfoReturnable<Integer> cir) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.isFluidAllowed(this)) {
-            cir.setReturnValue(Mth.clamp(level.dimensionType().ultraWarm()
-                    ? FlowingFluids.config.lavaNetherTickDelay
-                    : FlowingFluids.config.lavaTickDelay,
-                    1,255));
+            cir.setReturnValue(FluidAutoTickDelay.getAdjustedLavaTickDelay(
+                    Mth.clamp(level.dimensionType().ultraWarm()
+                            ? FlowingFluids.config.lavaNetherTickDelay
+                            : FlowingFluids.config.lavaTickDelay,
+                            1, 255)));
         }
     }
 
