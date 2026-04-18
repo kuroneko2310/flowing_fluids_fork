@@ -221,12 +221,18 @@ public final class FluidRegressionLogic {
 
     public static boolean shouldWakeBroadSurfaceEqualizerForThinPartial(boolean broadSurface,
                                                                         boolean pressureDriven,
+                                                                        boolean inletZone,
                                                                         int difference,
                                                                         int beforeAmount,
                                                                         int afterAmount) {
         // Large calm surfaces already wake the equalizer on >=2 level jumps. The remaining visible
         // artifact is a partial-height 1-step dent that can settle without another strong disturbance.
-        if (!broadSurface || pressureDriven || difference != 1) {
+        // Inlet zones on broad surfaces can show the same raised spawn-point artifact even though the
+        // wider channel profile is pressure-driven, so keep that narrow exception local to broad water.
+        if (!broadSurface || difference != 1) {
+            return false;
+        }
+        if (pressureDriven && !inletZone) {
             return false;
         }
         return beforeAmount > 0 && beforeAmount < 8

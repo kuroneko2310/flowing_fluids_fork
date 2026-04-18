@@ -64,4 +64,26 @@ class ParallelFluidEqualizerRegressionTest {
             FluidAmountConverter.toInternal(7)
         ));
     }
+
+    @Test
+    void broadSurfaceOrInletSurgesStillReachEqualizerPreparation() {
+        assertFalse(ParallelFluidEqualizer.shouldSkipQueuedSurgeCandidate(
+            false,
+            true,
+            false,
+            0.0f,
+            FluidAmountConverter.toInternal(7),
+            true,
+            false
+        ));
+        assertFalse(ParallelFluidEqualizer.shouldSkipQueuedSurgeCandidate(
+            false,
+            true,
+            false,
+            0.0f,
+            FluidAmountConverter.toInternal(7),
+            false,
+            true
+        ));
+    }
 }

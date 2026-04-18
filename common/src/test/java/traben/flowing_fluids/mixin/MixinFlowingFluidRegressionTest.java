@@ -54,11 +54,12 @@ class MixinFlowingFluidRegressionTest {
 
     @Test
     void broadSurfaceEqualizerWakesForPartialOneLevelDent() {
-        assertTrue(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, false, 1, 8, 7));
-        assertTrue(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, false, 1, 7, 8));
-        assertFalse(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, false, 1, 8, 8));
-        assertFalse(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, true, 1, 8, 7));
-        assertFalse(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(false, false, 1, 8, 7));
+        assertTrue(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, false, false, 1, 8, 7));
+        assertTrue(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, false, false, 1, 7, 8));
+        assertFalse(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, false, false, 1, 8, 8));
+        assertTrue(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, true, true, 1, 8, 7));
+        assertFalse(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(true, true, false, 1, 8, 7));
+        assertFalse(FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(false, false, false, 1, 8, 7));
     }
 
     @Test

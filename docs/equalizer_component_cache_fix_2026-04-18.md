@@ -24,3 +24,9 @@
 
 - 閉じた broad surface の partial tile は、薄い lateral source を残す保護と、`delta == 1` では equalizer が起きにくい条件が重なると残留しやすい。
 - 修正では、broad surface の thin source 保護を live front 付近だけに寄せ、partial な 1段差は equalizer を起こせるようにした。
+
+## 追加の発生点高止まりメモ
+
+- 水を出現・生成した直後の full に近いセルは、`ParallelFluidEqualizer` が fresh surge とみなして先送りすることがある。
+- broad surface やその inlet でも amount の高さだけで同じ defer 条件に入ると、発生点だけ 1段高い plateau が残りやすい。
+- 修正では、flow/momentum が強い surge は引き続き遅らせつつ、broad surface / inlet の高いセルは equalizer 準備まで進めて平均化を再開させた。

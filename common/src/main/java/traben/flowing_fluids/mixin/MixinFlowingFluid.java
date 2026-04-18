@@ -2670,6 +2670,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         return FluidRegressionLogic.shouldWakeBroadSurfaceEqualizerForThinPartial(
                 waterProfile.isBroadSurface(),
                 waterProfile.isPressureDriven(),
+                waterProfile.isInletZone(),
                 difference,
                 beforeAmount,
                 afterAmount);

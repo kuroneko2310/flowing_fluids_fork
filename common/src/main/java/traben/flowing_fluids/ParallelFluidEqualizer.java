@@ -448,10 +448,6 @@ public final class ParallelFluidEqualizer {
         if (!shouldRunBfs && !forcedRecheck) {
             return null;
         }
-        if (!forcedRecheck && shouldDelayFreshSurgeEqualization(level, startPos, candidate.amount())) {
-            return null;
-        }
-
         int maxDepth = EnhancedFluidBFS.getDynamicDepth(level, startPos);
         int maxNodes = AdaptiveTickScheduler.getBFSBudget(level, startPos);
         if (forcedRecheck && !shouldRunBfs) {
@@ -465,6 +461,9 @@ public final class ParallelFluidEqualizer {
             ? startState.getAmount()
             : FluidAmountConverter.toBlockState(candidate.amount());
         WaterFlowProfile flowProfile = WaterFlowProfile.analyze(level, startPos, startState, profileAmount, captureCache);
+        if (!forcedRecheck && shouldDelayFreshSurgeEqualization(level, startPos, candidate.amount(), flowProfile)) {
+            return null;
+        }
         float distanceLoadFactor = flowProfile.adjustEqualizerLoadFactor(getDistanceLoadSheddingFactor());
         if (!forcedRecheck && flowProfile.isInletZone()) {
             maxDepth = Math.min(maxDepth, 6);
@@ -496,7 +495,8 @@ public final class ParallelFluidEqualizer {
         );
     }
 
-    private static boolean shouldDelayFreshSurgeEqualization(Level level, BlockPos pos, int amount) {
+    private static boolean shouldDelayFreshSurgeEqualization(Level level, BlockPos pos, int amount,
+                                                             WaterFlowProfile flowProfile) {
         if (level == null || pos == null) {
             return false;
         }
@@ -508,7 +508,9 @@ public final class ParallelFluidEqualizer {
             AdaptiveTickScheduler.wasChunkTouchedRecently(level, pos, 0),
             AdaptiveTickScheduler.isFlowActiveNow(level, pos),
             AdaptiveTickScheduler.getFlowMomentum(level, pos, momentumAge),
-            amount
+            amount,
+            flowProfile != null && flowProfile.isBroadSurface(),
+            flowProfile != null && flowProfile.isInletZone()
         );
     }
 
@@ -517,6 +519,24 @@ public final class ParallelFluidEqualizer {
                                                   boolean flowActive,
                                                   float flowMomentum,
                                                   int amount) {
+        return shouldSkipQueuedSurgeCandidate(
+            forcedRecheck,
+            chunkTouchedRecently,
+            flowActive,
+            flowMomentum,
+            amount,
+            false,
+            false
+        );
+    }
+
+    static boolean shouldSkipQueuedSurgeCandidate(boolean forcedRecheck,
+                                                  boolean chunkTouchedRecently,
+                                                  boolean flowActive,
+                                                  float flowMomentum,
+                                                  int amount,
+                                                  boolean broadSurface,
+                                                  boolean inletZone) {
         if (forcedRecheck || !chunkTouchedRecently) {
             return false;
         }
@@ -526,7 +546,9 @@ public final class ParallelFluidEqualizer {
         if (flowMomentum > 0.2f) {
             return true;
         }
-        return amount >= FluidAmountConverter.toInternal(7);
+        return amount >= FluidAmountConverter.toInternal(7)
+            && !broadSurface
+            && !inletZone;
     }
 
     private static Result computeResult(Request request) {
