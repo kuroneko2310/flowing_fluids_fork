@@ -145,6 +145,14 @@ public final class RainCollectorBlockEntity extends BlockEntity {
         return fluidTank.getFluidAmount() < fluidTank.getCapacity();
     }
 
+    boolean canStoreCollectedWater(int amount) {
+        if (amount <= 0) {
+            return false;
+        }
+        long requestedMb = (long) amount * FLUID_LEVEL_MB;
+        return fluidTank.getCapacity() - fluidTank.getFluidAmount() >= requestedMb;
+    }
+
     int addCollectedWater(int amount) {
         if (amount <= 0 || !canStoreCollectedWater()) {
             return 0;

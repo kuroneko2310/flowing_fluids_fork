@@ -85,7 +85,7 @@ public final class RainCollectorRuntime {
         if (collector.energyStored() < energyCost) {
             return false;
         }
-        if (!collector.canStoreCollectedWater()) {
+        if (!collector.canStoreCollectedWater(amount)) {
             return false;
         }
 
