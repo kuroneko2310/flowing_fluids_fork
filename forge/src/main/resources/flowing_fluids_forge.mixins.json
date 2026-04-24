@@ -9,6 +9,9 @@
   "mixins": [
     "MixinLevel",
     "MixinWaterPushing",
+    "create.MixinBasinBlockEntity",
+    "create.MixinBasinRecipe",
+    "create.MixinCombinedTankWrapper",
     "create.FluidDrainingBehaviourAccessor",
     "create.FluidManipulationBehaviourAccessor",
     "create.MixinGenericItemEmptying_HandlesItemDrain",
