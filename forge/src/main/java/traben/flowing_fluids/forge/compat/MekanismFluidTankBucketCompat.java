@@ -73,11 +73,11 @@ public final class MekanismFluidTankBucketCompat {
             return InteractionResultHolder.sidedSuccess(stack, true);
         }
 
-        drainResult.apply().run();
         int inserted = handler.fill(drainResult.fluidStack().copy(), IFluidHandler.FluidAction.EXECUTE);
         if (inserted < drainResult.fluidStack().getAmount()) {
             return InteractionResultHolder.fail(stack);
         }
+        drainResult.apply().run();
         ItemStack resultStack = handler.getContainer();
 
         drainResult.pickupSound().ifPresent(sound ->
@@ -130,11 +130,15 @@ public final class MekanismFluidTankBucketCompat {
             return InteractionResultHolder.sidedSuccess(stack, true);
         }
 
+        if (!player.isCreative()) {
+            int drainAmount = fluidLevelsToMilliBuckets(placement.placedLevels());
+            FluidStack drained = handler.drain(drainAmount, IFluidHandler.FluidAction.EXECUTE);
+            if (drained.getAmount() < drainAmount) {
+                return InteractionResultHolder.fail(stack);
+            }
+        }
         placement.apply().run();
         wakeNearbyFluidFlow(level, targetPos, flowingFluid);
-        if (!player.isCreative()) {
-            handler.drain(fluidLevelsToMilliBuckets(placement.placedLevels()), IFluidHandler.FluidAction.EXECUTE);
-        }
         ItemStack resultStack = handler.getContainer();
 
         playEmptySound(player, level, targetPos, storedFluid);
@@ -157,9 +161,9 @@ public final class MekanismFluidTankBucketCompat {
         PartialDrainResult drainResult = createBucketModeDrainResult(level, pos, level.getBlockState(pos), handler);
         if (drainResult != null) {
             if (handler.fill(drainResult.fluidStack().copy(), IFluidHandler.FluidAction.SIMULATE) >= drainResult.fluidStack().getAmount()) {
-                drainResult.apply().run();
                 int inserted = handler.fill(drainResult.fluidStack().copy(), IFluidHandler.FluidAction.EXECUTE);
                 if (inserted >= drainResult.fluidStack().getAmount()) {
+                    drainResult.apply().run();
                     drainResult.pickupSound().ifPresent(sound ->
                             level.playSound(null, pos, sound, SoundSource.BLOCKS, 1.0F, 1.0F));
                     level.gameEvent(null, GameEvent.FLUID_PICKUP, pos);
@@ -187,9 +191,13 @@ public final class MekanismFluidTankBucketCompat {
             return null;
         }
 
+        int drainAmount = fluidLevelsToMilliBuckets(placement.placedLevels());
+        FluidStack drained = handler.drain(drainAmount, IFluidHandler.FluidAction.EXECUTE);
+        if (drained.getAmount() < drainAmount) {
+            return null;
+        }
         placement.apply().run();
         wakeNearbyFluidFlow(level, pos, flowingFluid);
-        handler.drain(fluidLevelsToMilliBuckets(placement.placedLevels()), IFluidHandler.FluidAction.EXECUTE);
         playEmptySound(null, level, pos, storedFluid);
         level.gameEvent(null, GameEvent.FLUID_PLACE, pos);
         return handler.getContainer();
