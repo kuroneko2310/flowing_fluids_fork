@@ -137,21 +137,36 @@ public class ForgePacketHandler {
         return level != null && level.dimension().location().equals(dimensionId);
     }
 
-    private static void markVirtualFluidDirty(BlockPos pos) {
+    private static void addVirtualFluidDirtyPositions(Set<BlockPos> dirtyPositions, BlockPos pos) {
+        dirtyPositions.add(pos.immutable());
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.values()) {
+            cursor.setWithOffset(pos, direction);
+            dirtyPositions.add(cursor.immutable());
+        }
+    }
+
+    private static void markBlockDirty(ClientLevel level, BlockPos pos) {
         Minecraft minecraft = Minecraft.getInstance();
-        ClientLevel level = minecraft.level;
-        if (minecraft.levelRenderer == null || level == null) {
+        if (minecraft.levelRenderer == null) {
             return;
         }
 
         BlockState state = level.getBlockState(pos);
         minecraft.levelRenderer.setBlockDirty(pos, state, state);
+    }
 
+    private static void markVirtualFluidDirty(BlockPos pos) {
+        ClientLevel level = Minecraft.getInstance().level;
+        if (level == null) {
+            return;
+        }
+
+        markBlockDirty(level, pos);
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (Direction direction : Direction.values()) {
             cursor.setWithOffset(pos, direction);
-            BlockState neighborState = level.getBlockState(cursor);
-            minecraft.levelRenderer.setBlockDirty(cursor, neighborState, neighborState);
+            markBlockDirty(level, cursor);
         }
     }
 
@@ -362,7 +377,7 @@ public class ForgePacketHandler {
 
             Set<BlockPos> dirtyPositions = new HashSet<>();
             for (ExtendedWaterlogStore.StoredFluidEntry previous : ExtendedWaterlogStore.getChunkEntries(level, chunkPos)) {
-                dirtyPositions.add(previous.pos().immutable());
+                addVirtualFluidDirtyPositions(dirtyPositions, previous.pos());
             }
 
             ExtendedWaterlogStore.clearChunk(level, chunkPos);
@@ -372,11 +387,11 @@ public class ForgePacketHandler {
                     continue;
                 }
                 ExtendedWaterlogStore.set(level, entry.pos(), entry.fluid(), entry.amount());
-                dirtyPositions.add(entry.pos().immutable());
+                addVirtualFluidDirtyPositions(dirtyPositions, entry.pos());
             }
 
             for (BlockPos dirtyPos : dirtyPositions) {
-                markVirtualFluidDirty(dirtyPos);
+                markBlockDirty(level, dirtyPos);
             }
         }
     }

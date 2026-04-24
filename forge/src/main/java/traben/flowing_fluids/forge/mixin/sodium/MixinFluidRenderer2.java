@@ -4,7 +4,8 @@ package traben.flowing_fluids.forge.mixin.sodium;
 
 import me.jellysquid.mods.sodium.client.model.color.ColorProvider;
 import me.jellysquid.mods.sodium.client.render.chunk.compile.pipeline.FluidRenderer;
-import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
@@ -12,6 +13,7 @@ import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
 
@@ -21,7 +23,7 @@ import java.util.Arrays;
 @Mixin(FluidRenderer.class)
 public abstract class MixinFluidRenderer2 {
 
-    @ModifyExpressionValue(
+    @Redirect(
             method = "render",
             at = @At(value = "INVOKE",
                     target = "Lnet/minecraft/world/level/material/FluidState;getFlow(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/Vec3;",
@@ -29,12 +31,12 @@ public abstract class MixinFluidRenderer2 {
             remap = false,
             require = 0
     )
-    private Vec3 ff$alterFlowDir(final Vec3 value) {
+    private Vec3 ff$alterFlowDir(final FluidState fluidState, final BlockGetter level, final BlockPos pos) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.hideFlowingTexture) {
             return Vec3.ZERO;
         }
-        return value;
+        return fluidState.getFlow(level, pos);
     }
 
     @Unique
@@ -55,9 +57,10 @@ public abstract class MixinFluidRenderer2 {
 }
 #else
 
-import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import net.caffeinemc.mods.sodium.client.model.color.ColorProvider;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.pipeline.DefaultFluidRenderer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
@@ -65,6 +68,7 @@ import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.config.FFConfig;
 
@@ -74,15 +78,15 @@ import java.util.Arrays;
 @Mixin(DefaultFluidRenderer.class)
 public abstract class MixinFluidRenderer2 {
 
-    @ModifyExpressionValue(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/material/FluidState;getFlow(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/Vec3;", remap = true),
+    @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/material/FluidState;getFlow(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/Vec3;", remap = true),
             remap = false,
             require = 0)
-    private Vec3 ff$alterFlowDir(final Vec3 original) {
+    private Vec3 ff$alterFlowDir(final FluidState fluidState, final BlockGetter level, final BlockPos pos) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.hideFlowingTexture) {
             return Vec3.ZERO;
         }
-        return original;
+        return fluidState.getFlow(level, pos);
     }
 
     @Unique
