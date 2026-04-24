@@ -1567,15 +1567,33 @@ public class FFFluidUtils {
     }
 
     public static int addAmountToFluidAtPosWithRemainderAndTrySpreadIfFull(LevelAccessor levelAccessor, BlockPos pos, FlowingFluid fluid, int addAmount) {
-        var data = placeConnectedFluidAmountAndPlaceAction(levelAccessor, pos, addAmount, fluid);
-        if (data.first() != addAmount) {
-            data.second().run();
-            return data.first();
-        }
-        return addAmount;
+        return addAmountToFluidAtPosWithRemainderAndTrySpreadIfFull(levelAccessor, pos, fluid, addAmount, true, true);
     }
 
     public static int addAmountToFluidAtPosWithRemainderAndTrySpreadIfFull(LevelAccessor levelAccessor, BlockPos pos, FlowingFluid fluid, int addAmount, boolean canSpreadUp, boolean canSpreadDown) {
+        if (addAmount <= 0) {
+            return 0;
+        }
+        FluidState state = getEffectiveFluidState(levelAccessor, pos);
+        if (state.isEmpty()) {
+            BlockState blockState = levelAccessor.getBlockState(pos);
+            boolean canStorePartial = canStorePartialFluidAmount(levelAccessor, pos, blockState, fluid);
+            boolean canStoreFullVanillaWaterlog = addAmount >= 8 && isVanillaWaterloggable(blockState);
+            if (!canStorePartial && !canStoreFullVanillaWaterlog) {
+                return addAmount;
+            }
+            int firstCellAmount = canStorePartial ? Math.min(8, addAmount) : 8;
+            if (!setFluidStateAtPosToNewAmount(levelAccessor, pos, fluid, firstCellAmount)) {
+                return addAmount;
+            }
+            addAmount -= firstCellAmount;
+            if (addAmount <= 0) {
+                return 0;
+            }
+        } else if (!state.getType().isSame(fluid)) {
+            return addAmount;
+        }
+
         var data = placeConnectedFluidAmountAndPlaceAction(levelAccessor, pos, addAmount, fluid, 80, canSpreadUp, canSpreadDown);
         if (data.first() != addAmount) {
             data.second().run();
