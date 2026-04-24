@@ -281,13 +281,21 @@ public class FFFluidUtils {
         }
 
         List<BlockPos> changedPositions = new ArrayList<>(context.queuedChanges.size());
+        Set<ChunkPos> touchedChunks = new HashSet<>();
         Level serverLevel = levelAccessor instanceof Level level && !level.isClientSide() ? level : null;
 
         for (QueuedBulkFluidChange change : context.queuedChanges.values()) {
-            FluidSpatialGrid.setFluidAt(levelAccessor, change.pos(), change.hasFluid(), change.internalAmount());
+            touchedChunks.add(new ChunkPos(change.pos()));
+        }
+        FluidSpatialGrid.markChunksDirtyForBulkFluidChanges(levelAccessor, touchedChunks);
+
+        for (QueuedBulkFluidChange change : context.queuedChanges.values()) {
+            FluidSpatialGrid.setFluidAtFromBuffer(levelAccessor, change.pos(), change.hasFluid(), change.internalAmount());
             changedPositions.add(change.pos());
         }
 
+        FluidSpatialGrid.invalidateLocalComponents(levelAccessor, changedPositions);
+        FluidSpatialGrid.refreshAreaTypesForChunks(levelAccessor, touchedChunks);
         AdaptiveTickScheduler.notifyFluidChangesBulk(levelAccessor, changedPositions);
         if (serverLevel != null) {
             FluidActivityTracker.recordChanges(serverLevel, changedPositions);
