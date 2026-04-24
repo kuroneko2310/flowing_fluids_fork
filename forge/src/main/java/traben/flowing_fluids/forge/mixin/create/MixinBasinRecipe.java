@@ -123,22 +123,30 @@ public abstract class MixinBasinRecipe {
 
                 for (int tank = 0; tank < availableFluids.getTanks(); tank++) {
                     FluidStack fluidStack = availableFluids.getFluidInTank(tank);
-                    if (simulate && fluidStack.getAmount() <= extractedFluidsFromTank[tank]) {
+                    int availableTankAmount = simulate
+                            ? fluidStack.getAmount() - extractedFluidsFromTank[tank]
+                            : fluidStack.getAmount();
+                    if (availableTankAmount <= 0) {
                         continue;
                     }
                     if (!fluidIngredient.test(fluidStack)) {
                         continue;
                     }
-                    int drainedAmount = Math.min(amountRequired, fluidStack.getAmount());
+                    int drainedAmount = Math.min(amountRequired, availableTankAmount);
                     if (!simulate) {
-                        fluidStack.shrink(drainedAmount);
+                        FluidStack drainRequest = fluidStack.copy();
+                        drainRequest.setAmount(drainedAmount);
+                        FluidStack drained = availableFluids.drain(drainRequest, IFluidHandler.FluidAction.EXECUTE);
+                        if (drained.getAmount() != drainedAmount) {
+                            return false;
+                        }
                         tankFluidsAffected = true;
                     }
                     amountRequired -= drainedAmount;
+                    extractedFluidsFromTank[tank] += drainedAmount;
                     if (amountRequired != 0) {
                         continue;
                     }
-                    extractedFluidsFromTank[tank] += drainedAmount;
                     continue FluidIngredients;
                 }
 
