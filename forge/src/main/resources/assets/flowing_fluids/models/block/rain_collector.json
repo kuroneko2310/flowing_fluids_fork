@@ -1,0 +1,11 @@
+{
+  "parent": "minecraft:block/cube",
+  "textures": {
+    "down": "flowing_fluids:block/pressure_nozzle_bottom",
+    "up": "flowing_fluids:block/pressure_nozzle_top",
+    "north": "flowing_fluids:block/waterway_liner",
+    "south": "flowing_fluids:block/waterway_liner",
+    "west": "flowing_fluids:block/waterway_liner",
+    "east": "flowing_fluids:block/waterway_liner"
+  }
+}

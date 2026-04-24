@@ -33,6 +33,14 @@ public final class ForgeHydraulicBlockRegistry {
         "water_level_sensor",
         WaterLevelSensorBlock::new
     );
+    public static final RegistryObject<Block> RAIN_COLLECTOR = BLOCKS.register(
+        "rain_collector",
+        RainCollectorBlock::new
+    );
+    public static final RegistryObject<Block> WATER_ABSORBER = BLOCKS.register(
+        "water_absorber",
+        WaterAbsorberBlock::new
+    );
     public static final RegistryObject<Item> FLOW_ANCHOR_SURVEYOR = ITEMS.register(
         "flow_anchor_surveyor",
         () -> new FlowAnchorSurveyorItem(
@@ -54,6 +62,20 @@ public final class ForgeHydraulicBlockRegistry {
             FLOW_ANCHOR_CHANNEL.get(),
             FLOW_ANCHOR_WELLSPRING.get(),
             FLOW_ANCHOR_LAKEHEART.get()
+        ).build(null)
+    );
+    public static final RegistryObject<BlockEntityType<RainCollectorBlockEntity>> RAIN_COLLECTOR_BLOCK_ENTITY = BLOCK_ENTITY_TYPES.register(
+        "rain_collector",
+        () -> BlockEntityType.Builder.of(
+            RainCollectorBlockEntity::new,
+            RAIN_COLLECTOR.get()
+        ).build(null)
+    );
+    public static final RegistryObject<BlockEntityType<WaterAbsorberBlockEntity>> WATER_ABSORBER_BLOCK_ENTITY = BLOCK_ENTITY_TYPES.register(
+        "water_absorber",
+        () -> BlockEntityType.Builder.of(
+            WaterAbsorberBlockEntity::new,
+            WATER_ABSORBER.get()
         ).build(null)
     );
 
@@ -79,6 +101,16 @@ public final class ForgeHydraulicBlockRegistry {
             new Item.Properties(),
             "tooltip.flowing_fluids.water_level_sensor"
         ));
+        ITEMS.register("rain_collector", () -> new HydraulicBlockItem(
+            RAIN_COLLECTOR.get(),
+            new Item.Properties(),
+            "tooltip.flowing_fluids.rain_collector"
+        ));
+        ITEMS.register("water_absorber", () -> new HydraulicBlockItem(
+            WATER_ABSORBER.get(),
+            new Item.Properties(),
+            "tooltip.flowing_fluids.water_absorber"
+        ));
         modBus.addListener(ForgeHydraulicBlockRegistry::addToCreativeTabs);
     }
 
@@ -94,6 +126,8 @@ public final class ForgeHydraulicBlockRegistry {
             event.accept(FLOW_ANCHOR_CHANNEL.get());
             event.accept(FLOW_ANCHOR_WELLSPRING.get());
             event.accept(FLOW_ANCHOR_LAKEHEART.get());
+            event.accept(RAIN_COLLECTOR.get());
+            event.accept(WATER_ABSORBER.get());
         }
         if (event.getTabKey() == CreativeModeTabs.REDSTONE_BLOCKS) {
             event.accept(WATER_LEVEL_SENSOR.get());

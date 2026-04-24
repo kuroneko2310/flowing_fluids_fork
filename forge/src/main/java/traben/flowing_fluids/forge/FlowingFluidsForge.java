@@ -196,6 +196,10 @@ public final class FlowingFluidsForge {
         }
         if (event.getItemStack().is(ForgeHydraulicBlockRegistry.WATER_LEVEL_SENSOR.get().asItem())) {
             ff$appendTooltip(event, "tooltip.flowing_fluids.water_level_sensor.1", "tooltip.flowing_fluids.water_level_sensor.2");
+            return;
+        }
+        if (event.getItemStack().is(ForgeHydraulicBlockRegistry.RAIN_COLLECTOR.get().asItem())) {
+            ff$appendTooltip(event, "tooltip.flowing_fluids.rain_collector.1", "tooltip.flowing_fluids.rain_collector.2");
         }
     }
 

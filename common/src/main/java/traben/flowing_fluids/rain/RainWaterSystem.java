@@ -26,6 +26,7 @@ import net.minecraft.world.level.material.Fluids;
 import org.slf4j.Logger;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.FlowingFluidsPlatform;
 import traben.flowing_fluids.api.FlowingFluidsAPI;
 import traben.flowing_fluids.flood.FloodEventSystem;
 
@@ -352,6 +353,10 @@ public final class RainWaterSystem {
 
             final int adjustedAmount = FloodEventSystem.adjustRainWaterAmount(level, mPos, context.effectiveAmount());
             if (adjustedAmount <= 0) {
+                continue;
+            }
+
+            if (FlowingFluidsPlatform.tryAbsorbRainWater(level, mPos, adjustedAmount)) {
                 continue;
             }
 

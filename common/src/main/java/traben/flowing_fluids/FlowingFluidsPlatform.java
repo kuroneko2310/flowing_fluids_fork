@@ -41,4 +41,9 @@ public class FlowingFluidsPlatform {
     public static boolean hasVisualFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
         return false;
     }
+
+    @ExpectPlatform
+    public static boolean tryAbsorbRainWater(ServerLevel level, BlockPos pos, int amount) {
+        return false;
+    }
 }

@@ -13,6 +13,7 @@ import net.minecraftforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.forge.hydraulic.FlowAnchorRuntime;
+import traben.flowing_fluids.forge.hydraulic.RainCollectorRuntime;
 import traben.flowing_fluids.forge.nether.NetherLavaEventSystem;
 
 import java.nio.file.Path;
@@ -56,6 +57,7 @@ public class FlowingFluidsPlatformImpl {
 
     public static void clearPlatformRuntime(ServerLevel level) {
         FlowAnchorRuntime.clearDimension(level);
+        RainCollectorRuntime.clearDimension(level);
         NetherLavaEventSystem.clearDimension(level);
     }
 
@@ -69,5 +71,9 @@ public class FlowingFluidsPlatformImpl {
 
     public static boolean hasVisualFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
         return FlowAnchorRuntime.hasVisualAnchorNearby(level, pos);
+    }
+
+    public static boolean tryAbsorbRainWater(ServerLevel level, BlockPos pos, int amount) {
+        return RainCollectorRuntime.tryAbsorbRainWater(level, pos, amount);
     }
 }

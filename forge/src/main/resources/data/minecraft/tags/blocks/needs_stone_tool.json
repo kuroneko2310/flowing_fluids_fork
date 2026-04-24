@@ -3,6 +3,8 @@
   "values": [
     "flowing_fluids:waterway_liner",
     "flowing_fluids:pressure_nozzle",
+    "flowing_fluids:rain_collector",
+    "flowing_fluids:water_absorber",
     "flowing_fluids:wall_spring_small",
     "flowing_fluids:wall_spring_normal",
     "flowing_fluids:wall_spring_large",
