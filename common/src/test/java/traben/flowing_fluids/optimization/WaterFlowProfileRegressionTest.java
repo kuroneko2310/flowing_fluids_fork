@@ -1,5 +1,8 @@
 package traben.flowing_fluids.optimization;
 
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import traben.flowing_fluids.FlowingFluids;
 
@@ -8,6 +11,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WaterFlowProfileRegressionTest {
+
+    @BeforeAll
+    static void bootstrapMinecraft() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+    }
 
     @Test
     void snapshotRadiusShrinksWithDistanceLoadForChannelRequests() {
@@ -107,5 +116,12 @@ class WaterFlowProfileRegressionTest {
             24,
             240.0f
         ));
+    }
+
+    @Test
+    void immediateDownwardOutletQueuesOnlyWhenMovingByItself() {
+        assertFalse(WaterFlowProfile.shouldQueueImmediateDownwardOutlet(false, 0.0f));
+        assertTrue(WaterFlowProfile.shouldQueueImmediateDownwardOutlet(true, 0.0f));
+        assertTrue(WaterFlowProfile.shouldQueueImmediateDownwardOutlet(false, 0.3f));
     }
 }

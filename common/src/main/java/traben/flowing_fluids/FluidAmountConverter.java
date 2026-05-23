@@ -106,6 +106,13 @@ public class FluidAmountConverter {
     }
 
     /**
+     * Normalizes a difference measured in the active 0-63 internal amount scale.
+     */
+    public static float normalizeInternalDifference(float internalDifference) {
+        return internalDifference / INTERNAL_MAX;
+    }
+
+    /**
      * Calculates the average of two internal amounts.
      * Used for equalization between adjacent fluid blocks.
      *
@@ -177,7 +184,7 @@ public class FluidAmountConverter {
      * Calculates fall-off amount based on distance.
      * Higher precision allows for smoother fall-off curves.
      *
-     * @param sourceAmount Source fluid amount (0-255)
+     * @param sourceAmount Source fluid amount in the active internal scale
      * @param distance Distance from source (1-based)
      * @param maxDistance Maximum flow distance
      * @return Fluid amount at given distance

@@ -375,7 +375,7 @@ public class FFFluidUtils {
                     direction,
                     neighborPos,
                     neighborState,
-                    neighborState.getFluidState())) {
+                    getEffectiveFluidState(accessor, neighborPos, neighborState))) {
                 return true;
             }
         }
@@ -909,14 +909,17 @@ public class FFFluidUtils {
     }
 
     public static FluidState getEffectiveFluidState(LevelAccessor level, BlockPos pos, BlockState state) {
+        FluidState base = state.getFluidState();
+        if (FlowingFluids.config == null || !FlowingFluids.config.enableExtendedWaterlogging
+                || level == null || pos == null) {
+            return base;
+        }
         if (ExtendedWaterlogStore.has(level, pos)) {
             if (supportsVirtualFluidState(level, state)) {
                 return ExtendedWaterlogStore.get(level, pos);
             }
             clearStoredVirtualFluidState(level, pos);
         }
-        FluidState base = state.getFluidState();
-        if (!base.isEmpty()) return base;
         return base;
     }
 
@@ -2379,8 +2382,9 @@ public class FFFluidUtils {
                 for (Direction direction : getCardinalsShuffle(level.getRandom())) {
                     BlockPos offset = pos.relative(direction);
                     BlockState offsetState = level.getBlockState(offset);
+                    FluidState offsetFluid = getEffectiveFluidState(level, offset, offsetState);
 
-                    if (offsetState.getFluidState().getType() instanceof FlowingFluid) {
+                    if (offsetFluid.getType() instanceof FlowingFluid) {
                         amountRemaining = addAmountToFluidAtPosWithRemainder(level, offset, flowSource, amountRemaining);
                         if (amountRemaining == 0) break;
                     } else if (offsetState.isAir()) {
@@ -2403,7 +2407,8 @@ public class FFFluidUtils {
                     while (amountRemaining > 0 && posTraversing.getY() < height) {
                         posTraversing.move(Direction.UP);
                         BlockState offsetState = level.getBlockState(posTraversing);
-                        if (offsetState.getFluidState().getType() instanceof FlowingFluid) {
+                        FluidState offsetFluid = getEffectiveFluidState(level, posTraversing, offsetState);
+                        if (offsetFluid.getType() instanceof FlowingFluid) {
                             amountRemaining = addAmountToFluidAtPosWithRemainder(level, posTraversing, flowSource, amountRemaining);
                         } else if (offsetState.isAir()) {
                             if (setFluidStateAtPosToNewAmount(level, posTraversing, flowSource, amountRemaining)) {
@@ -2431,6 +2436,35 @@ public class FFFluidUtils {
                 || isOceanBiome(biome)
                 || isRiverBiome(biome)
                 || isBeachBiome(biome);
+    }
+
+    public static boolean isInOrNearInfiniteBiome(Level level, BlockPos pos, int radius) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        if (matchInfiniteBiomes(level.getBiome(pos))) {
+            return true;
+        }
+        if (radius <= 0) {
+            return false;
+        }
+
+        int sampleY = Mth.clamp(seaLevel(level), level.getMinBuildHeight(), level.getMaxBuildHeight() - 1);
+        int minBiomeCellX = Math.floorDiv(pos.getX() - radius, 4);
+        int maxBiomeCellX = Math.floorDiv(pos.getX() + radius, 4);
+        int minBiomeCellZ = Math.floorDiv(pos.getZ() - radius, 4);
+        int maxBiomeCellZ = Math.floorDiv(pos.getZ() + radius, 4);
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+
+        for (int cellX = minBiomeCellX; cellX <= maxBiomeCellX; cellX++) {
+            for (int cellZ = minBiomeCellZ; cellZ <= maxBiomeCellZ; cellZ++) {
+                cursor.set(cellX * 4 + 2, sampleY, cellZ * 4 + 2);
+                if (matchInfiniteBiomes(level.getBiome(cursor))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public static String normalizeConfiguredBiomeEntry(String rawEntry, boolean tagEntry) {
@@ -2638,7 +2672,7 @@ public class FFFluidUtils {
         if (hasFullBelow && lateralWaterNeighbors >= 1) {
             return true;
         }
-        return y < seaLevel && lateralWaterNeighbors >= 2;
+        return y <= seaLevel && lateralWaterNeighbors >= 2;
     }
 
     public static int getInfiniteBiomeDepthBelowSeaLevel(int y, int seaLevel) {

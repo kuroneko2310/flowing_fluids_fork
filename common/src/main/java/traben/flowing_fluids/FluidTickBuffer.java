@@ -60,7 +60,7 @@ public class FluidTickBuffer {
      * Buffers a fluid amount change for batch processing.
      *
      * @param pos Position of fluid change
-     * @param newAmount New fluid amount (0-255 internal precision)
+     * @param newAmount New fluid amount in the active internal scale (0-63)
      * @param hasFluid True if fluid exists at position
      * @param fluid The fluid type
      */
@@ -370,7 +370,7 @@ public class FluidTickBuffer {
      * Represents a fluid amount change.
      */
     private static class FluidChange {
-        final int amount; // 0-255 internal precision
+        final int amount; // active internal scale (0-63)
         final boolean hasFluid;
         final Fluid fluid;
 

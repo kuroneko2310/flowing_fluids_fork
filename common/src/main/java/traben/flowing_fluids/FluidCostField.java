@@ -147,7 +147,7 @@ public class FluidCostField {
      */
     private static float calculateMovementCost(BlockGetter level, BlockPos from, BlockPos to, Direction direction) {
         BlockState toState = level.getBlockState(to);
-        FluidState toFluid = level.getFluidState(to);
+        FluidState toFluid = getFluidState(level, to, toState);
 
         // Check if target is solid (impassable)
         if (toState.isSolid() && toFluid.isEmpty()) {
@@ -178,7 +178,7 @@ public class FluidCostField {
         if (direction.getAxis().isHorizontal()) {
             BlockPos below = to.below();
             BlockState belowState = level.getBlockState(below);
-            FluidState belowFluid = level.getFluidState(below);
+            FluidState belowFluid = getFluidState(level, below, belowState);
 
             // If there's space below, this is a downslope (lower cost)
             if (!belowState.isSolid() || !belowFluid.isEmpty()) {
@@ -198,7 +198,7 @@ public class FluidCostField {
         }
 
         BlockState state = level.getBlockState(pos);
-        FluidState fluidState = level.getFluidState(pos);
+        FluidState fluidState = getFluidState(level, pos, state);
 
         // Can accept if air or replaceable
         if (state.isAir() || state.canBeReplaced()) {
@@ -210,6 +210,9 @@ public class FluidCostField {
             int maxAmount = FluidAmountConverter.getMaxInternal();
             if (level instanceof LevelAccessor levelAccessor) {
                 int existingAmount = FluidSpatialGrid.getFluidAmount(levelAccessor, pos);
+                if (existingAmount <= 0) {
+                    existingAmount = FluidAmountConverter.toInternal(fluidState.getAmount());
+                }
                 return existingAmount + fluidAmount <= maxAmount;
             }
             return true; // Without level context, assume merge is possible
@@ -256,7 +259,7 @@ public class FluidCostField {
      *
      * @param level Block getter
      * @param source Source position
-     * @param fluidAmount Amount to displace (0-255)
+     * @param fluidAmount Amount to displace in the active internal scale
      * @return Position where fluid was placed, or null if failed
      */
     public static BlockPos displaceFluid(BlockGetter level, BlockPos source, int fluidAmount) {
@@ -291,5 +294,12 @@ public class FluidCostField {
         }
 
         return bestDir;
+    }
+
+    private static FluidState getFluidState(BlockGetter level, BlockPos pos, BlockState state) {
+        if (level instanceof LevelAccessor levelAccessor) {
+            return FFFluidUtils.getEffectiveFluidState(levelAccessor, pos, state);
+        }
+        return state.getFluidState();
     }
 }

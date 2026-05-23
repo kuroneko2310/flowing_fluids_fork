@@ -54,6 +54,7 @@ import traben.flowing_fluids.FluidActivityTracker;
 import traben.flowing_fluids.ParallelFluidEqualizer;
 import traben.flowing_fluids.ParallelFluidTickManager;
 import traben.flowing_fluids.config.FFConfig;
+import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.optimization.HierarchicalDistanceManager;
 import traben.flowing_fluids.optimization.WaterFlowProfile;
 import traben.flowing_fluids.performance.InfiniteBiomeRefillFallbackController;
@@ -379,6 +380,9 @@ public abstract class MixinFlowingFluid extends Fluid {
 
             try {
                 if (fluidState.is(FluidTags.WATER)) {
+                    if (flowing_fluids$trySeaLevelOverflowEvaporationTick(level, blockPos, thisState, fluidState)) {
+                        return;
+                    }
                     if (FlowingFluids.config.waterProcessingMode == FFConfig.WaterProcessingMode.LEGACY) {
                         ff$legacyTickWater(level, blockPos, fluidState, thisState, dontConsumeWater);
                         return;
@@ -464,11 +468,11 @@ public abstract class MixinFlowingFluid extends Fluid {
 
                 // Enhanced pressure-based fast path algorithm
                 // This optimization detects common patterns and skips expensive slope calculations
-                if (fluidState.getAmount() == 8 && thisState.liquid()) { // not messing with waterloggables here
+                if (fluidState.getAmount() == 8 && thisState.liquid()) {
                     BlockPos abovePos = blockPos.above();
                     var above = level.getBlockState(abovePos);
-                    if (above.liquid()) { // not messing with waterloggables here
-                        var aboveF = above.getFluidState();
+                    var aboveF = FFFluidUtils.getEffectiveFluidState(level, abovePos, above);
+                    if (aboveF.getType() instanceof FlowingFluid) {
                         int aboveAmount = aboveF.getAmount();
                         if (aboveAmount >= 8){
                             var flow = (FlowingFluid) aboveF.getType();
@@ -559,6 +563,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                         if (fluidState.is(FluidTags.WATER) && FlowingFluids.config.flowInertiaStrength > 0f) {
                             float momentum = Mth.clamp(remainingAmount / 8.0f, 0.2f, 1.0f);
                             AdaptiveTickScheduler.recordFlowDirection(level, blockPos, dir, momentum);
+                            AdaptiveTickScheduler.recordFlowDirection(level, actualPos, dir, momentum * 0.65f);
                         }
                         return;
                     }
@@ -611,6 +616,50 @@ public abstract class MixinFlowingFluid extends Fluid {
             }
         }
 
+    }
+
+    @Unique
+    private boolean flowing_fluids$trySeaLevelOverflowEvaporationTick(final Level level,
+                                                                      final BlockPos blockPos,
+                                                                      final BlockState thisState,
+                                                                      final FluidState fluidState) {
+        if (!(fluidState.getType() instanceof FlowingFluid flowingFluid)) {
+            return false;
+        }
+        int amount = fluidState.getAmount();
+        if (!DryingEventSystem.shouldEvaporateSeaLevelOverflow(level, blockPos, flowingFluid, amount)) {
+            return false;
+        }
+        if (FlowingFluids.config.seaLevelOverflowEvaporationInstant) {
+            if (FFFluidUtils.applyLocalFluidAmountDelta(level, blockPos, flowingFluid, -amount)) {
+                FluidState remaining = FFFluidUtils.getEffectiveFluidState(level, blockPos);
+                if (remaining.isEmpty() && level.getBlockState(blockPos.below()).is(Blocks.MUD)) {
+                    level.setBlock(blockPos.below(), Blocks.DIRT.defaultBlockState(), 3);
+                }
+            }
+            return true;
+        }
+        if (FFFluidUtils.canFluidFlowToNeighbourFromPos(level, blockPos, thisState, flowingFluid, amount)) {
+            return false;
+        }
+
+        float evaporationChance = DryingEventSystem.getSeaLevelOverflowEvaporationChance(level, blockPos);
+        if (evaporationChance <= 0.0f) {
+            return false;
+        }
+        if (level.random.nextFloat() < evaporationChance) {
+            if (FFFluidUtils.applyLocalFluidAmountDelta(level, blockPos, flowingFluid, -amount)) {
+                FluidState remaining = FFFluidUtils.getEffectiveFluidState(level, blockPos);
+                if (remaining.isEmpty() && level.getBlockState(blockPos.below()).is(Blocks.MUD)) {
+                    level.setBlock(blockPos.below(), Blocks.DIRT.defaultBlockState(), 3);
+                }
+            }
+        } else {
+            // Keep overflow cleanup on a slow local retry instead of running the full
+            // horizontal search repeatedly while random ticks wait for evaporation.
+            level.scheduleTick(blockPos, this, 20 + level.random.nextInt(40));
+        }
+        return true;
     }
 
     @Unique
@@ -683,8 +732,8 @@ public abstract class MixinFlowingFluid extends Fluid {
         if (fluidState.getAmount() == 8 && thisState.liquid()) {
             BlockPos abovePos = blockPos.above();
             BlockState aboveState = level.getBlockState(abovePos);
-            if (aboveState.liquid()) {
-                FluidState aboveFluid = aboveState.getFluidState();
+            FluidState aboveFluid = FFFluidUtils.getEffectiveFluidState(level, abovePos, aboveState);
+            if (aboveFluid.getType() instanceof FlowingFluid) {
                 int aboveAmount = aboveFluid.getAmount();
                 if (aboveAmount > 0) {
                     FlowingFluid flow = (FlowingFluid) aboveFluid.getType();
@@ -1004,6 +1053,27 @@ public abstract class MixinFlowingFluid extends Fluid {
             return;
         }
 
+        if (waterProfile != null
+                && FluidRegressionLogic.shouldDeferConnectedWaterLevelingToEqualizer(
+                lateralFluid.getType().isSame(fluidState.getType()),
+                waterProfile.isPressureDriven(),
+                waterProfile.isInletZone(),
+                waterProfile.hasImmediateSurfaceEdge(),
+                waterProfile.hasImmediateDownwardOutlet(),
+                waterProfile.isFlowActive(),
+                waterProfile.flowMomentum(),
+                amount,
+                destFluidAmount,
+                difference,
+                minimumRetainedAmount,
+                transferBias)) {
+            flowing_fluids$updateStablePoolTracking(level, blockPos, fluidState, amount, false);
+            flowing_fluids$updateStablePoolTracking(level, posDir, fluidState, destFluidAmount, false);
+            ParallelFluidEqualizer.enqueue(level, blockPos);
+            ParallelFluidEqualizer.enqueue(level, posDir);
+            return;
+        }
+
         FFFluidUtils.DiscreteFlowBalance baseBalance = FFFluidUtils.resolveDiscreteFlowBalance(
                 amount,
                 destFluidAmount,
@@ -1056,6 +1126,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                     momentum = Mth.clamp(momentum + waterProfile.getFlowSpeedMomentumBonus(), 0.2f, 1.0f);
                 }
                 AdaptiveTickScheduler.recordFlowDirection(level, blockPos, dir, momentum);
+                AdaptiveTickScheduler.recordFlowDirection(level, posDir, dir, momentum * 0.65f);
             }
         }
     }
@@ -1947,7 +2018,16 @@ public abstract class MixinFlowingFluid extends Fluid {
         }
         bias += flowing_fluids$getHydraulicGuideBias(level, origin, dir, fluidState.getType(), sourceAmount, targetAmount);
         bias += flowing_fluids$getCavityPressureBias(level, origin, dir, fluidState, sourceAmount, targetAmount, profile);
+        bias += flowing_fluids$getRememberedPoolLevelBias(level, origin, origin.relative(dir), sourceAmount, targetAmount);
         return Mth.clamp(bias, 0.0f, 2.0f);
+    }
+
+    @Unique
+    private float flowing_fluids$getRememberedPoolLevelBias(Level level, BlockPos sourcePos, BlockPos targetPos,
+                                                            int sourceAmount, int targetAmount) {
+        float targetRestore = AdaptiveTickScheduler.getPoolLevelRestoringBias(level, targetPos, targetAmount);
+        float sourceResistance = AdaptiveTickScheduler.getPoolLevelDrainResistance(level, sourcePos, sourceAmount);
+        return Mth.clamp(targetRestore - sourceResistance, -0.36f, 0.54f);
     }
 
     @Unique
@@ -2417,6 +2497,12 @@ public abstract class MixinFlowingFluid extends Fluid {
                 ? waterProfile
                 : flowing_fluids$getWaterFlowProfile(level, pos, fluidState, amount);
         if (profile.shouldSuppressExploratorySpread()) {
+            if (profile.hasImmediateSurfaceEdge()
+                    || profile.hasImmediateDownwardOutlet()
+                    || AdaptiveTickScheduler.isFlowActiveNow(level, pos)
+                    || flowing_fluids$hasNearbyStepDownOutlet(level, pos, fluidState.getType(), amount)) {
+                return false;
+            }
             return true;
         }
         if (profile.isPressureDriven()) {
@@ -2504,7 +2590,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             return;
         }
         if (flowing_fluids$shouldTrackStablePool(amount)) {
-            AdaptiveTickScheduler.markPoolStable(level, pos, stable);
+            AdaptiveTickScheduler.markPoolStable(level, pos, stable, amount);
         } else {
             AdaptiveTickScheduler.markPoolStable(level, pos, false);
         }
@@ -2512,7 +2598,7 @@ public abstract class MixinFlowingFluid extends Fluid {
 
     @Unique
     private boolean flowing_fluids$shouldTrackStablePool(int amount) {
-        return amount > 0 && amount <= 4;
+        return FluidRegressionLogic.shouldTrackWaterPoolStableTicks(amount);
     }
 
     @Unique

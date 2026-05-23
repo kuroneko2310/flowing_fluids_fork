@@ -35,6 +35,8 @@ import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.flood.FloodEventSystem;
 import traben.flowing_fluids.performance.FluidAutoTickDelay;
 import traben.flowing_fluids.performance.InfiniteBiomeRefillFallbackController;
+import traben.flowing_fluids.forge.debug.ForgeDebugCommands;
+import traben.flowing_fluids.forge.debug.ForgeDebugItemRegistry;
 import traben.flowing_fluids.forge.hydraulic.ForgeHydraulicBlockRegistry;
 import traben.flowing_fluids.forge.nether.ForgeNetherLavaCommands;
 import traben.flowing_fluids.forge.nether.NetherLavaEventSystem;
@@ -53,6 +55,7 @@ public final class FlowingFluidsForge {
         FlowingFluids.init();
         ForgeSpringRegistry.register(modBus);
         ForgeHydraulicBlockRegistry.register(modBus);
+        ForgeDebugItemRegistry.register(modBus);
         MinecraftForge.EVENT_BUS.register(FlowingFluidsForge.class);
     }
 
@@ -63,6 +66,7 @@ public final class FlowingFluidsForge {
             FFCommands.registerCommands(event.getDispatcher(), event.getBuildContext(), event.getCommandSelection()));
         ff$registerCommandGroup("spring", () -> ForgeSpringCommands.registerCommands(event.getDispatcher()));
         ff$registerCommandGroup("nether lava", () -> ForgeNetherLavaCommands.registerCommands(event.getDispatcher()));
+        ff$registerCommandGroup("debug", () -> ForgeDebugCommands.registerCommands(event.getDispatcher()));
     }
 
     @SubscribeEvent
@@ -145,7 +149,6 @@ public final class FlowingFluidsForge {
         ParallelFluidTickManager.shutdown();
         traben.flowing_fluids.ParallelFluidEqualizer.shutdown();
         traben.flowing_fluids.AsyncSlopeSearchPlanner.shutdown();
-        traben.flowing_fluids.EnhancedFluidBFS.shutdown();
         traben.flowing_fluids.AdaptiveTickScheduler.clearAll();
         traben.flowing_fluids.FluidSpatialGrid.clearAll();
         traben.flowing_fluids.ChunkLocalSlopeCache.clearAll();

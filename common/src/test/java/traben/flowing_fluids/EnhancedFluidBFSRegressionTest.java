@@ -1,9 +1,11 @@
 package traben.flowing_fluids;
 
 import org.junit.jupiter.api.Test;
+import traben.flowing_fluids.config.FFConfig;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class EnhancedFluidBFSRegressionTest {
 
@@ -24,6 +26,11 @@ class EnhancedFluidBFSRegressionTest {
         EnhancedFluidBFS.rebalanceClusterAmounts(amounts, amounts.length, 18, 4, 2);
 
         assertEquals(18, sum(amounts));
+    }
+
+    @Test
+    void analyticPoolDormancyDefaultsOff() {
+        assertFalse(new FFConfig().enableAnalyticPoolDormancy);
     }
 
     private static int sum(int[] values) {

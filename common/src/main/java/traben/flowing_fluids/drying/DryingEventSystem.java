@@ -16,6 +16,7 @@ import net.minecraft.world.level.block.CampfireBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
@@ -26,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class DryingEventSystem {
     private static final long DAY_TICKS = 24000L;
+    private static final float SEA_LEVEL_EDGE_OVERFLOW_MULTIPLIER = 0.15f;
     private static final ConcurrentHashMap<ResourceKey<Level>, DryingState> ACTIVE_STATES = new ConcurrentHashMap<>();
 
     private DryingEventSystem() {
@@ -118,6 +120,30 @@ public final class DryingEventSystem {
     public static float getNetherEvaporationChance(Level level) {
         float baseChance = FlowingFluids.config.evaporationNetherChance
                 * FlowingFluids.config.evaporationNetherChanceMultiplier;
+        return Mth.clamp(baseChance, 0.0f, 1.0f);
+    }
+
+    public static float getSeaLevelOverflowEvaporationChance(Level level, BlockPos pos) {
+        if (level == null || pos == null || !FlowingFluids.config.enableSeaLevelOverflowEvaporation) {
+            return 0.0f;
+        }
+        int minExcess = Math.max(1, FlowingFluids.config.seaLevelOverflowEvaporationMinExcess);
+        int excess = pos.getY() - FFFluidUtils.seaLevel(level);
+        int maxExcess = Math.max(minExcess, FlowingFluids.config.seaLevelOverflowEvaporationMaxExcess);
+        if (excess < minExcess || excess > maxExcess) {
+            return 0.0f;
+        }
+        if (FlowingFluids.config.seaLevelOverflowEvaporationInstant) {
+            return 1.0f;
+        }
+        float heightMultiplier = excess <= 1
+                ? SEA_LEVEL_EDGE_OVERFLOW_MULTIPLIER
+                : 1.0f + Math.max(0, excess - Math.max(2, minExcess))
+                * Math.max(0.0f, FlowingFluids.config.seaLevelOverflowEvaporationHeightScale);
+        float baseChance = FlowingFluids.config.seaLevelOverflowEvaporationChance
+                * FlowingFluids.config.evaporationChanceMultiplier
+                * getAmbientEvaporationMultiplier(level)
+                * heightMultiplier;
         return Mth.clamp(baseChance, 0.0f, 1.0f);
     }
 
@@ -283,6 +309,12 @@ public final class DryingEventSystem {
                 + " / multiplier=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.evaporationNetherChanceMultiplier)
                 + " / interval=" + FlowingFluids.config.evaporationNetherIntervalTicks + " ticks"
                 + " / effective=" + String.format(Locale.ROOT, "%.2f", getNetherEvaporationChance(level))
+                + "\nSea-level overflow evaporation: " + FlowingFluids.config.enableSeaLevelOverflowEvaporation
+                + " / instant=" + FlowingFluids.config.seaLevelOverflowEvaporationInstant
+                + " / chance=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.seaLevelOverflowEvaporationChance)
+                + " / min_excess=" + FlowingFluids.config.seaLevelOverflowEvaporationMinExcess
+                + " / max_excess=" + FlowingFluids.config.seaLevelOverflowEvaporationMaxExcess
+                + " / height_scale=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.seaLevelOverflowEvaporationHeightScale)
                 + "\nHot block drying: " + FlowingFluids.config.enableHotBlockEvaporation
                 + " / chance=" + FlowingFluids.config.hotBlockEvaporationChance
                 + " / multiplier=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.hotBlockEvaporationChanceMultiplier)
@@ -389,6 +421,44 @@ public final class DryingEventSystem {
         boolean emptyAbove = level.getFluidState(pos.above()).isEmpty();
         boolean edgeLike = lateralWaterNeighbors <= 1 || !supportedBelow;
         return edgeLike && (nearSurface || thinWater || emptyAbove);
+    }
+
+    public static boolean shouldEvaporateSeaLevelOverflow(Level level, BlockPos pos, FlowingFluid fluid, int amount) {
+        if (level == null || pos == null || fluid == null || amount <= 0 || !FlowingFluids.config.enableSeaLevelOverflowEvaporation) {
+            return false;
+        }
+        if (!FFFluidUtils.isInOrNearInfiniteBiome(level, pos,
+                FlowingFluids.config.seaLevelOverflowInfiniteBiomeBufferRadius)) {
+            return false;
+        }
+        int minExcess = Math.max(1, FlowingFluids.config.seaLevelOverflowEvaporationMinExcess);
+        int maxExcess = Math.max(minExcess, FlowingFluids.config.seaLevelOverflowEvaporationMaxExcess);
+        int excess = pos.getY() - FFFluidUtils.seaLevel(level);
+        if (excess < minExcess || excess > maxExcess) {
+            return false;
+        }
+        boolean instant = FlowingFluids.config.seaLevelOverflowEvaporationInstant;
+        if (!instant && FlowingFluids.config.evaporationDaytimeOnly && !level.isDay()) {
+            return false;
+        }
+        if ((instant || FlowingFluids.config.evaporationRequiresSky) && !hasEvaporationSkyAccess(level, pos)) {
+            return false;
+        }
+        if (instant && !FFFluidUtils.hasInfiniteBiomeAmbientAccess(level, pos, fluid, amount)) {
+            return false;
+        }
+        if (isShadeProtected(level, pos) || level.isRainingAt(pos.above())) {
+            return false;
+        }
+
+        FluidState above = FFFluidUtils.getEffectiveFluidState(level, pos.above(), level.getBlockState(pos.above()));
+        if (above.getType().isSame(fluid) && above.getAmount() > 0) {
+            return false;
+        }
+
+        // If the extra water can immediately fall, let normal flow resolve it instead
+        // of deleting a moving front.
+        return instant || !FFFluidUtils.canFluidFlowFromPosToDirection(fluid, amount, level, pos, Direction.DOWN);
     }
 
     private static boolean allowsEvaporationSkyPass(Level level, BlockPos pos, BlockState state) {

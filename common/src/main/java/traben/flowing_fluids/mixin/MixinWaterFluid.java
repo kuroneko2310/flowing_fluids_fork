@@ -89,6 +89,12 @@ public abstract class MixinWaterFluid extends FlowingFluid {
                 FlowingFluids.info("--- Water was flash-evaporated via ultra warm dimension at " + blockPos + ". Chance: " + FlowingFluids.config.evaporationNetherChance);
             return;
         }
+        if (ff$trySeaLevelOverflowEvaporate(level, blockPos, amount, randomSource.nextFloat())) {
+            if (FlowingFluids.config.printRandomTicks)
+                FlowingFluids.info("--- Sea-level overflow water evaporated at " + blockPos + ". Chance: "
+                        + DryingEventSystem.getSeaLevelOverflowEvaporationChance(level, blockPos));
+            return;
+        }
         if (amount < 8) {
             if (ff$tryBiomeFillOrDrain(level, blockPos, amount, level.random.nextFloat(),
                     isWithinInfBiomeHeights, isInfBiome, hasInfiniteBiomeAmbientAccess)) {
@@ -293,6 +299,25 @@ public abstract class MixinWaterFluid extends FlowingFluid {
         if (chance >= heatChance) return false;
         int drainAmount = Mth.clamp(FlowingFluids.config.hotBlockEvaporationDrainAmount, 1, amount);
         return ff$applyLocalDrainAndMaybeRestoreMud(level, blockPos, drainAmount, true);
+    }
+
+    @Unique
+    private boolean ff$trySeaLevelOverflowEvaporate(final Level level, final BlockPos blockPos, int amount, float chance) {
+        if (!DryingEventSystem.shouldEvaporateSeaLevelOverflow(level, blockPos, this, amount)) {
+            return false;
+        }
+        if (FlowingFluids.config.seaLevelOverflowEvaporationInstant) {
+            return ff$applyLocalDrainAndMaybeRestoreMud(level, blockPos, amount, false);
+        }
+        float overflowChance = DryingEventSystem.getSeaLevelOverflowEvaporationChance(level, blockPos);
+        if (chance >= overflowChance) {
+            return false;
+        }
+        BlockState sourceState = level.getBlockState(blockPos);
+        if (FFFluidUtils.canFluidFlowToNeighbourFromPos(level, blockPos, sourceState, this, amount)) {
+            return false;
+        }
+        return ff$applyLocalDrainAndMaybeRestoreMud(level, blockPos, amount, false);
     }
 
 @Unique

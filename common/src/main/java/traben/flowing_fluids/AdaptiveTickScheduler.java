@@ -47,6 +47,8 @@ public class AdaptiveTickScheduler {
     private static final int SURGE_AMOUNT_THRESHOLD = FluidAmountConverter.scaleLegacyInternal(12); // Internal units considered a rapid increase
     private static final int MIN_FORCED_RECHECK_STABLE_TICKS = 40; // Safety lower bound
     private static final int MAX_FRONTIER_WAKE_TICKS = 2; // Keep frontier wakeups local even if source activation is longer
+    private static final int POOL_LEVEL_MEMORY_MIN_STABLE_TICKS = 4;
+    private static final int POOL_LEVEL_MEMORY_MAX_AGE_TICKS = 600;
     private static final int CALM_MACRO_MIN_FLUID_CELLS = 32;
     private static final float CALM_MACRO_MAX_FRONTIER_RATIO = 0.08f;
     private static final int CALM_MACRO_MIN_AVERAGE_LEVEL = FluidAmountConverter.toInternal(7);
@@ -220,7 +222,7 @@ public class AdaptiveTickScheduler {
         float avgNeighborHeight = neighborCount > 0 ? totalNeighborHeight / neighborCount : fluidAmount;
 
         // Component 1: Height difference from neighbors
-        float heightDiff = Math.abs(fluidAmount - avgNeighborHeight) / 255.0f;
+        float heightDiff = FluidAmountConverter.normalizeInternalDifference(Math.abs(fluidAmount - avgNeighborHeight));
 
         // Component 2: Local gradient change (from SlopeCache)
         float gradientChange = 0.0f;
@@ -237,7 +239,7 @@ public class AdaptiveTickScheduler {
                 data.surgeRelaxTicks = Math.max(data.surgeRelaxTicks, SURGE_RELAX_TICKS);
                 data.surgeRelaxTicks--;
             } else {
-                flowChangeRate = amountChange / 255.0f;
+                flowChangeRate = FluidAmountConverter.normalizeInternalDifference(amountChange);
             }
         }
 
@@ -794,8 +796,13 @@ public class AdaptiveTickScheduler {
         ChunkPos chunkPos = new ChunkPos(pos);
         boolean chunkAlreadyTouchedThisTick = wasChunkTouchedThisTick(level, dimensionData, chunkPos);
         long posKey = pos.asLong();
-        if (dimensionData.stabilityMap.remove(posKey) != null) {
+        FluidStabilityData removedData = dimensionData.stabilityMap.remove(posKey);
+        if (removedData != null) {
             untrackPosition(dimensionData, posKey);
+            if (removedData.hasRememberedPoolLevel()) {
+                FluidStabilityData replacement = createAndTrackData(dimensionData, pos, 0);
+                replacement.copyPoolLevelMemoryFrom(removedData);
+            }
         }
         int activationTicks = FlowingFluids.config.flowActivationTicks;
         long frontierActivationUntil = 0L;
@@ -861,8 +868,13 @@ public class AdaptiveTickScheduler {
             long posKey = pos.asLong();
             if (!uniquePositions.add(posKey)) continue;
 
-            if (dimensionData.stabilityMap.remove(posKey) != null) {
+            FluidStabilityData removedData = dimensionData.stabilityMap.remove(posKey);
+            if (removedData != null) {
                 untrackPosition(dimensionData, posKey);
+                if (removedData.hasRememberedPoolLevel()) {
+                    FluidStabilityData replacement = createAndTrackData(dimensionData, pos, 0);
+                    replacement.copyPoolLevelMemoryFrom(removedData);
+                }
             }
             if (activationTicks > 0) {
                 markFlowActive(level, pos, activationTicks);
@@ -975,6 +987,10 @@ public class AdaptiveTickScheduler {
     }
 
     public static void markPoolStable(LevelAccessor level, BlockPos pos, boolean stable) {
+        markPoolStable(level, pos, stable, -1);
+    }
+
+    public static void markPoolStable(LevelAccessor level, BlockPos pos, boolean stable, int amount) {
         if (level == null || pos == null) {
             return;
         }
@@ -1001,6 +1017,12 @@ public class AdaptiveTickScheduler {
         } else {
             data.poolStableTicks++;
         }
+        if (amount > 0 && data.poolStableTicks >= POOL_LEVEL_MEMORY_MIN_STABLE_TICKS) {
+            data.rememberedPoolAmount = amount;
+            if (level instanceof Level lvl) {
+                data.lastRememberedPoolTick = lvl.getGameTime();
+            }
+        }
     }
 
     public static int getPoolStableTicks(LevelAccessor level, BlockPos pos, int maxAgeTicks) {
@@ -1018,6 +1040,39 @@ public class AdaptiveTickScheduler {
             }
         }
         return data.poolStableTicks;
+    }
+
+    public static int getRememberedPoolLevel(LevelAccessor level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return -1;
+        }
+        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        if (data == null || !data.hasRememberedPoolLevel()) {
+            return -1;
+        }
+        if (level instanceof Level lvl) {
+            long age = lvl.getGameTime() - data.lastRememberedPoolTick;
+            if (age > POOL_LEVEL_MEMORY_MAX_AGE_TICKS) {
+                return -1;
+            }
+        }
+        return data.rememberedPoolAmount;
+    }
+
+    public static float getPoolLevelRestoringBias(LevelAccessor level, BlockPos pos, int currentAmount) {
+        int rememberedAmount = getRememberedPoolLevel(level, pos);
+        if (rememberedAmount <= currentAmount) {
+            return 0.0f;
+        }
+        return Mth.clamp((rememberedAmount - currentAmount) * 0.18f, 0.0f, 0.54f);
+    }
+
+    public static float getPoolLevelDrainResistance(LevelAccessor level, BlockPos pos, int currentAmount) {
+        int rememberedAmount = getRememberedPoolLevel(level, pos);
+        if (rememberedAmount <= currentAmount) {
+            return 0.0f;
+        }
+        return Mth.clamp((rememberedAmount - currentAmount) * 0.12f, 0.0f, 0.36f);
     }
 
     public static void markFlowActive(LevelAccessor level, BlockPos pos, int ticks) {
@@ -1254,6 +1309,8 @@ public class AdaptiveTickScheduler {
         long lastFlowTick;
         int poolStableTicks;
         long lastPoolStableTick;
+        int rememberedPoolAmount;
+        long lastRememberedPoolTick;
         long forceTickUntil;
 
         FluidStabilityData(int lastAmount, int stabilityCounter, int currentDelay) {
@@ -1274,7 +1331,18 @@ public class AdaptiveTickScheduler {
             this.lastFlowTick = 0;
             this.poolStableTicks = 0;
             this.lastPoolStableTick = 0;
+            this.rememberedPoolAmount = -1;
+            this.lastRememberedPoolTick = 0;
             this.forceTickUntil = 0;
+        }
+
+        boolean hasRememberedPoolLevel() {
+            return rememberedPoolAmount > 0;
+        }
+
+        void copyPoolLevelMemoryFrom(FluidStabilityData other) {
+            this.rememberedPoolAmount = other.rememberedPoolAmount;
+            this.lastRememberedPoolTick = other.lastRememberedPoolTick;
         }
     }
 

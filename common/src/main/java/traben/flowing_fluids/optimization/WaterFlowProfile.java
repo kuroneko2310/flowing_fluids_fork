@@ -405,7 +405,7 @@ public final class WaterFlowProfile {
     }
 
     public boolean shouldQueueEqualizer(int delta, boolean beforeEmpty, boolean afterEmpty) {
-        if (beforeEmpty || afterEmpty || immediateDownwardOutlet) {
+        if (beforeEmpty || afterEmpty) {
             return true;
         }
         if (immediateSurfaceEdge && !isInletZone()) {
@@ -416,12 +416,16 @@ public final class WaterFlowProfile {
             case LOCAL -> delta >= 2;
             case CHANNEL -> isInletZone()
                 ? delta >= 3 || flowActive || flowMomentum > 0.35f
-                : true;
+                : !immediateDownwardOutlet || delta >= 2 || shouldQueueImmediateDownwardOutlet(flowActive, flowMomentum);
             case SUBTERRANEAN_POOL -> delta >= 4 || flowActive;
             case LARGE_BODY -> delta >= 2 || flowActive;
             case IMPOUNDED -> delta >= 2 || flowMomentum > 0.12f;
             case BREACH -> true;
         };
+    }
+
+    static boolean shouldQueueImmediateDownwardOutlet(boolean flowActive, float flowMomentum) {
+        return flowActive || flowMomentum > 0.2f;
     }
 
     public int clampEqualizerDepth(int maxDepth, int configuredMaxDepth) {

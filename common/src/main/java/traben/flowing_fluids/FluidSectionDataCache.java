@@ -30,6 +30,10 @@ public final class FluidSectionDataCache {
         return amount(pos.getX(), pos.getY(), pos.getZ());
     }
 
+    public int internalAmount(BlockPos pos) {
+        return internalAmount(pos.getX(), pos.getY(), pos.getZ());
+    }
+
     public int amount(int x, int y, int z) {
         SectionData section = getSection(x, y, z);
         if (!section.loaded()) {

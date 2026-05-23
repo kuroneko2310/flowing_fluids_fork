@@ -46,6 +46,13 @@ public class FFConfig {
     public float evaporationNetherChance = 1f;
     public float evaporationNetherChanceMultiplier = 1f;
     public int evaporationNetherIntervalTicks = 1;
+    public boolean enableSeaLevelOverflowEvaporation = true;
+    public boolean seaLevelOverflowEvaporationInstant = true;
+    public float seaLevelOverflowEvaporationChance = 0.5f;
+    public float seaLevelOverflowEvaporationHeightScale = 0.25f;
+    public int seaLevelOverflowEvaporationMinExcess = 1;
+    public int seaLevelOverflowEvaporationMaxExcess = 32;
+    public int seaLevelOverflowInfiniteBiomeBufferRadius = 10;
     public boolean enableHeatwaveEvents = true;
     public float heatwaveStartChancePerDay = 0.08f;
     public int heatwaveMinDurationTicks = 12000;
@@ -326,6 +333,7 @@ public class FFConfig {
     public float lavaSpringEmissionMultiplier = 1.0f;
     public float waterSpringPulseIntervalMultiplier = 1.0f;
     public float lavaSpringPulseIntervalMultiplier = 1.0f;
+    public boolean enableAnalyticPoolDormancy = false;
 
 
     // create mod options
@@ -444,6 +452,13 @@ public class FFConfig {
         evaporationNetherChance = buffer.readFloat();
         evaporationNetherChanceMultiplier = buffer.readFloat();
         evaporationNetherIntervalTicks = buffer.readVarInt();
+        enableSeaLevelOverflowEvaporation = buffer.readBoolean();
+        seaLevelOverflowEvaporationInstant = buffer.readBoolean();
+        seaLevelOverflowEvaporationChance = buffer.readFloat();
+        seaLevelOverflowEvaporationHeightScale = buffer.readFloat();
+        seaLevelOverflowEvaporationMinExcess = buffer.readVarInt();
+        seaLevelOverflowEvaporationMaxExcess = buffer.readVarInt();
+        seaLevelOverflowInfiniteBiomeBufferRadius = buffer.readVarInt();
         enableHeatwaveEvents = buffer.readBoolean();
         heatwaveStartChancePerDay = buffer.readFloat();
         heatwaveMinDurationTicks = buffer.readVarInt();
@@ -687,6 +702,7 @@ public class FFConfig {
         lavaSpringEmissionMultiplier = buffer.readFloat();
         waterSpringPulseIntervalMultiplier = buffer.readFloat();
         lavaSpringPulseIntervalMultiplier = buffer.readFloat();
+        enableAnalyticPoolDormancy = buffer.readBoolean();
         ///////////////////////////////////////////////
     }
 
@@ -711,6 +727,13 @@ public class FFConfig {
         buffer.writeFloat(evaporationNetherChance);
         buffer.writeFloat(evaporationNetherChanceMultiplier);
         buffer.writeVarInt(evaporationNetherIntervalTicks);
+        buffer.writeBoolean(enableSeaLevelOverflowEvaporation);
+        buffer.writeBoolean(seaLevelOverflowEvaporationInstant);
+        buffer.writeFloat(seaLevelOverflowEvaporationChance);
+        buffer.writeFloat(seaLevelOverflowEvaporationHeightScale);
+        buffer.writeVarInt(seaLevelOverflowEvaporationMinExcess);
+        buffer.writeVarInt(seaLevelOverflowEvaporationMaxExcess);
+        buffer.writeVarInt(seaLevelOverflowInfiniteBiomeBufferRadius);
         buffer.writeBoolean(enableHeatwaveEvents);
         buffer.writeFloat(heatwaveStartChancePerDay);
         buffer.writeVarInt(heatwaveMinDurationTicks);
@@ -953,6 +976,7 @@ public class FFConfig {
         buffer.writeFloat(lavaSpringEmissionMultiplier);
         buffer.writeFloat(waterSpringPulseIntervalMultiplier);
         buffer.writeFloat(lavaSpringPulseIntervalMultiplier);
+        buffer.writeBoolean(enableAnalyticPoolDormancy);
         ///////////////////////////////////////////////
     }
 
@@ -1121,6 +1145,11 @@ public class FFConfig {
         int oldEvaporationThinWaterMaxLevel = evaporationThinWaterMaxLevel;
         float oldEvaporationNetherChanceMultiplier = evaporationNetherChanceMultiplier;
         int oldEvaporationNetherIntervalTicks = evaporationNetherIntervalTicks;
+        float oldSeaLevelOverflowEvaporationChance = seaLevelOverflowEvaporationChance;
+        float oldSeaLevelOverflowEvaporationHeightScale = seaLevelOverflowEvaporationHeightScale;
+        int oldSeaLevelOverflowEvaporationMinExcess = seaLevelOverflowEvaporationMinExcess;
+        int oldSeaLevelOverflowEvaporationMaxExcess = seaLevelOverflowEvaporationMaxExcess;
+        int oldSeaLevelOverflowInfiniteBiomeBufferRadius = seaLevelOverflowInfiniteBiomeBufferRadius;
         float oldHotBlockEvaporationChance = hotBlockEvaporationChance;
         float oldHotBlockEvaporationChanceMultiplier = hotBlockEvaporationChanceMultiplier;
         int oldHotBlockEvaporationIntervalTicks = hotBlockEvaporationIntervalTicks;
@@ -1225,6 +1254,11 @@ public class FFConfig {
         evaporationThinWaterMaxLevel = Math.max(1, Math.min(8, evaporationThinWaterMaxLevel));
         evaporationNetherChanceMultiplier = Math.max(0.0f, Math.min(8.0f, evaporationNetherChanceMultiplier));
         evaporationNetherIntervalTicks = Math.max(1, Math.min(1200, evaporationNetherIntervalTicks));
+        seaLevelOverflowEvaporationChance = Math.max(0.0f, Math.min(1.0f, seaLevelOverflowEvaporationChance));
+        seaLevelOverflowEvaporationHeightScale = Math.max(0.0f, Math.min(4.0f, seaLevelOverflowEvaporationHeightScale));
+        seaLevelOverflowEvaporationMinExcess = Math.max(1, Math.min(16, seaLevelOverflowEvaporationMinExcess));
+        seaLevelOverflowEvaporationMaxExcess = Math.max(seaLevelOverflowEvaporationMinExcess, Math.min(64, seaLevelOverflowEvaporationMaxExcess));
+        seaLevelOverflowInfiniteBiomeBufferRadius = Math.max(0, Math.min(64, seaLevelOverflowInfiniteBiomeBufferRadius));
         hotBlockEvaporationChance = Math.max(0.0f, Math.min(1.0f, hotBlockEvaporationChance));
         hotBlockEvaporationChanceMultiplier = Math.max(0.0f, Math.min(8.0f, hotBlockEvaporationChanceMultiplier));
         hotBlockEvaporationIntervalTicks = Math.max(1, Math.min(1200, hotBlockEvaporationIntervalTicks));
@@ -1326,6 +1360,11 @@ public class FFConfig {
         appendCorrection(corrections, "evaporationThinWaterMaxLevel", oldEvaporationThinWaterMaxLevel, evaporationThinWaterMaxLevel);
         appendCorrection(corrections, "evaporationNetherChanceMultiplier", oldEvaporationNetherChanceMultiplier, evaporationNetherChanceMultiplier);
         appendCorrection(corrections, "evaporationNetherIntervalTicks", oldEvaporationNetherIntervalTicks, evaporationNetherIntervalTicks);
+        appendCorrection(corrections, "seaLevelOverflowEvaporationChance", oldSeaLevelOverflowEvaporationChance, seaLevelOverflowEvaporationChance);
+        appendCorrection(corrections, "seaLevelOverflowEvaporationHeightScale", oldSeaLevelOverflowEvaporationHeightScale, seaLevelOverflowEvaporationHeightScale);
+        appendCorrection(corrections, "seaLevelOverflowEvaporationMinExcess", oldSeaLevelOverflowEvaporationMinExcess, seaLevelOverflowEvaporationMinExcess);
+        appendCorrection(corrections, "seaLevelOverflowEvaporationMaxExcess", oldSeaLevelOverflowEvaporationMaxExcess, seaLevelOverflowEvaporationMaxExcess);
+        appendCorrection(corrections, "seaLevelOverflowInfiniteBiomeBufferRadius", oldSeaLevelOverflowInfiniteBiomeBufferRadius, seaLevelOverflowInfiniteBiomeBufferRadius);
         appendCorrection(corrections, "hotBlockEvaporationChance", oldHotBlockEvaporationChance, hotBlockEvaporationChance);
         appendCorrection(corrections, "hotBlockEvaporationChanceMultiplier", oldHotBlockEvaporationChanceMultiplier, hotBlockEvaporationChanceMultiplier);
         appendCorrection(corrections, "hotBlockEvaporationIntervalTicks", oldHotBlockEvaporationIntervalTicks, hotBlockEvaporationIntervalTicks);

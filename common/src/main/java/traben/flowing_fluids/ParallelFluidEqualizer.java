@@ -40,6 +40,7 @@ public final class ParallelFluidEqualizer {
     private static volatile ForkJoinPool pool = createPool();
 
     private static final ConcurrentHashMap<DimensionKey, Set<Long>> QUEUED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<Long, Long>> DEFER_COOLDOWNS = new ConcurrentHashMap<>();
     private static final Set<Long> ACTIVE = ConcurrentHashMap.newKeySet();
 
     private static final byte LOADED = 1;
@@ -61,6 +62,7 @@ public final class ParallelFluidEqualizer {
     private static final int MAX_BUCKET_REPRESENTATIVES = 3;
     private static final int SYNC_REQUEST_THRESHOLD = 2;
     private static final int CALM_SURFACE_MAX_NODES = 384;
+    private static final int DEFER_COOLDOWN_TICKS = 4;
 
     private static final ThreadLocal<Map<Vec3i, Direction[]>> DIRECTION_CACHE = ThreadLocal.withInitial(() ->
         new LinkedHashMap<Vec3i, Direction[]>(128, 0.75f, true) {
@@ -78,7 +80,12 @@ public final class ParallelFluidEqualizer {
         if (level == null || pos == null || !FlowingFluids.config.enableMod || FlowingFluids.config.bfsMaxSearchDistance <= 0) {
             return;
         }
-        QUEUED.computeIfAbsent(DimensionKey.of(level), ignored -> ConcurrentHashMap.newKeySet()).add(pos.asLong());
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        long posKey = pos.asLong();
+        if (isDeferredByCooldown(level, dimensionKey, pos, posKey)) {
+            return;
+        }
+        QUEUED.computeIfAbsent(dimensionKey, ignored -> ConcurrentHashMap.newKeySet()).add(posKey);
     }
 
     public static boolean hasQueued(LevelAccessor level) {
@@ -164,12 +171,15 @@ public final class ParallelFluidEqualizer {
 
     public static void clearDimension(LevelAccessor level) {
         if (level != null) {
-            QUEUED.remove(DimensionKey.of(level));
+            DimensionKey dimensionKey = DimensionKey.of(level);
+            QUEUED.remove(dimensionKey);
+            DEFER_COOLDOWNS.remove(dimensionKey);
         }
     }
 
     public static void clearAll() {
         QUEUED.clear();
+        DEFER_COOLDOWNS.clear();
         ACTIVE.clear();
     }
 
@@ -315,10 +325,38 @@ public final class ParallelFluidEqualizer {
         if (level == null || deferred == null || deferred.isEmpty()) {
             return;
         }
-        Set<Long> queue = QUEUED.computeIfAbsent(DimensionKey.of(level), ignored -> ConcurrentHashMap.newKeySet());
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        ConcurrentHashMap<Long, Long> cooldowns =
+            DEFER_COOLDOWNS.computeIfAbsent(dimensionKey, ignored -> new ConcurrentHashMap<>());
+        long currentTick = level instanceof Level lvl ? lvl.getGameTime() : 0L;
         for (long posKey : deferred) {
-            queue.add(posKey);
+            cooldowns.put(posKey, currentTick);
         }
+    }
+
+    private static boolean isDeferredByCooldown(LevelAccessor level, DimensionKey dimensionKey, BlockPos pos, long posKey) {
+        ConcurrentHashMap<Long, Long> cooldowns = DEFER_COOLDOWNS.get(dimensionKey);
+        if (cooldowns == null) {
+            return false;
+        }
+        Long lastDeferTick = cooldowns.get(posKey);
+        if (lastDeferTick == null) {
+            return false;
+        }
+        int momentumAge = FlowingFluids.config != null
+            ? Math.max(8, FlowingFluids.config.flowInertiaMaxAgeTicks / 2)
+            : 20;
+        boolean flowActive = AdaptiveTickScheduler.isFlowActiveNow(level, pos);
+        float momentum = AdaptiveTickScheduler.getFlowMomentum(level, pos, momentumAge);
+        long currentTick = level instanceof Level lvl ? lvl.getGameTime() : lastDeferTick + DEFER_COOLDOWN_TICKS;
+        boolean shouldRequeue = shouldRequeueDeferredNow(lastDeferTick, currentTick, flowActive, momentum);
+        if (shouldRequeue) {
+            cooldowns.remove(posKey);
+            if (cooldowns.isEmpty()) {
+                DEFER_COOLDOWNS.remove(dimensionKey, cooldowns);
+            }
+        }
+        return !shouldRequeue;
     }
 
     private static ScanCandidate scanCandidate(Level level, long posKey) {
@@ -448,6 +486,9 @@ public final class ParallelFluidEqualizer {
         if (!shouldRunBfs && !forcedRecheck) {
             return null;
         }
+        if (!forcedRecheck && shouldDelayFreshActiveSurgeBeforeAnalyze(level, startPos, candidate.amount())) {
+            return null;
+        }
         int maxDepth = EnhancedFluidBFS.getDynamicDepth(level, startPos);
         int maxNodes = AdaptiveTickScheduler.getBFSBudget(level, startPos);
         if (forcedRecheck && !shouldRunBfs) {
@@ -512,6 +553,28 @@ public final class ParallelFluidEqualizer {
             flowProfile != null && flowProfile.isBroadSurface(),
             flowProfile != null && flowProfile.isInletZone()
         );
+    }
+
+    private static boolean shouldDelayFreshActiveSurgeBeforeAnalyze(Level level, BlockPos pos, int amount) {
+        if (level == null || pos == null || !AdaptiveTickScheduler.wasChunkTouchedRecently(level, pos, 0)) {
+            return false;
+        }
+        int momentumAge = FlowingFluids.config != null
+            ? Math.max(8, FlowingFluids.config.flowInertiaMaxAgeTicks / 2)
+            : 20;
+        boolean flowActive = AdaptiveTickScheduler.isFlowActiveNow(level, pos);
+        float flowMomentum = AdaptiveTickScheduler.getFlowMomentum(level, pos, momentumAge);
+        if (!flowActive && flowMomentum <= 0.2f) {
+            return false;
+        }
+        return shouldSkipQueuedSurgeCandidate(false, true, flowActive, flowMomentum, amount);
+    }
+
+    static boolean shouldRequeueDeferredNow(long lastDeferTick, long currentTick, boolean flowActive, float flowMomentum) {
+        if (!flowActive && flowMomentum <= 0.2f) {
+            return true;
+        }
+        return currentTick - lastDeferTick >= DEFER_COOLDOWN_TICKS;
     }
 
     static boolean shouldSkipQueuedSurgeCandidate(boolean forcedRecheck,

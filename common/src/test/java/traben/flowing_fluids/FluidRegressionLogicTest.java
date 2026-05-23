@@ -5,6 +5,7 @@ import net.minecraft.world.level.ChunkPos;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -89,6 +90,204 @@ class FluidRegressionLogicTest {
         assertFalse(FluidRegressionLogic.shouldTrackWaterPoolStableTicks(0));
         assertTrue(FluidRegressionLogic.shouldTrackWaterPoolStableTicks(1));
         assertTrue(FluidRegressionLogic.shouldTrackWaterPoolStableTicks(8));
+    }
+
+    @Test
+    void connectedWaterLevelingCanBeDeferredToEqualizerForCalmSameFluidCells() {
+        assertTrue(FluidRegressionLogic.shouldDeferConnectedWaterLevelingToEqualizer(
+            true, false, false, false, false, false,
+            0.0f, 7, 5, 2, 0, 0.0f
+        ));
+        assertTrue(FluidRegressionLogic.shouldDeferConnectedWaterLevelingToEqualizer(
+            true, false, false, false, false, false,
+            0.0f, 8, 5, 3, 0, 0.0f
+        ));
+    }
+
+    @Test
+    void connectedWaterLevelingKeepsSequentialFlowForFrontsAndPressure() {
+        assertFalse(FluidRegressionLogic.shouldDeferConnectedWaterLevelingToEqualizer(
+            false, false, false, false, false, false,
+            0.0f, 7, 0, 7, 0, 0.0f
+        ));
+        assertFalse(FluidRegressionLogic.shouldDeferConnectedWaterLevelingToEqualizer(
+            true, true, false, false, false, false,
+            0.0f, 7, 5, 2, 0, 0.0f
+        ));
+        assertFalse(FluidRegressionLogic.shouldDeferConnectedWaterLevelingToEqualizer(
+            true, false, false, false, false, false,
+            0.0f, 8, 4, 4, 0, 0.0f
+        ));
+    }
+
+    @Test
+    void waterEqualizerFillOrderPrefersLowerPotentialBeforeAmount() {
+        assertTrue(FluidRegressionLogic.compareEqualizerFillOrder(
+            7, 63, 0, 0, 1L,
+            1, 64, 0, 0, 2L,
+            true
+        ) < 0);
+    }
+
+    @Test
+    void equalizerFillOrderKeepsLegacyAmountFirstWhenPotentialIsDisabled() {
+        assertTrue(FluidRegressionLogic.compareEqualizerFillOrder(
+            7, 63, 0, 0, 1L,
+            1, 64, 0, 0, 2L,
+            false
+        ) > 0);
+    }
+
+    @Test
+    void waterEqualizerFillOrderStillSmoothsSameHeightByAmount() {
+        assertTrue(FluidRegressionLogic.compareEqualizerFillOrder(
+            2, 64, 0, 0, 1L,
+            6, 64, 0, 0, 2L,
+            true
+        ) < 0);
+    }
+
+    @Test
+    void waterSurfacePotentialFillsLowerCellBeforeUpperShelf() {
+        int max = FluidAmountConverter.getMaxInternal();
+        int[] levels = {0, 0};
+        int[] yLevels = {63, 64};
+
+        int remaining = EnhancedFluidBFS.distributeWaterBySurfacePotential(
+            levels, yLevels, List.of(0, 1), max + 16, max
+        );
+
+        assertEquals(0, remaining);
+        assertEquals(max, levels[0]);
+        assertEquals(16, levels[1]);
+    }
+
+    @Test
+    void waterSurfacePotentialEqualizesSameHeightCellsAndKeepsMass() {
+        int max = FluidAmountConverter.getMaxInternal();
+        int[] levels = {0, 0, 0};
+        int[] yLevels = {64, 64, 64};
+
+        int remaining = EnhancedFluidBFS.distributeWaterBySurfacePotential(
+            levels, yLevels, List.of(0, 1, 2), 10, max
+        );
+
+        assertEquals(0, remaining);
+        assertEquals(4, levels[0]);
+        assertEquals(3, levels[1]);
+        assertEquals(3, levels[2]);
+        assertEquals(10, levels[0] + levels[1] + levels[2]);
+    }
+
+    @Test
+    void waterSurfacePotentialUsesDryOverflowTargetsWithoutLosingMass() {
+        int max = FluidAmountConverter.getMaxInternal();
+        int[] levels = {0, 0, 0};
+        int[] yLevels = {63, 63, 64};
+
+        int remaining = EnhancedFluidBFS.distributeWaterBySurfacePotential(
+            levels, yLevels, List.of(0, 1, 2), max * 2 + 9, max
+        );
+
+        assertEquals(0, remaining);
+        assertEquals(max, levels[0]);
+        assertEquals(max, levels[1]);
+        assertEquals(9, levels[2]);
+        assertEquals(max * 2 + 9, levels[0] + levels[1] + levels[2]);
+    }
+
+    @Test
+    void waterComponentPotentialPullsIntoLowerDryCavity() {
+        int max = FluidAmountConverter.getMaxInternal();
+        int[] levels = {0, 0};
+        int[] yLevels = {64, 63};
+
+        int remaining = EnhancedFluidBFS.distributeWaterComponentBySurfacePotential(
+            levels, yLevels, List.of(0), List.of(1), 16, max
+        );
+
+        assertEquals(0, remaining);
+        assertEquals(0, levels[0]);
+        assertEquals(16, levels[1]);
+    }
+
+    @Test
+    void waterComponentPotentialDoesNotCreateSameHeightDryFront() {
+        int max = FluidAmountConverter.getMaxInternal();
+        int[] levels = {0, 0};
+        int[] yLevels = {64, 64};
+
+        int remaining = EnhancedFluidBFS.distributeWaterComponentBySurfacePotential(
+            levels, yLevels, List.of(0), List.of(1), 16, max
+        );
+
+        assertEquals(0, remaining);
+        assertEquals(16, levels[0]);
+        assertEquals(0, levels[1]);
+    }
+
+    @Test
+    void waterComponentPotentialKeepsMassAcrossWetAndLowerDryTargets() {
+        int max = FluidAmountConverter.getMaxInternal();
+        int[] levels = {0, 0, 0};
+        int[] yLevels = {64, 64, 63};
+
+        int remaining = EnhancedFluidBFS.distributeWaterComponentBySurfacePotential(
+            levels, yLevels, List.of(0, 1), List.of(2), 70, max
+        );
+
+        assertEquals(0, remaining);
+        assertEquals(max, levels[2]);
+        assertEquals(4, levels[0]);
+        assertEquals(3, levels[1]);
+        assertEquals(70, levels[0] + levels[1] + levels[2]);
+    }
+
+    @Test
+    void equalizerKeepsFullInternalWaterColumnMass() {
+        int max = FluidAmountConverter.getMaxInternal();
+        int[] amounts = {max, max};
+        int[] yLevels = {63, 64};
+
+        int[] equalized = EnhancedFluidBFS.equalizeAmounts(amounts, yLevels, true);
+
+        assertEquals(max, equalized[0]);
+        assertEquals(max, equalized[1]);
+        assertEquals(max * 2, equalized[0] + equalized[1]);
+    }
+
+    @Test
+    void equalizerKeepsVerticalPartialColumnMass() {
+        int max = FluidAmountConverter.getMaxInternal();
+        int[] amounts = {max, 0};
+        int[] yLevels = {63, 64};
+
+        int[] equalized = EnhancedFluidBFS.equalizeAmounts(amounts, yLevels, true);
+
+        assertEquals(max, equalized[0]);
+        assertEquals(0, equalized[1]);
+        assertEquals(max, equalized[0] + equalized[1]);
+    }
+
+    @Test
+    void equalizerKeepsHorizontalAverageMass() {
+        int[] amounts = {63, 1, 1};
+        int[] yLevels = {64, 64, 64};
+
+        int[] equalized = EnhancedFluidBFS.equalizeAmounts(amounts, yLevels, true);
+
+        assertTrue(equalized[0] >= 21 && equalized[0] <= 22);
+        assertTrue(equalized[1] >= 21 && equalized[1] <= 22);
+        assertTrue(equalized[2] >= 21 && equalized[2] <= 22);
+        assertEquals(65, equalized[0] + equalized[1] + equalized[2]);
+    }
+
+    @Test
+    void fluidAmountConverterKeepsBlockAndInternalScalesDistinct() {
+        int max = FluidAmountConverter.getMaxInternal();
+
+        assertEquals(8, FluidAmountConverter.toBlockState(max));
+        assertEquals(max, FluidAmountConverter.toInternal(8));
     }
 
     @Test

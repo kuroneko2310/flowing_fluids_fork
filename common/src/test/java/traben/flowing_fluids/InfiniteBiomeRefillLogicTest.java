@@ -1,6 +1,14 @@
 package traben.flowing_fluids;
 
+import net.minecraft.SharedConstants;
+import net.minecraft.core.Holder;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.tags.BiomeTags;
+import net.minecraft.world.level.biome.Biomes;
+import net.minecraft.world.level.biome.Biome;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import traben.flowing_fluids.config.FFConfig;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -8,6 +16,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InfiniteBiomeRefillLogicTest {
+
+    @BeforeAll
+    static void bootstrapMinecraft() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+        FlowingFluids.rebuildInfiniteBiomeDefaults();
+    }
 
     @Test
     void refillBandAllowsBelowSeaLevelByDefault() {
@@ -37,6 +52,45 @@ class InfiniteBiomeRefillLogicTest {
     void ambientAccessAlsoCoversShoreAndBeachBiomes() {
         assertTrue(FFFluidUtils.classifyInfiniteBiomeAmbientAccess(false, true, 62, 63, true, 1, false));
         assertTrue(FFFluidUtils.classifyInfiniteBiomeAmbientAccess(false, true, 63, 63, false, 2, false));
+    }
+
+    @Test
+    void ambientAccessAboveSeaLevelNeedsSkyExposure() {
+        assertTrue(FFFluidUtils.classifyInfiniteBiomeAmbientAccess(true, true, 64, 63, false, 0, false));
+        assertFalse(FFFluidUtils.classifyInfiniteBiomeAmbientAccess(false, true, 64, 63, true, 3, true));
+    }
+
+    @Test
+    void seaLevelOverflowDefaultsToInstantBroadCleanup() {
+        FFConfig config = new FFConfig();
+
+        assertTrue(config.seaLevelOverflowEvaporationInstant);
+        assertEquals(32, config.seaLevelOverflowEvaporationMaxExcess);
+        assertEquals(10, config.seaLevelOverflowInfiniteBiomeBufferRadius);
+    }
+
+    @Test
+    void seaLevelOverflowBufferRadiusIsClamped() {
+        FFConfig config = new FFConfig();
+        config.seaLevelOverflowInfiniteBiomeBufferRadius = 200;
+        config.sanitizeRanges();
+        assertEquals(64, config.seaLevelOverflowInfiniteBiomeBufferRadius);
+
+        config.seaLevelOverflowInfiniteBiomeBufferRadius = -1;
+        config.sanitizeRanges();
+        assertEquals(0, config.seaLevelOverflowInfiniteBiomeBufferRadius);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void infiniteBiomeMatchingIncludesRiversAndSwampsForOverflowCleanup() {
+        Holder<Biome> river = org.mockito.Mockito.mock(Holder.class);
+        org.mockito.Mockito.when(river.is(BiomeTags.IS_RIVER)).thenReturn(true);
+        Holder<Biome> swamp = org.mockito.Mockito.mock(Holder.class);
+        org.mockito.Mockito.when(swamp.is(Biomes.SWAMP)).thenReturn(true);
+
+        assertTrue(FFFluidUtils.matchInfiniteBiomes(river));
+        assertTrue(FFFluidUtils.matchInfiniteBiomes(swamp));
     }
 
     @Test

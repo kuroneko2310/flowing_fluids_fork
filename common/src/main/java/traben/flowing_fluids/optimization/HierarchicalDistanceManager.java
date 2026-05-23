@@ -49,6 +49,7 @@ public class HierarchicalDistanceManager {
 
     // Spatial grid for player position caching (reduces O(n×p) to O(1))
     private static final int GRID_CELL_SIZE = 32; // Same as PLAYER_PROXIMITY_BOOST for efficiency
+    private static final int SIMULATION_TIER_PLAYER_GRID_RADIUS = 2;
     private static final Map<DimensionKey, Map<Long, List<PlayerCacheEntry>>> playerGridCache = new ConcurrentHashMap<>();
     private static final Map<DimensionKey, Map<ChunkPos, TerrainCacheEntry>> terrainTypeCache = new ConcurrentHashMap<>();
     private static final Map<DimensionKey, Long> lastPlayerCacheUpdate = new ConcurrentHashMap<>();
@@ -115,12 +116,11 @@ public class HierarchicalDistanceManager {
             return RangeTier.DISTANT;
         }
 
-        Player nearest = level.getNearestPlayer(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 128.0D, false);
-        if (nearest == null) {
+        double distanceSq = nearestPlayerDistanceSqApprox(pos, level);
+        if (!Double.isFinite(distanceSq)) {
             return RangeTier.DISTANT;
         }
 
-        double distanceSq = nearest.distanceToSqr(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
         if (distanceSq <= 16.0D * 16.0D) {
             return RangeTier.NEAR;
         }
@@ -276,13 +276,7 @@ public class HierarchicalDistanceManager {
      */
     private boolean isPlayerNearby(BlockPos pos, Level level) {
         DimensionKey dimensionKey = DimensionKey.of(level);
-        // Update player cache if needed
-        long currentTime = System.currentTimeMillis();
-        long lastUpdate = lastPlayerCacheUpdate.getOrDefault(dimensionKey, 0L);
-        if (currentTime - lastUpdate > PLAYER_CACHE_REFRESH_INTERVAL) {
-            updatePlayerCache(level);
-            lastPlayerCacheUpdate.put(dimensionKey, currentTime);
-        }
+        ensurePlayerCache(level, dimensionKey);
 
         Map<Long, List<PlayerCacheEntry>> dimensionPlayerCache = playerGridCache.get(dimensionKey);
         if (dimensionPlayerCache == null || dimensionPlayerCache.isEmpty()) {
@@ -315,6 +309,47 @@ public class HierarchicalDistanceManager {
         }
 
         return false;
+    }
+
+    private double nearestPlayerDistanceSqApprox(BlockPos pos, Level level) {
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        ensurePlayerCache(level, dimensionKey);
+
+        Map<Long, List<PlayerCacheEntry>> dimensionPlayerCache = playerGridCache.get(dimensionKey);
+        if (dimensionPlayerCache == null || dimensionPlayerCache.isEmpty()) {
+            return Double.POSITIVE_INFINITY;
+        }
+
+        int cellX = pos.getX() / GRID_CELL_SIZE;
+        int cellY = pos.getY() / GRID_CELL_SIZE;
+        int cellZ = pos.getZ() / GRID_CELL_SIZE;
+        double nearest = Double.POSITIVE_INFINITY;
+
+        for (int dx = -SIMULATION_TIER_PLAYER_GRID_RADIUS; dx <= SIMULATION_TIER_PLAYER_GRID_RADIUS; dx++) {
+            for (int dy = -SIMULATION_TIER_PLAYER_GRID_RADIUS; dy <= SIMULATION_TIER_PLAYER_GRID_RADIUS; dy++) {
+                for (int dz = -SIMULATION_TIER_PLAYER_GRID_RADIUS; dz <= SIMULATION_TIER_PLAYER_GRID_RADIUS; dz++) {
+                    long gridKey = getGridKey(cellX + dx, cellY + dy, cellZ + dz);
+                    List<PlayerCacheEntry> players = dimensionPlayerCache.get(gridKey);
+                    if (players == null) {
+                        continue;
+                    }
+                    for (PlayerCacheEntry player : players) {
+                        nearest = Math.min(nearest, pos.distSqr(player.blockPos));
+                    }
+                }
+            }
+        }
+
+        return nearest;
+    }
+
+    private static void ensurePlayerCache(Level level, DimensionKey dimensionKey) {
+        long currentTime = System.currentTimeMillis();
+        long lastUpdate = lastPlayerCacheUpdate.getOrDefault(dimensionKey, 0L);
+        if (currentTime - lastUpdate > PLAYER_CACHE_REFRESH_INTERVAL) {
+            updatePlayerCache(level);
+            lastPlayerCacheUpdate.put(dimensionKey, currentTime);
+        }
     }
 
     /**

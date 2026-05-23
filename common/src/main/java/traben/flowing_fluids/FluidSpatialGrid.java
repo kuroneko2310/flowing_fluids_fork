@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * Three-layer architecture:
  * - Layer 1 (Macro): 16×16×16 cells per chunk - fluid presence, average level, gradient
- * - Layer 2 (Fine): 1×1×1 block-level - precise fluid amount (0-255 internal precision)
+ * - Layer 2 (Fine): 1×1×1 block-level - active internal fluid amount (0-63)
  * - Layer 3 (Connectivity): Connected component IDs - track fluid regions to avoid redundant BFS
  *
  * Performance improvement: 60-80% reduction in BFS search nodes, O(1) queries
@@ -74,15 +74,15 @@ public class FluidSpatialGrid {
     }
 
     /**
-     * Marks that fluid exists at the given position with precise amount (0-255).
+     * Marks that fluid exists at the given position with an active internal amount (0-63).
      */
     public static void setFluidAt(LevelAccessor level, BlockPos pos, boolean hasFluid) {
         setFluidAt(level, pos, hasFluid, 0);
     }
 
     /**
-     * Sets fluid at position with precise internal amount (0-255).
-     * @param amount Internal precision amount (0-255), will be converted from BlockState amount (0-8)
+     * Sets fluid at position with the active internal amount (0-63).
+     * @param amount Internal precision amount, converted from BlockState amount (0-8)
      */
     public static void setFluidAt(LevelAccessor level, BlockPos pos, boolean hasFluid, int amount) {
         DimensionStorage storage = getStorage(level);
@@ -165,7 +165,7 @@ public class FluidSpatialGrid {
     }
 
     /**
-     * Gets the precise internal fluid amount (0-255) at a position.
+     * Gets the active internal fluid amount (0-63) at a position.
      * Returns 0 if no fluid exists.
      */
     public static int getFluidAmount(LevelAccessor level, BlockPos pos) {
@@ -394,12 +394,12 @@ public class FluidSpatialGrid {
                     int worldZ = minZ + localZ;
                     for (int localX = 0; localX < 16; localX++) {
                         BlockState state = section.getBlockState(localX, localY, localZ);
-                        FluidState fluidState = state.getFluidState();
+                        scanPos.set(minX + localX, worldY, worldZ);
+                        FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, scanPos, state);
                         if (fluidState.isEmpty()) {
                             continue;
                         }
 
-                        scanPos.set(minX + localX, worldY, worldZ);
                         int internalAmount = FluidAmountConverter.toInternal(fluidState.getAmount());
                         grid.setFluidAt(scanPos, true, internalAmount);
                     }
@@ -582,7 +582,7 @@ public class FluidSpatialGrid {
      * Internal multi-resolution grid for a single chunk.
      *
      * Layer 1 (Macro): 16×16×16 cells - stores fluid presence, average level, gradient direction
-     * Layer 2 (Fine): 1×1×1 blocks - stores precise fluid amount (0-255)
+     * Layer 2 (Fine): 1×1×1 blocks - stores active internal fluid amount (0-63)
      * Layer 3 (Connectivity): Connected component IDs for each fluid region
      */
     private static class ChunkFluidGrid {
@@ -607,10 +607,10 @@ public class FluidSpatialGrid {
         private final int[] macroFluidTotals = new int[MACRO_GRID_SIZE];
         private final Direction[] macroGradients = new Direction[MACRO_GRID_SIZE];
 
-        // Layer 2: Fine-grained fluid presence and amounts (0-255 internal precision)
+        // Layer 2: Fine-grained fluid presence and active internal amounts (0-63)
         private final BitSet fluidPresence = new BitSet(GRID_SIZE);
         private final BitSet frontierPresence = new BitSet(GRID_SIZE);
-        private final byte[] fluidAmounts = new byte[GRID_SIZE]; // 0-255, stored as signed bytes
+        private final byte[] fluidAmounts = new byte[GRID_SIZE]; // 0-63, stored as a byte
         private final int[] macroFrontierCounts = new int[MACRO_GRID_SIZE];
         private volatile boolean frontierDirty = false;
 
@@ -662,8 +662,7 @@ public class FluidSpatialGrid {
 
             int newAmount = 0;
             if (hasFluid) {
-                // Clamp amount to 0-255 range
-                newAmount = Math.max(0, Math.min(255, amount));
+                newAmount = FluidAmountConverter.clamp(amount);
                 fluidAmounts[index] = (byte) newAmount;
             } else {
                 fluidAmounts[index] = 0;
@@ -682,7 +681,7 @@ public class FluidSpatialGrid {
             if (!fluidPresence.get(index)) {
                 return 0;
             }
-            // Convert signed byte to unsigned int (0-255)
+            // Convert signed byte to unsigned int in the active internal range.
             return fluidAmounts[index] & 0xFF;
         }
 
@@ -914,12 +913,12 @@ public class FluidSpatialGrid {
                     int worldZ = minZ + localZ;
                     for (int localX = 0; localX < 16; localX++) {
                         BlockState state = section.getBlockState(localX, localY, localZ);
-                        FluidState fluidState = state.getFluidState();
+                        scanPos.set(minX + localX, worldY, worldZ);
+                        FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, scanPos, state);
                         if (fluidState.isEmpty() || fluidState.getAmount() <= 0) {
                             continue;
                         }
 
-                        scanPos.set(minX + localX, worldY, worldZ);
                         grid.setFrontierAt(scanPos, isChunkLocalFrontierCell(
                                 level, chunkPos, sections, minY, localX, worldY, localZ, fluidState));
                     }

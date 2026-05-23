@@ -246,6 +246,78 @@ public final class FluidRegressionLogic {
         return amount > 0;
     }
 
+    public static boolean shouldDeferConnectedWaterLevelingToEqualizer(boolean sameFluidTarget,
+                                                                       boolean pressureDriven,
+                                                                       boolean inletZone,
+                                                                       boolean immediateSurfaceEdge,
+                                                                       boolean immediateDownwardOutlet,
+                                                                       boolean flowActive,
+                                                                       float flowMomentum,
+                                                                       int sourceAmount,
+                                                                       int targetAmount,
+                                                                       int difference,
+                                                                       int minimumRetainedAmount,
+                                                                       float transferBias) {
+        if (!sameFluidTarget
+                || sourceAmount <= 0
+                || targetAmount <= 0
+                || difference <= 0
+                || minimumRetainedAmount > 0) {
+            return false;
+        }
+
+        if (pressureDriven
+                || inletZone
+                || immediateSurfaceEdge
+                || immediateDownwardOutlet
+                || flowActive
+                || flowMomentum > 0.35f
+                || transferBias > 0.75f) {
+            return false;
+        }
+
+        // Let the component equalizer own small same-fluid leveling. The sequential flow pass
+        // should mainly advance fronts into empty space or handle strongly directed motion.
+        if (difference <= 2) {
+            return true;
+        }
+        return sourceAmount >= 6 && targetAmount >= 4 && difference <= 3;
+    }
+
+    public static int compareEqualizerFillOrder(int amountA, int yA, int supportScoreA, int distanceA, long keyA,
+                                                int amountB, int yB, int supportScoreB, int distanceB, long keyB,
+                                                boolean preferWaterSurfacePotential) {
+        int cmp;
+        if (preferWaterSurfacePotential) {
+            // Connected water should settle by vertical potential first: lower cells fill
+            // before upper shelves, while same-height cells still smooth by local amount.
+            cmp = Integer.compare(yA, yB);
+            if (cmp != 0) {
+                return cmp;
+            }
+            cmp = Integer.compare(amountA, amountB);
+        } else {
+            cmp = Integer.compare(amountA, amountB);
+            if (cmp != 0) {
+                return cmp;
+            }
+            cmp = Integer.compare(yA, yB);
+        }
+        if (cmp != 0) {
+            return cmp;
+        }
+
+        cmp = Integer.compare(supportScoreB, supportScoreA);
+        if (cmp != 0) {
+            return cmp;
+        }
+        cmp = Integer.compare(distanceA, distanceB);
+        if (cmp != 0) {
+            return cmp;
+        }
+        return Long.compare(keyA, keyB);
+    }
+
     public static boolean shouldPreferThinDryEdgeBalance(int sourceAmount, int targetAmount,
                                                          int difference, int minimumRetainedAmount) {
         return minimumRetainedAmount <= 0

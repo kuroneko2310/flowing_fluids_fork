@@ -168,7 +168,7 @@ public class FlowingFluidsApiImpl implements FlowingFluidsAPI {
     public boolean modifyFluidAmountAtPos(final @NotNull LevelAccessor level, final @NotNull BlockPos pos, final @NotNull FluidAmountModifier fluidAmountModifier) {
         if (clientCheck(level, "modifyFluidAmountAtPos")) return false;
 
-        var fluid = level.getFluidState(pos);
+        var fluid = FFFluidUtils.getEffectiveFluidState(level, pos);
         if (getConfig().isFluidAllowed(fluid)) {
             var type = fluid.getType();
             var amount = fluid.getAmount();

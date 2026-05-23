@@ -86,4 +86,12 @@ class ParallelFluidEqualizerRegressionTest {
             true
         ));
     }
+
+    @Test
+    void deferredSurgesWaitOnlyWhileStillMoving() {
+        assertFalse(ParallelFluidEqualizer.shouldRequeueDeferredNow(10L, 11L, true, 0.0f));
+        assertFalse(ParallelFluidEqualizer.shouldRequeueDeferredNow(10L, 11L, false, 0.3f));
+        assertTrue(ParallelFluidEqualizer.shouldRequeueDeferredNow(10L, 11L, false, 0.0f));
+        assertTrue(ParallelFluidEqualizer.shouldRequeueDeferredNow(10L, 14L, true, 0.0f));
+    }
 }

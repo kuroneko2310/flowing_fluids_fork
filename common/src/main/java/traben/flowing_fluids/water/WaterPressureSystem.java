@@ -364,7 +364,7 @@ public final class WaterPressureSystem {
         BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
         for (Direction direction : Direction.values()) {
             neighborPos.setWithOffset(pos, direction);
-            FluidState fluidState = level.getFluidState(neighborPos);
+            FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, neighborPos);
             if (fluidState.is(FluidTags.WATER)) {
                 adjacentWater++;
                 adjacentLevelSum += fluidState.getAmount();
@@ -379,7 +379,7 @@ public final class WaterPressureSystem {
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (int y = 1; y <= WATER_DEPTH_SAMPLE; y++) {
             cursor.set(pos.getX(), pos.getY() + y, pos.getZ());
-            FluidState fluidState = level.getFluidState(cursor);
+            FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, cursor);
             if (fluidState.is(FluidTags.WATER)) {
                 depth++;
             } else {

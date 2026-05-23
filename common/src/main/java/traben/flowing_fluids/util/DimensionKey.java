@@ -5,6 +5,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Dimension identifier wrapper that gracefully falls back to the accessor instance identity
@@ -12,6 +13,8 @@ import java.util.Objects;
  * never bleed into one another even for temporary level implementations (e.g., world-gen regions).
  */
 public final class DimensionKey {
+
+    private static final ConcurrentHashMap<ResourceKey<Level>, DimensionKey> INTERNED_DIMENSIONS = new ConcurrentHashMap<>();
 
     private final Object key;
     private final boolean identity;
@@ -22,11 +25,14 @@ public final class DimensionKey {
     }
 
     public static DimensionKey of(Level level) {
-        return new DimensionKey(level.dimension(), false);
+        return of(level.dimension());
     }
 
     public static DimensionKey of(ResourceKey<Level> dimension) {
-        return new DimensionKey(dimension, false);
+        if (dimension == null) {
+            return new DimensionKey(null, false);
+        }
+        return INTERNED_DIMENSIONS.computeIfAbsent(dimension, key -> new DimensionKey(key, false));
     }
 
     public static DimensionKey ofIdentity(Object token) {
