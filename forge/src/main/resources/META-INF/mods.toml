@@ -1,0 +1,40 @@
+modLoader = "javafml"
+loaderVersion = "[1,)"
+#issueTrackerURL = ""
+license = "GNU LGPL 3.0"
+
+[[mods]]
+modId = "flowing_fluids"
+version = "${version}"
+displayName = "Flowing Fluids"
+authors = "Traben; maintained fork by kuroneko2310"
+description = '''
+Modified fork / continuation of Flowing Fluids by Traben, maintained by kuroneko2310.
+Keeps finite-fluid physics while adding Forge-focused water pressure, hydraulic, spring, flood, and performance tuning work.
+'''
+logoFile = "assets/flowing_fluids/icon.png"
+
+[[dependencies.flowing_fluids]]
+modId = "forge"
+mandatory = true
+versionRange = "[1,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.flowing_fluids]]
+modId = "minecraft"
+mandatory = true
+versionRange = "[${compatible_mc_forge})"
+ordering = "NONE"
+side = "BOTH"
+
+
+# this being optional means it will only trigger a warning when
+# the mod is present AND has a wrong version
+# this warning is needed for the crash triggered by the mixin plugin
+[[dependencies.flowing_fluids]]
+modId = "create"
+mandatory = false
+versionRange = "[0.6,)"
+ordering = "NONE"
+side = "BOTH"

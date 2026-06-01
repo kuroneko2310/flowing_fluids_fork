@@ -1,0 +1,28 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "SLS",
+    "PCP",
+    "SRS"
+  ],
+  "key": {
+    "C": {
+      "item": "minecraft:conduit"
+    },
+    "L": {
+      "item": "minecraft:sea_lantern"
+    },
+    "P": {
+      "item": "minecraft:prismarine_crystals"
+    },
+    "R": {
+      "item": "minecraft:redstone_block"
+    },
+    "S": {
+      "item": "minecraft:prismarine_shard"
+    }
+  },
+  "result": {
+    "item": "flowing_fluids:ocean_refill_suppressor"
+  }
+}

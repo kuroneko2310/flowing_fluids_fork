@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "active=false": {
+      "model": "flowing_fluids:block/ocean_refill_suppressor"
+    },
+    "active=true": {
+      "model": "flowing_fluids:block/ocean_refill_suppressor"
+    }
+  }
+}

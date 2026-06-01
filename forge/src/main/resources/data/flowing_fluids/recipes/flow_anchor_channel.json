@@ -1,0 +1,22 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " D ",
+    "CAC",
+    " D "
+  ],
+  "key": {
+    "D": {
+      "item": "minecraft:dark_prismarine"
+    },
+    "C": {
+      "item": "minecraft:lapis_block"
+    },
+    "A": {
+      "item": "flowing_fluids:flow_anchor_brook"
+    }
+  },
+  "result": {
+    "item": "flowing_fluids:flow_anchor_channel"
+  }
+}

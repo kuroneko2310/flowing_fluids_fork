@@ -1,0 +1,22 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " P ",
+    "RAR",
+    " P "
+  ],
+  "key": {
+    "P": {
+      "item": "minecraft:prismarine_bricks"
+    },
+    "R": {
+      "item": "minecraft:redstone"
+    },
+    "A": {
+      "item": "flowing_fluids:flow_anchor_droplet"
+    }
+  },
+  "result": {
+    "item": "flowing_fluids:flow_anchor_brook"
+  }
+}

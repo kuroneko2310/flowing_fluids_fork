@@ -1,0 +1,8 @@
+{
+  "type": "forge:add_features",
+  "biomes": "#minecraft:is_nether",
+  "features": [
+    "flowing_fluids:nether_lava_spring"
+  ],
+  "step": "underground_decoration"
+}
