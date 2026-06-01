@@ -17,6 +17,7 @@ public class FFPluginForge implements IMixinConfigPlugin {
 
     private static final String CREATE_MIXIN_PACKAGE = "traben.flowing_fluids.forge.mixin.create.";
     private static final String MEKANISM_MIXIN_PACKAGE = "traben.flowing_fluids.forge.mixin.mekanism.";
+    private static final String SODIUM_MIXIN_PACKAGE = "traben.flowing_fluids.forge.mixin.sodium.";
 
     @Override
     public void onLoad(final String s) {
@@ -53,7 +54,19 @@ public class FFPluginForge implements IMixinConfigPlugin {
         if (s1 != null && s1.startsWith(MEKANISM_MIXIN_PACKAGE)) {
             return isModLoadedDuringMixinSetup("mekanism");
         }
+        if (s1 != null && s1.startsWith(SODIUM_MIXIN_PACKAGE)) {
+            return isAnyModLoadedDuringMixinSetup("embeddium", "rubidium", "sodium");
+        }
         return true;
+    }
+
+    private static boolean isAnyModLoadedDuringMixinSetup(final String... modIds) {
+        for (String modId : modIds) {
+            if (isModLoadedDuringMixinSetup(modId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isModLoadedDuringMixinSetup(final String modId) {

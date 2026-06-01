@@ -1832,7 +1832,7 @@ public class FFCommands {
                                         "level", 0, 8,
                                         a -> FlowingFluids.config.minWaterLevelForIce = a, () -> FlowingFluids.config.minWaterLevelForIce)
                                 ).then(intCommand("fluid_processing_distance",
-                                        "Allows you to set a block distance for fluid processing, works kinda like render distance but for fluid flowing.\n0 means infinite distance (works with chunk loaders far from players).\nThe default value is 0, and the maximum value is 256 (though it is limited by the servers processing chunk distance).\nPlease note this only affects the flowing calculation and refilling behaviours like rain.",
+                                        "Allows you to set a block distance for fluid processing, works kinda like render distance but for fluid flowing.\n0 means infinite distance (works with chunk loaders far from players).\nThe default value is 160, and the maximum value is 256 (though it is limited by the servers processing chunk distance).\nPlease note this affects active flowing, leveling, and refill behaviours like rain; visuals are maintained a little farther out so distant water does not freeze in an ugly half-state.",
                                         "distance_in_blocks", 0, 256,
                                         a -> FlowingFluids.config.playerBlockDistanceForFlowing = a, () -> FlowingFluids.config.playerBlockDistanceForFlowing)
                                 ).then(seaLevelOverrides()
@@ -2679,7 +2679,7 @@ public class FFCommands {
                             .executes(c -> message(c, "The Create mod uses water wheels as it's most primitive power source. Flowing Fluids has settings to change how these water wheels get powered due to the additional challenges of the flowing fluids mod interactions with fluids."))
                     )
                     .then(Commands.literal("water_wheel_requirements")
-                            .executes(cont -> message(cont, "Changes how the Create Mod's water wheels interact with fluids, select an mode to get further information. Default is flow. Water wheel mode is currently set to " + FlowingFluids.config.create_waterWheelMode))
+                            .executes(cont -> message(cont, "Changes how the Create Mod's water wheels interact with fluids, select an mode to get further information. Default is flow_or_river. Water wheel mode is currently set to " + FlowingFluids.config.create_waterWheelMode))
                             .then(Commands.literal("flow")
                                     .executes(cont -> {
                                         FlowingFluids.config.create_waterWheelMode = FFConfig.CreateWaterWheelMode.REQUIRE_FLOW;

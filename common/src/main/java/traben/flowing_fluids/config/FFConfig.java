@@ -96,8 +96,8 @@ public class FFConfig {
     public WaterProcessingMode waterProcessingMode = WaterProcessingMode.MODERN;
 
     // Advanced water flow distance settings
-    public int maxWaterFlowDistance = 6; // Maximum horizontal flow distance (can be higher than base flow distance)
-    public int bfsMaxSearchDistance = 10; // Maximum BFS search distance for equalization
+    public int maxWaterFlowDistance = 8; // Maximum horizontal flow distance (can be higher than base flow distance)
+    public int bfsMaxSearchDistance = 16; // Maximum BFS search distance for equalization
     public float slopeFindDistanceMultiplier = 1.2f; // Multiplier for slope finding distance (1.0 = default, higher = farther search)
     public boolean enableAdaptiveFlowDistance = true; // Adjust flow distance based on terrain type
     public int riverFlowDistance = 64; // Flow distance in river biomes
@@ -222,7 +222,7 @@ public class FFConfig {
     public int infiniteBiomeRainFillMaxLevel = 6;
     public int minLavaLevelForObsidian = 6;
     public boolean fastBiomeRefillAtSeaLevelOnly = false;
-    public int playerBlockDistanceForFlowing = 0;
+    public int playerBlockDistanceForFlowing = 160;
     public float concreteDrainsWaterChance = 0.5f;
     public boolean autoDetectWaterBiomes = true;
     public ObjectOpenHashSet<String> extraOceanBiomes = new ObjectOpenHashSet<>();
@@ -268,7 +268,7 @@ public class FFConfig {
     );
 
     // Extended waterlogging for blocks that normally cannot hold fluids (e.g., fences/iron bars).
-    public boolean enableExtendedWaterlogging = false;
+    public boolean enableExtendedWaterlogging = true;
     public boolean extendedWaterloggingAllowFences = true; // covers fences/iron bars/walls-like if tagged
 
     // Adaptive scheduler settings
@@ -1191,6 +1191,7 @@ public class FFConfig {
         int oldAutoTickDelayLavaMaxExtraDelay = autoTickDelayLavaMaxExtraDelay;
         int oldMaxWaterFlowDistance = maxWaterFlowDistance;
         int oldBfsMaxSearchDistance = bfsMaxSearchDistance;
+        int oldPlayerBlockDistanceForFlowing = playerBlockDistanceForFlowing;
         float oldSlopeFindDistanceMultiplier = slopeFindDistanceMultiplier;
         int oldRiverFlowDistance = riverFlowDistance;
         int oldOceanFlowDistance = oceanFlowDistance;
@@ -1319,6 +1320,7 @@ public class FFConfig {
 
         maxWaterFlowDistance = Math.max(waterFlowDistance, maxWaterFlowDistance);
         bfsMaxSearchDistance = Math.max(waterFlowDistance, Math.max(1, bfsMaxSearchDistance));
+        playerBlockDistanceForFlowing = Math.max(0, Math.min(256, playerBlockDistanceForFlowing));
         slopeFindDistanceMultiplier = Math.max(0.0f, slopeFindDistanceMultiplier);
         riverFlowDistance = Math.max(1, riverFlowDistance);
         oceanFlowDistance = Math.max(1, oceanFlowDistance);
@@ -1452,6 +1454,7 @@ public class FFConfig {
         appendCorrection(corrections, "randomTickLevelingDistance", oldRandomTickLevelingDistance, randomTickLevelingDistance);
         appendCorrection(corrections, "maxWaterFlowDistance", oldMaxWaterFlowDistance, maxWaterFlowDistance);
         appendCorrection(corrections, "bfsMaxSearchDistance", oldBfsMaxSearchDistance, bfsMaxSearchDistance);
+        appendCorrection(corrections, "playerBlockDistanceForFlowing", oldPlayerBlockDistanceForFlowing, playerBlockDistanceForFlowing);
         appendCorrection(corrections, "slopeFindDistanceMultiplier", oldSlopeFindDistanceMultiplier, slopeFindDistanceMultiplier);
         appendCorrection(corrections, "riverFlowDistance", oldRiverFlowDistance, riverFlowDistance);
         appendCorrection(corrections, "oceanFlowDistance", oldOceanFlowDistance, oceanFlowDistance);

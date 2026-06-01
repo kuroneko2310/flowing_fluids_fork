@@ -15,11 +15,46 @@ Compared with the original public mod line, this fork adds and retunes:
 
 - Event-driven water pressure for doors, gates, trapdoors, enclosed water heads, vents, and relief paths without bringing back broad permanent scans.
 - Hydraulic and natural siphon behavior for enclosed overflows, cave mouths, pressure-fed rises, and guide/nozzle assisted water movement while preserving finite water volume.
+- Forge-only compatibility work for Create pipes, Create hose pulleys, Create water wheels, Mekanism electric pumps, Mekanism portable tanks, and tank dispenser behavior so external machines consume or place finite water levels instead of silently duplicating source blocks.
 - A delta-driven `FluidComponentGraph` that lets stable water-body interiors use focused equalizer snapshots instead of repeatedly sampling broad quiet pools.
 - Persistent extended waterlogging so virtual water stored inside compatible blocks survives chunk reloads more reliably.
 - More complete chunk and dimension cleanup for async slope searches, siphons, equalizer queues, tick buffers, component graph state, and waterlog data.
 - Natural flood events and rarer biome-aware spring generation hooks, with command/config surfaces for checking and tuning the behavior in game.
 - A local 1.0 mod icon generated for this fork and wired through `mods.toml` as `assets/flowing_fluids/icon.png`.
+
+## Fork defaults
+
+The default config is tuned for a heavier Forge 1.20.1 survival pack rather than a tiny vanilla test world.
+
+- `fluid_processing_distance` now defaults to `160` blocks. Active water processing stays near players by default, while a visual grace range keeps nearby distant water from freezing in a strange half-updated look. Set it to `0` if you intentionally need chunk loaders far away from players to keep running fluid simulation.
+- `maxWaterFlowDistance` defaults to `8` and `bfsMaxSearchDistance` defaults to `16`, matching the in-game command help and giving modern water analysis enough room to resolve pools, canals, and short pressure paths.
+- `enableExtendedWaterlogging` defaults to `true`, so compatible blocks can hold virtual water more reliably and the client renderer can show that stored water instead of pretending the block is dry.
+
+Existing configs are not force-rewritten. Delete `config/flowing_fluids.json` or run `/flowing_fluids settings reset_all` if you want a world to pick up the new defaults.
+
+## What changed from the original mod?
+
+The original Flowing Fluids focused on finite fluids, configurable flow, buckets, basic Create support, and a removable world-safe representation where full blocks remain vanilla source blocks. This fork keeps that core, but pushes much harder into "large modpack waterworks":
+
+- Water is still finite, but pressure, siphons, spring sources, flood pulses, rain, snowmelt, droughts, heat events, and infinite-biome refill rules now interact through more explicit config surfaces.
+- Quiet water bodies get more performance guardrails: player-distance processing limits, broad-surface suppression, adaptive tick delay, chunk-local slope cache invalidation, and optional component-graph assistance.
+- More state survives unload/reload. Async slope searches, extended waterlogging, siphon state, tick buffers, and dimension cleanup were tightened so old work is less likely to apply after a chunk is gone.
+- Forge machine compatibility is treated as part of the water fantasy, not an afterthought: pumps and pipes should feel like they are working with finite water rather than bypassing it.
+- This fork is intentionally Forge 1.20.1 first. Fabric, NeoForge, and broad multi-loader support are not maintained here.
+
+### Appeal points
+
+- Better for industrial survival worlds where water movement, pumps, caves, rain, and rivers are part of the actual play loop.
+- Create and Mekanism setups can drain partial water levels and connected finite pools instead of only recognizing perfect vanilla source blocks.
+- More knobs are available in-game, with grouped command surfaces for rain, floods, springs, siphons, hydraulic blocks, infinite biomes, and performance.
+- Visual defaults favor still-looking finite water by hiding the flowing overlay when the simulation says the water is merely a partial level, not a dramatic current.
+
+### Tradeoffs
+
+- It is heavier and more opinionated than the original. Big floods, ocean draining, massive pipe networks, or aggressive spring settings can still cost real server time.
+- The new `fluid_processing_distance = 160` default improves normal player-area performance, but far-away chunk-loaded machines may need `0` or a larger distance.
+- Forge-only compatibility means this fork is not a drop-in continuation for Fabric or NeoForge packs.
+- Some machine interactions intentionally consume water levels. That is the point, but it can surprise builds designed around vanilla infinite source behavior.
 
 ## Original project links
 
@@ -162,7 +197,14 @@ Please note some of these interactions only work properly with "full" liquid blo
 
 ![create](https://i.imgur.com/fR4fpji.gif)
 
-Create Mod Pipes can move fluids around finitely, as can Hose Pulleys, and can optionally be set to treat all fluids as infinite sources via the `/flowing_fluids create_compat pipes infinite_pipe_fluid_source on|off` command.
+Create Mod Pipes can move fluids around finitely, as can Hose Pulleys, and can optionally be set to treat all fluids as infinite sources via the `/flowing_fluids create_mod_compat pipes infinite_pipe_fluid_source on|off` command.
+
+This fork expands the Create side further:
+
+- Open-ended pipes consume a connected total of 8 fluid levels when finite mode is enabled, so two half-filled water blocks can supply one bucket instead of being ignored.
+- Hose pulleys can drain and place partial levels. Large pipe fills can spill into the world through the pulley instead of getting trapped by a one-bucket internal tank limit.
+- Hose pulley water placement protects the root water block from immediately becoming a full source, which helps finite waterworks avoid accidental infinite-looking source behavior right under the pulley.
+- Create basin and tank wrappers are patched so external fluid insertion behaves more predictably with finite water and does not split one incoming fill across incompatible variety tanks.
 
 ![pipes](https://i.imgur.com/hM95cFe.gif)
 
@@ -176,7 +218,7 @@ By default, Water Wheels will also work without flow in river biomes at sea leve
 
 ![wheels](https://i.imgur.com/E00rDkE.gif)
 
-This behaviour can be modified via the `/flowing_fluids create_compat water_wheel_requirements ...` command, with the following options:
+This behaviour can be modified via the `/flowing_fluids create_mod_compat water_wheel_requirements ...` command, with the following options:
 - `flow` - Requires a constant flow of fluid
 - `flow_or_river` - Requires a constant flow of fluid, or to be touching water in a river biome near sea level ***(Default)***
 - `fluid` - Requires contact with any fluid blocks, regardless of flow
@@ -190,6 +232,17 @@ the following options exists to swap this arbitrary direction:
 - `fluid_opposite_spin`
 - `full_fluid_opposite_spin`
 - `always_opposite_spin`
+
+## **Mekanism - Forge 1.20.1**
+
+This fork also adds Mekanism-side finite fluid handling.
+
+- Electric Pumps can draw partial Flowing Fluids water blocks. A level 4 water cell becomes about half a bucket instead of being ignored until it is a vanilla source block.
+- Mekanism fluid tanks in bucket mode can pick up connected finite water levels and store the matching millibucket amount.
+- Shift-use with a Mekanism tank can place partial stored water back into the world, including into compatible virtual-waterlogged blocks when extended waterlogging is enabled.
+- Dispensers using compatible Mekanism tanks can also pick up or place partial finite fluid amounts.
+
+The practical result: Mekanism pumps and tanks can participate in finite water logistics instead of forming a separate vanilla-source-only layer. The downside is that pump setups now consume real water volume, so old "free water forever" layouts may need rivers, reservoirs, rain capture, springs, or the infinite-biome refill rules to keep up.
 
 ## **Visuals**:
 
@@ -234,7 +287,7 @@ This used to be a problem with the early mod but is now quite stable, can be dis
 
 **Server lagging behind?**
 
-If the server is lagging behind consistently, try increasing the ```waterTickDelay``` (Default = 2), to reduce the amount of water updates. 
+If the server is lagging behind consistently, try increasing the ```waterTickDelay``` (Default = 4), to reduce the amount of water updates. 
 Values between 4-8 still provide a smooth water experience, with more performance focus.
 
 # Changelog
