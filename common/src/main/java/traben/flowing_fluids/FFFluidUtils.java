@@ -310,7 +310,7 @@ public class FFFluidUtils {
             FluidActivityTracker.recordChanges(serverLevel, changedPositions);
             for (QueuedBulkFluidChange change : context.queuedChanges.values()) {
                 if (shouldWakeBulkPlacedFluid(levelAccessor, change)) {
-                    serverLevel.scheduleTick(change.pos(), change.fluid(), 1);
+                    AdaptiveTickScheduler.scheduleFluidTick(serverLevel, change.pos(), change.fluid(), 1);
                 }
             }
         }
@@ -1218,7 +1218,7 @@ public class FFFluidUtils {
             return;
         }
         // Virtual pass-through cells do not get block-backed fluid updates, so wake them explicitly.
-        level.scheduleTick(pos, fluid, 1);
+        AdaptiveTickScheduler.scheduleFluidTick(level, pos, fluid, 1);
     }
 
     private static boolean isAquaticPlantFluidHolder(BlockState state) {
@@ -1316,7 +1316,7 @@ public class FFFluidUtils {
                 continue;
             }
 
-            level.scheduleTick(cursor, flowingFluid, 1);
+            AdaptiveTickScheduler.scheduleFluidTick(level, cursor, flowingFluid, 1);
         }
     }
 

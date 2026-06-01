@@ -17,6 +17,7 @@ import net.minecraft.world.level.levelgen.feature.FeaturePlaceContext;
 import net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConfiguration;
 import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluids;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 
 public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> {
@@ -201,7 +202,7 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
             }
 
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, cursor, fluid, 8);
-            level.scheduleTick(cursor, fluid, fluid.getTickDelay(level));
+            AdaptiveTickScheduler.scheduleFluidTick(level, cursor, fluid, fluid.getTickDelay(level));
         }
     }
 

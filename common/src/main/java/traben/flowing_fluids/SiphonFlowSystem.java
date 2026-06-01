@@ -226,7 +226,7 @@ public final class SiphonFlowSystem {
                     computePumpTransferAmount(facing, destination.pressureBoost()));
             markCooldown(NEXT_HYDRAULIC_PUMP_TICK, level, nozzleKey, PUMP_COOLDOWN_TICKS);
             if (moved > 0) {
-                level.scheduleTick(destination.pos(), Fluids.WATER, 1);
+                AdaptiveTickScheduler.scheduleFluidTick(level, destination.pos(), Fluids.WATER, 1);
                 return true;
             }
         }
@@ -254,7 +254,7 @@ public final class SiphonFlowSystem {
             if (movedFromBack > 0) {
                 moved += movedFromBack;
                 remaining -= movedFromBack;
-                level.scheduleTick(backSourcePos, Fluids.WATER, 1);
+                AdaptiveTickScheduler.scheduleFluidTick(level, backSourcePos, Fluids.WATER, 1);
                 changed.add(backSourcePos.immutable());
             }
         }
@@ -279,7 +279,7 @@ public final class SiphonFlowSystem {
 
             moved += movedFromSource;
             remaining -= movedFromSource;
-            level.scheduleTick(sourcePos, Fluids.WATER, 1);
+            AdaptiveTickScheduler.scheduleFluidTick(level, sourcePos, Fluids.WATER, 1);
             changed.add(sourcePos.immutable());
             if (remaining <= 0) {
                 break;
@@ -355,8 +355,8 @@ public final class SiphonFlowSystem {
                     requested, PUMP_MIN_SOURCE_RETAIN);
             markCooldown(NEXT_HYDRAULIC_PRESSURE_TICK, level, sourcePos.asLong(), PRESSURE_FIELD_COOLDOWN_TICKS);
             if (moved > 0) {
-                level.scheduleTick(sourcePos, Fluids.WATER, 1);
-                level.scheduleTick(destination.pos(), Fluids.WATER, 1);
+                AdaptiveTickScheduler.scheduleFluidTick(level, sourcePos, Fluids.WATER, 1);
+                AdaptiveTickScheduler.scheduleFluidTick(level, destination.pos(), Fluids.WATER, 1);
                 FluidActivityTracker.recordChanges(level, List.of(sourcePos.immutable(), destination.pos().immutable()));
                 return true;
             }
@@ -734,8 +734,8 @@ public final class SiphonFlowSystem {
         if (moved <= 0) {
             return false;
         }
-        level.scheduleTick(sourcePos, Fluids.WATER, 1);
-        level.scheduleTick(result.outletPos(), Fluids.WATER, 1);
+        AdaptiveTickScheduler.scheduleFluidTick(level, sourcePos, Fluids.WATER, 1);
+        AdaptiveTickScheduler.scheduleFluidTick(level, result.outletPos(), Fluids.WATER, 1);
         changed.add(result.outletPos());
         FluidActivityTracker.recordChanges(level, changed);
         return true;
@@ -763,7 +763,7 @@ public final class SiphonFlowSystem {
                     requestedTransfer - moved, minSourceAmount);
             if (movedFromCell > 0) {
                 moved += movedFromCell;
-                level.scheduleTick(cursor, Fluids.WATER, 1);
+                AdaptiveTickScheduler.scheduleFluidTick(level, cursor, Fluids.WATER, 1);
                 changed.add(cursor.immutable());
                 if (moved >= requestedTransfer) {
                     break;

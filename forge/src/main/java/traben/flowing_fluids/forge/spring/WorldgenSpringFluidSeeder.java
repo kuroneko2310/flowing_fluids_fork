@@ -5,6 +5,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FlowingFluid;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 
 final class WorldgenSpringFluidSeeder {
@@ -29,7 +30,7 @@ final class WorldgenSpringFluidSeeder {
             }
 
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, cursor, fluid, 8);
-            level.scheduleTick(cursor, fluid, fluid.getTickDelay(level));
+            AdaptiveTickScheduler.scheduleFluidTick(level, cursor, fluid, fluid.getTickDelay(level));
         }
     }
 }

@@ -27,6 +27,7 @@ import net.minecraftforge.fluids.FluidUtil;
 import net.minecraftforge.fluids.capability.IFluidHandler;
 import net.minecraftforge.fluids.capability.IFluidHandlerItem;
 import org.jetbrains.annotations.Nullable;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 
@@ -391,13 +392,13 @@ public final class MekanismFluidTankBucketCompat {
 
         // Bucket-mode compat removes or places only a single shallow cell, so we wake the local neighborhood
         // to let Flowing Fluids immediately refill and continue spreading naturally.
-        level.scheduleTick(pos, fluid, 1);
+        AdaptiveTickScheduler.scheduleFluidTick(level, pos, fluid, 1);
         BlockPos.MutableBlockPos neighbourPos = new BlockPos.MutableBlockPos();
         for (Direction direction : Direction.values()) {
             neighbourPos.setWithOffset(pos, direction);
             FluidState neighbourFluid = FFFluidUtils.getEffectiveFluidState(level, neighbourPos, level.getBlockState(neighbourPos));
             if (neighbourFluid.getType().isSame(fluid) && neighbourFluid.getAmount() > 0) {
-                level.scheduleTick(neighbourPos, fluid, 1);
+                AdaptiveTickScheduler.scheduleFluidTick(level, neighbourPos, fluid, 1);
             }
         }
     }

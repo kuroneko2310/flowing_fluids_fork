@@ -40,6 +40,8 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
     private final AtomicLong equilibriumSkips = new AtomicLong();
     private final AtomicLong spatialGridHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
+    private final AtomicLong fluidTickSchedulesAccepted = new AtomicLong();
+    private final AtomicLong fluidTickSchedulesCoalesced = new AtomicLong();
 
     private final double[] msptSamples = new double[MSPT_WINDOW];
     private final Object msptLock = new Object();
@@ -127,6 +129,15 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
     public void recordCacheMiss() {
         cacheMisses.incrementAndGet();
     }
+
+    public void recordFluidTickScheduleAccepted() {
+        fluidTickSchedulesAccepted.incrementAndGet();
+    }
+
+    public void recordFluidTickScheduleCoalesced() {
+        fluidTickSchedulesCoalesced.incrementAndGet();
+    }
+
     public void onServerTick(MinecraftServer server, boolean enabled, int interval) {
         if (server == null) {
             return;
@@ -174,6 +185,8 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         equilibriumSkips.set(0L);
         spatialGridHits.set(0L);
         cacheMisses.set(0L);
+        fluidTickSchedulesAccepted.set(0L);
+        fluidTickSchedulesCoalesced.set(0L);
         tickCounter = 0;
         synchronized (msptLock) {
             msptSampleIndex = 0;
@@ -195,6 +208,8 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         report.append(String.format("Server MSPT: last %.2f, 20 tick avg %.2f%n",
                 getLastServerMspt(), getAverageServerMspt20()));
         report.append(String.format("Fluid ticks: %,d%n", ticks));
+        report.append(String.format("Fluid tick schedules: accepted %,d, coalesced %,d%n",
+                getFluidTickSchedulesAccepted(), getFluidTickSchedulesCoalesced()));
         if (ticks == 0L) {
             report.append("No fluid tick samples recorded yet.");
             return report.toString();
@@ -313,6 +328,16 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
     @Override
     public long getCacheMisses() {
         return cacheMisses.get();
+    }
+
+    @Override
+    public long getFluidTickSchedulesAccepted() {
+        return fluidTickSchedulesAccepted.get();
+    }
+
+    @Override
+    public long getFluidTickSchedulesCoalesced() {
+        return fluidTickSchedulesCoalesced.get();
     }
 
     private void appendDistanceBreakdown(StringBuilder report, long ticks) {

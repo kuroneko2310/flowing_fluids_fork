@@ -297,18 +297,18 @@ public final class SnowmeltWaterSystem {
                 for (Direction dir : Direction.Plane.HORIZONTAL) {
                     BlockPos side = pos.relative(dir);
                     if (FFFluidUtils.setFluidStateAtPosToNewAmount(level, side, Fluids.WATER, clampedAmount)) {
-                        level.scheduleTick(side, Fluids.WATER, 1);
+                        AdaptiveTickScheduler.scheduleFluidTick(level, side, Fluids.WATER, 1);
                         AdaptiveTickScheduler.markFlowActive(level, side, 8);
                         return true;
                     }
                 }
                 return false;
             }
-            level.scheduleTick(below, Fluids.WATER, 1);
+            AdaptiveTickScheduler.scheduleFluidTick(level, below, Fluids.WATER, 1);
             AdaptiveTickScheduler.markFlowActive(level, below, 8);
             return true;
         }
-        level.scheduleTick(pos, Fluids.WATER, 1);
+        AdaptiveTickScheduler.scheduleFluidTick(level, pos, Fluids.WATER, 1);
         AdaptiveTickScheduler.markFlowActive(level, pos, 8);
         return true;
     }

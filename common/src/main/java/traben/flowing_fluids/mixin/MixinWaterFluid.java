@@ -514,7 +514,7 @@ private void ff$trySpawnSurfaceWater(Level level, BlockPos origin, RandomSource 
     }
     @Unique
     private void ff$wakeRainFluid(Level level, BlockPos pos) {
-        level.scheduleTick(pos, this, 1);
+        AdaptiveTickScheduler.scheduleFluidTick(level, pos, this, 1);
         AdaptiveTickScheduler.markFlowActive(level, pos, 8);
         BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
         for (Direction direction : ff$RAIN_WAKE_DIRECTIONS) {
@@ -525,7 +525,7 @@ private void ff$trySpawnSurfaceWater(Level level, BlockPos origin, RandomSource 
 
             // Rain often creates a tiny fresh front against already-sleeping support water.
             // Nudge the adjacent ring awake so the new puddle can actually hand off flow.
-            level.scheduleTick(neighborPos, this, direction == Direction.DOWN ? 1 : 2);
+            AdaptiveTickScheduler.scheduleFluidTick(level, neighborPos, this, direction == Direction.DOWN ? 1 : 2);
             AdaptiveTickScheduler.markFlowActive(level, neighborPos, 4);
         }
     }

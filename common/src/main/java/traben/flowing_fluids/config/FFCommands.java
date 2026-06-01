@@ -30,6 +30,7 @@ import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FluidComponentGraph;
 import traben.flowing_fluids.FlowingFluids;
@@ -2652,7 +2653,7 @@ public class FFCommands {
                                                     if (level.hasChunk(x, z)) {
                                                         level.getChunk(x, z).findBlocks(BlockBehaviour.BlockStateBase::liquid,
                                                                 (blockPos, blockState) -> {
-                                                            level.scheduleTick(blockPos, blockState.getFluidState().getType(), 1 + rand.nextInt(200));
+                                                            AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, blockState.getFluidState().getType(), 1 + rand.nextInt(200));
                                                             count.incrementAndGet();
                                                         });
                                                     }

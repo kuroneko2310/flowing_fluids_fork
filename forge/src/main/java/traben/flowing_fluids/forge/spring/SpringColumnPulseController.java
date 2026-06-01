@@ -9,6 +9,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.forge.nether.NetherLavaEventSystem;
 
@@ -36,7 +37,7 @@ final class SpringColumnPulseController {
 
             if (offset <= targetHeight && canOccupy) {
                 FFFluidUtils.setFluidStateAtPosToNewAmount(level, currentPos, fluid, 8);
-                level.scheduleTick(currentPos, fluid, fluid.getTickDelay(level));
+                AdaptiveTickScheduler.scheduleFluidTick(level, currentPos, fluid, fluid.getTickDelay(level));
                 realizedHeight = offset;
                 continue;
             }
@@ -67,7 +68,7 @@ final class SpringColumnPulseController {
 
             int remainder = SpringFluidEmitter.emitFluid(level, tipPos, emitted, fluid, growthDirection);
             if (remainder < emitted) {
-                level.scheduleTick(tipPos, fluid, fluid.getTickDelay(level));
+                AdaptiveTickScheduler.scheduleFluidTick(level, tipPos, fluid, fluid.getTickDelay(level));
                 if (fluid.isSame(Fluids.WATER)) {
                     WaterSpringActivity.applySurfaceSplash(level, springPos, tipPos, growthDirection, strength, level.random);
                 }

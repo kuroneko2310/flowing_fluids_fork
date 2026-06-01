@@ -251,7 +251,7 @@ public class ParallelFluidTickManager {
 
         level.getServer().execute(() -> {
             for (ScheduledFluidTick tick : ticks) {
-                level.scheduleTick(tick.pos(), tick.fluidType(), tick.delay());
+                AdaptiveTickScheduler.scheduleFluidTick(level, tick.pos(), tick.fluidType(), tick.delay());
             }
         });
     }

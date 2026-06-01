@@ -13,6 +13,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 
 import java.util.ArrayList;
@@ -83,7 +84,7 @@ public final class SurfaceVentLocator {
                 break;
             }
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, cursor, fluid, 8);
-            level.scheduleTick(cursor, fluid, fluid.getTickDelay(level));
+            AdaptiveTickScheduler.scheduleFluidTick(level, cursor, fluid, fluid.getTickDelay(level));
         }
 
         if (keepSpoutRaised) {
@@ -101,7 +102,7 @@ public final class SurfaceVentLocator {
                 break;
             }
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, crestPos, fluid, 8);
-            level.scheduleTick(crestPos, fluid, fluid.getTickDelay(level));
+            AdaptiveTickScheduler.scheduleFluidTick(level, crestPos, fluid, fluid.getTickDelay(level));
         }
     }
 
@@ -136,7 +137,7 @@ public final class SurfaceVentLocator {
         for (int y = springPos.getY() + 1; y <= surfacePos.getY(); y++) {
             cursor.set(springPos.getX(), y, springPos.getZ());
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, cursor, fluid, 8);
-            level.scheduleTick(cursor, fluid, fluid.getTickDelay(level));
+            AdaptiveTickScheduler.scheduleFluidTick(level, cursor, fluid, fluid.getTickDelay(level));
 
             for (Direction direction : Direction.Plane.HORIZONTAL) {
                 sidePos.set(cursor).move(direction);
@@ -149,7 +150,7 @@ public final class SurfaceVentLocator {
         }
 
         FFFluidUtils.setFluidStateAtPosToNewAmount(level, mouthPos, fluid, 8);
-        level.scheduleTick(mouthPos, fluid, fluid.getTickDelay(level));
+        AdaptiveTickScheduler.scheduleFluidTick(level, mouthPos, fluid, fluid.getTickDelay(level));
         LocatedVent vent = new LocatedVent(springPos.immutable(), mouthPos.immutable(), 0, springBlock.strength());
         sustainSurfaceVent(level, vent, fluid, fluid.isSame(Fluids.WATER));
         level.scheduleTick(springPos, springBlock, Math.max(2, springBlock.strength().minimumDelay()));
@@ -190,7 +191,7 @@ public final class SurfaceVentLocator {
                 ? Math.max(targetFluid.getAmount(), amount)
                 : amount;
         FFFluidUtils.setFluidStateAtPosToNewAmount(level, targetPos, fluid, newAmount);
-        level.scheduleTick(targetPos, fluid, fluid.getTickDelay(level));
+        AdaptiveTickScheduler.scheduleFluidTick(level, targetPos, fluid, fluid.getTickDelay(level));
     }
 
     private static java.util.Optional<LocatedVent> classifySurfaceVent(LevelAccessor level, BlockPos pos, BlockState state,

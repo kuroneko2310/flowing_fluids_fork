@@ -35,6 +35,10 @@ public interface FluidPerformanceMonitorMBean {
 
     long getCacheMisses();
 
+    long getFluidTickSchedulesAccepted();
+
+    long getFluidTickSchedulesCoalesced();
+
     String getPerformanceReport();
 
     void reset();

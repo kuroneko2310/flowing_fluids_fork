@@ -8,6 +8,7 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluids;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 
 final class LavaSpringActivity {
     private LavaSpringActivity() {
@@ -74,7 +75,7 @@ final class LavaSpringActivity {
             if (splashState.isAir() || splashState.canBeReplaced(Fluids.LAVA)) {
                 int splashEmission = SpringColumnPulseController.scaleEmission((net.minecraft.world.level.material.FlowingFluid) Fluids.LAVA, Math.max(1, strength.emissionAmount()));
                 SpringFluidEmitter.emitFluid(level, splashPos, splashEmission, (net.minecraft.world.level.material.FlowingFluid) Fluids.LAVA, Direction.UP);
-                level.scheduleTick(splashPos, Fluids.LAVA, Fluids.LAVA.getTickDelay(level));
+                AdaptiveTickScheduler.scheduleFluidTick(level, splashPos, Fluids.LAVA, Fluids.LAVA.getTickDelay(level));
             }
         }
     }

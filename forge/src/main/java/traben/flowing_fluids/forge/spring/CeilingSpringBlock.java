@@ -29,6 +29,7 @@ import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.Nullable;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 
@@ -94,12 +95,12 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
     public BlockState updateShape(BlockState state, Direction direction, BlockState neighborState,
                                   LevelAccessor level, BlockPos pos, BlockPos neighborPos) {
         if (state.getValue(WATERLOGGED)) {
-            level.scheduleTick(pos, Fluids.WATER, Fluids.WATER.getTickDelay(level));
+            AdaptiveTickScheduler.scheduleFluidTick(level, pos, Fluids.WATER, Fluids.WATER.getTickDelay(level));
         }
         if (direction == Direction.UP && !state.canSurvive(level, pos)) {
             return detachedState(level, pos, state);
         }
-        level.scheduleTick(pos, this, strength.minimumDelay());
+        SpringTickScheduler.schedule(level, pos, this, strength.minimumDelay());
         return state;
     }
 
@@ -107,7 +108,7 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
     public void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
         super.onPlace(state, level, pos, oldState, movedByPiston);
         if (!level.isClientSide && !oldState.is(state.getBlock())) {
-            level.scheduleTick(pos, this, strength.minimumDelay());
+            SpringTickScheduler.schedule(level, pos, this, strength.minimumDelay());
         }
     }
 
@@ -115,7 +116,7 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
     public void neighborChanged(BlockState state, Level level, BlockPos pos, Block block, BlockPos fromPos, boolean moving) {
         super.neighborChanged(state, level, pos, block, fromPos, moving);
         if (!level.isClientSide) {
-            level.scheduleTick(pos, this, strength.minimumDelay());
+            SpringTickScheduler.schedule(level, pos, this, strength.minimumDelay());
         }
     }
 
@@ -129,7 +130,7 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
         if (!FlowingFluids.config.enableMod
                 || FlowingFluids.config.isDimensionExcluded(level)
                 || !FlowingFluids.config.isFluidAllowed(sourceFluid)) {
-            level.scheduleTick(pos, this, nextTickDelay(random));
+            SpringTickScheduler.schedule(level, pos, this, nextTickDelay(random));
             return;
         }
 
@@ -141,7 +142,7 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
         int nextDelay = realizedDepth > 0
                 ? SpringColumnPulseController.nextPulseDelay(level, pos, strength, sourceFluid)
                 : Math.max(strength.minimumDelay() * 4, nextTickDelay(random) * 2);
-        level.scheduleTick(pos, this, nextDelay);
+        SpringTickScheduler.schedule(level, pos, this, nextDelay);
     }
 
     private BlockState detachedState(LevelAccessor level, BlockPos pos, BlockState state) {

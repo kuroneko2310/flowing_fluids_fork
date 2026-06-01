@@ -379,7 +379,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             ci.cancel();
 
             if (FlowingFluids.config.dontTickAtLocation(blockPos, level)) {
-                level.scheduleTick(blockPos, this, 200 + level.random.nextInt(200)); // 10 - 20 seconds delay
+                AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, 200 + level.random.nextInt(200)); // 10 - 20 seconds delay
                 ff$recordFluidTickSample(monitorEnabled, monitor, monitorStartNanos, monitorStartAllocatedBytes, monitorFlowDistance);
                 return; // do not calculate and delay the tick
             }
@@ -460,7 +460,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                             ParallelFluidTickManager.queueDistantStableTick(level, blockPos, waterProfile.getMacroDelayBucket(rangeTier));
                             return;
                         }
-                        level.scheduleTick(blockPos, this, calmDelay);
+                        AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, calmDelay);
                         return;
                     }
 
@@ -482,7 +482,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                             ParallelFluidTickManager.queueDistantStableTick(level, blockPos, waterProfile.getMacroDelayBucket(rangeTier));
                             return;
                         }
-                        level.scheduleTick(blockPos, this, Math.max(1, adaptiveDelay));
+                        AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, Math.max(1, adaptiveDelay));
                         return;
                     }
                 }
@@ -719,7 +719,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         } else {
             // Keep overflow cleanup on a slow local retry instead of running the full
             // horizontal search repeatedly while random ticks wait for evaporation.
-            level.scheduleTick(blockPos, this, 20 + level.random.nextInt(40));
+            AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, 20 + level.random.nextInt(40));
         }
         return true;
     }
@@ -894,7 +894,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             if (FlowingFluids.config.easyPistonPump && FlowingFluids.config.enablePistonPushing) {
                 BlockState below = level.getBlockState(actualPosDown.below());
                 if (below.is(Blocks.MOVING_PISTON) && below.getValue(DirectionalBlock.FACING) == Direction.UP) {
-                    level.scheduleTick(blockPos, this, 10);
+                    AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, 10);
                     FlowingFluids.pistonTick = true;
                     return amount;
                 }
@@ -1286,7 +1286,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                     var block = level.getBlockState(actualPosDown.below());
                     if (block.is(Blocks.MOVING_PISTON) && block.getValue(DirectionalBlock.FACING) == Direction.UP) {
                         // delay this tick
-                        level.scheduleTick(blockPos, this, 10);
+                        AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, 10);
                         FlowingFluids.pistonTick = true;
                         return new FFFlowDownResult(amount, false, false);
                     }
@@ -1904,7 +1904,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                         ? manager.alignDelayToUpdateInterval(blockPos, level, level.getGameTime(),
                         Math.max(1, FlowingFluids.config.waterFlowDistance), desiredDelay, FlowingFluids.config)
                         : desiredDelay;
-                level.scheduleTick(blockPos, this, Math.max(1, deferredDelay));
+                AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, Math.max(1, deferredDelay));
                 return null;
             }
 
@@ -2591,7 +2591,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         }
 
         int sleepyDelay = 16 + Math.floorMod((int) (pos.asLong() ^ level.getGameTime()), 16);
-        level.scheduleTick(pos, this, sleepyDelay);
+        AdaptiveTickScheduler.scheduleFluidTick(level, pos, this, sleepyDelay);
         flowing_fluids$updateStablePoolTracking(level, pos, fluidState, fluidState.getAmount(), true);
         return true;
     }
@@ -2645,9 +2645,9 @@ public abstract class MixinFlowingFluid extends Fluid {
         if (moved <= 0) {
             return false;
         }
-        level.scheduleTick(bestPos, flowingFluid, 1);
+        AdaptiveTickScheduler.scheduleFluidTick(level, bestPos, flowingFluid, 1);
         if (moved < fluidState.getAmount()) {
-            level.scheduleTick(pos, flowingFluid, 4);
+            AdaptiveTickScheduler.scheduleFluidTick(level, pos, flowingFluid, 4);
         }
         FluidActivityTracker.recordChanges(level, List.of(pos.immutable(), bestPos.immutable()));
         return true;

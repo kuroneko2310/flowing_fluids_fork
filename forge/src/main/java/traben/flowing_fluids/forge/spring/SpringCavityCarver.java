@@ -7,6 +7,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluids;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 
 final class SpringCavityCarver {
     private SpringCavityCarver() {
@@ -32,7 +33,7 @@ final class SpringCavityCarver {
             return false;
         }
         level.setBlock(pos, fluid.defaultFluidState().createLegacyBlock(), 2);
-        level.scheduleTick(pos, fluid, fluid.getTickDelay(level));
+        AdaptiveTickScheduler.scheduleFluidTick(level, pos, fluid, fluid.getTickDelay(level));
         return true;
     }
 
