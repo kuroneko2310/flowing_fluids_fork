@@ -110,8 +110,10 @@ subprojects {
         // See https://docs.gradle.org/current/userguide/declaring_repositories.html
         // for more information about repositories.
 
+        // Prefer repo1 on CI; some GitHub-hosted runners intermittently receive
+        // 403 responses from Gradle's default repo.maven.apache.org endpoint.
+        maven { url "https://repo1.maven.org/maven2/" }
         maven { url "https://maven.parchmentmc.org" }
-        maven { url "https://mvnrepository.com/artifact/com.demonwav.mcdev/annotations" }
 
 //        if (rootProject.mc_build as int == 3 || rootProject.mc_build as int == 7) {
 //            maven { // Flywheel
