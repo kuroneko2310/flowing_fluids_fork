@@ -8,7 +8,7 @@ import traben.flowing_fluids.config.FFCommands;
 @Mixin(FFCommands.class)
 public abstract class MixinPipe{
 }
-#else //todo 1.21.1 create fabric
+#else
 
 
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;

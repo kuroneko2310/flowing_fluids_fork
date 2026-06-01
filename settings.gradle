@@ -16,14 +16,7 @@ def enabled=properties.getProperty("enabled_platforms")
 println enabled
 
 include("common")
-if(enabled.contains("fabric")) {
-    include("fabric")
-    include("fabric-like")
-}
-if(enabled.matches(".*\\b(?!neoforge\\b)forge\\b.*"))
-    include("forge")
-if(enabled.contains("neoforge"))
-    include("neoforge")
+include("forge")
 
 rootProject.name = 'flowing_fluids'
 

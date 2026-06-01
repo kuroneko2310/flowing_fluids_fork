@@ -154,7 +154,7 @@ You can also blacklist modded fluids that you don't want to have physics. Via th
 This mod can also be disabled (`/flowing_fluids settings enable_mod on|off`) or removed at any time without breaking the world, as any fluid that is 'full' *(8 levels)* will be saved as a vanilla source block. 
 And all 'non-full' fluids *(1-7 levels)* will be saved as a vanilla flowing blocks which will just disappear once updated in vanilla.
 
-## **The Create Mod - (v0.5 Fabric and v0.6 Forge and NeoForge)**
+## **The Create Mod - Forge 1.20.1**
 
 Flowing Fluids has special compatibility settings for use with the Create mod, to modify the behaviour of water wheels and pipes.
 
@@ -249,7 +249,7 @@ Values between 4-8 still provide a smooth water experience, with more performanc
 - can I use this in my mod-pack? 
   - *go for it*
 - it breaks with the Create mod! 
-  - *you have to have the specifically supported version of create for things to work, currently these are `v0.5` for `Fabric 1.20.1` and `v0.6` for `Forge 1.20.1` and `NeoForge 1.21.1`*
+  - *you have to have the specifically supported Forge 1.20.1 Create version for things to work; this fork is no longer maintained as a Fabric or NeoForge build*
 
 
 <span align="center">

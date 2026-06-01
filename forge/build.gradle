@@ -53,8 +53,6 @@ loom {
 dependencies {
     forge "net.minecraftforge:forge:${rootProject.forge_version}"
 
-//    modImplementation "dev.architectury:architectury-neoforge:$rootProject.architectury_api_version"
-
     common(project(path: ':common', configuration: 'namedElements')) { transitive = false }
     // Forge-only profile sometimes resolves the common dev jar on compileClasspath without exposing
     // every generated package tree to javac. Keep the existing published artifact flow, but also
@@ -90,10 +88,8 @@ processResources {
 }
 
 shadowJar {
-    exclude "fabric.mod.json"
     exclude "architectury.common.json"
     exclude "net/minecraftforge/api/distmarker/**"
-    exclude "net/fabricmc/api/**"
 
     configurations = [project.configurations.shadowBundle]
     archiveClassifier = 'dev-shadow'

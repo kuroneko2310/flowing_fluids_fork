@@ -50,12 +50,8 @@ def enabledPlatformSet = ((rootProject.enabled_platforms ?: "") as String)
 
 rootProject.ext.platformFlags = [
         enabledPlatforms : enabledPlatformSet,
-        fabricEnabled    : enabledPlatformSet.contains("fabric"),
         forgeEnabled     : enabledPlatformSet.contains("forge"),
-        neoForgeEnabled  : enabledPlatformSet.contains("neoforge"),
         forgeOnlyProfile : enabledPlatformSet.contains("forge")
-                && !enabledPlatformSet.contains("fabric")
-                && !enabledPlatformSet.contains("neoforge")
 ]
 
 architectury {
@@ -103,7 +99,7 @@ subprojects {
     apply plugin: 'maven-publish'
 
     base {
-        // Set up a suffixed format for the mod jar names, e.g. `example-fabric`.
+        // Set up a suffixed format for the mod jar names, e.g. `example-forge`.
         archivesName = "${rootProject.archives_name}_${project.name}_$project.minecraft_version"
     }
 
@@ -151,18 +147,9 @@ subprojects {
 
     processResources {
         inputs.property "version", rootProject.mod_version
-        inputs.property "compatible_mc_fabric", rootProject.compatible_mc_fabric
         inputs.property "compatible_mc_forge", rootProject.compatible_mc_forge
 
-        filesMatching("fabric.mod.json") {
-            expand(["version": rootProject.mod_version,
-                    "compatible_mc_fabric": rootProject.compatible_mc_fabric])
-        }
         filesMatching("META-INF/mods.toml") {
-            expand(["version": rootProject.mod_version,
-                    "compatible_mc_forge": rootProject.compatible_mc_forge])
-        }
-        filesMatching("META-INF/neoforge.mods.toml") {
             expand(["version": rootProject.mod_version,
                     "compatible_mc_forge": rootProject.compatible_mc_forge])
         }

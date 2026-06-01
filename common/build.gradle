@@ -5,8 +5,8 @@ architectury {
 }
 
 dependencies {
-    // Common sources still reference Fabric-provided mixin/env annotation types,
-    // but Forge-only builds should not treat Fabric Loader as a runtime dependency.
+    // Compile-only: Architectury/Loom common mixins need Fabric Loader's bundled
+    // Mixin and environment annotation classes. This is not a runtime loader target.
     modCompileOnly "net.fabricmc:fabric-loader:$rootProject.fabric_loader_version"
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
@@ -20,8 +20,4 @@ loom {
 
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
-}
-
-tasks.withType(Jar).configureEach {
-    exclude("net/fabricmc/api/**")
 }
