@@ -20,6 +20,8 @@ import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.FFFluidUtils;
 
 public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> {
+    private static final int WATER_SURFACE_VENT_SEA_LEVEL_MARGIN = 2;
+
     private final FlowingFluid fluid;
     private final boolean lava;
 
@@ -79,6 +81,9 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
         if (!lava && bias < -0.65F) {
             return false;
         }
+        if (shouldSkipWaterVentNearSeaSurface(biome, surfacePos.getY(), seaLevel)) {
+            return false;
+        }
         BlockPos mouthPos = surfacePos.above();
         int shaftDepth = lava ? Mth.nextInt(random, 8, 18) : Mth.nextInt(random, 10, 24);
         BlockPos springPos = surfacePos.below(shaftDepth);
@@ -87,6 +92,9 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
         }
 
         BlockState surfaceState = level.getBlockState(surfacePos);
+        if (!lava && !surfaceState.getFluidState().isEmpty()) {
+            return false;
+        }
         BlockState springState = level.getBlockState(springPos);
         if (!canReplaceSpringCell(springState)) {
             return false;
@@ -135,6 +143,17 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
         fillVentColumn(level, springPos, mouthPos);
         level.scheduleTick(springPos, springBlock, springBlock.nextTickDelay(random));
         return true;
+    }
+
+    private boolean shouldSkipWaterVentNearSeaSurface(net.minecraft.core.Holder<Biome> biome, int y, int seaLevel) {
+        return !lava && isBroadWaterSurfaceBiome(biome) && y <= seaLevel + WATER_SURFACE_VENT_SEA_LEVEL_MARGIN;
+    }
+
+    private static boolean isBroadWaterSurfaceBiome(net.minecraft.core.Holder<Biome> biome) {
+        return FFFluidUtils.isOceanBiome(biome)
+                || FFFluidUtils.isBeachBiome(biome)
+                || FFFluidUtils.isRiverBiome(biome)
+                || FFFluidUtils.matchInfiniteBiomes(biome);
     }
 
     private FloorSpringBlock pickVentBlock(RandomSource random, int seaLevel, int y, float bias) {

@@ -11,7 +11,8 @@ class PlugWaterFeatureTest {
     void skipsOpenOceanSurfaceSources() {
         assertTrue(PlugWaterFeature.shouldIgnoreOpenWaterSource(true, 63, 63));
         assertTrue(PlugWaterFeature.shouldIgnoreOpenWaterSource(true, 62, 63));
-        assertFalse(PlugWaterFeature.shouldIgnoreOpenWaterSource(true, 61, 63));
+        assertTrue(PlugWaterFeature.shouldIgnoreOpenWaterSource(true, 59, 63));
+        assertFalse(PlugWaterFeature.shouldIgnoreOpenWaterSource(true, 57, 63));
         assertFalse(PlugWaterFeature.shouldIgnoreOpenWaterSource(false, 63, 63));
     }
 
@@ -19,7 +20,8 @@ class PlugWaterFeatureTest {
     void keepsBelowSurfaceAirPocketsPluggable() {
         assertTrue(PlugWaterFeature.shouldSkipNaturalAirPocket(true, 63, 63));
         assertTrue(PlugWaterFeature.shouldSkipNaturalAirPocket(true, 62, 63));
-        assertFalse(PlugWaterFeature.shouldSkipNaturalAirPocket(true, 61, 63));
+        assertTrue(PlugWaterFeature.shouldSkipNaturalAirPocket(true, 59, 63));
+        assertFalse(PlugWaterFeature.shouldSkipNaturalAirPocket(true, 57, 63));
         assertFalse(PlugWaterFeature.shouldSkipNaturalAirPocket(false, 63, 63));
     }
 }

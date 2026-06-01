@@ -24,8 +24,8 @@ public class PlugWaterFeature {
             Direction.WEST,
             Direction.DOWN
     };
-    private static final int OCEAN_SURFACE_SKIP_MARGIN = 1;
-    private static final int OCEAN_AIR_POCKET_SKIP_MARGIN = 1;
+    private static final int OCEAN_SURFACE_SKIP_MARGIN = 5;
+    private static final int OCEAN_AIR_POCKET_SKIP_MARGIN = 5;
 
     private static void collectSourceBlocks(LevelAccessor level, ChunkAccess chunkAccess,
                                             int x1, int y1, int z1, int x2, int y2, int z2,

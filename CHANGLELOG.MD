@@ -1,4 +1,9 @@
 
+1.0.1
+- fixed world-generation water plugging placing stone or sand too close to ocean and beach surfaces
+- fixed surface water vent springs replacing ocean, river, or beach water surfaces with stone-like vent shell blocks
+- bumped the Forge 1.20.1 fork version for the terrain-generation bug fix
+
 0.6.1
 - fixed a forge crash
 - fixed the `concrete_powder_drains_water_chance` setting not updating correctly
