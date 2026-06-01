@@ -1,0 +1,68 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Forge mod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Build
+        run: ./gradlew build -Dorg.gradle.java.home="$JAVA_HOME"
+
+      - name: Prepare release files
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p release
+          find forge/build/libs -maxdepth 1 -name "*.jar" \
+            ! -name "*-sources.jar" \
+            ! -name "*-dev.jar" \
+            ! -name "*-dev-shadow.jar" \
+            ! -name "*-javadoc.jar" \
+            -exec cp {} release/ \;
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-mod-jar
+          path: |
+            forge/build/libs/*.jar
+            !forge/build/libs/*-sources.jar
+            !forge/build/libs/*-dev.jar
+            !forge/build/libs/*-dev-shadow.jar
+            !forge/build/libs/*-javadoc.jar
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.jar
+          generate_release_notes: true
