@@ -1,14 +1,9 @@
 package traben.flowing_fluids.forge.mixin;
 
 import com.llamalad7.mixinextras.MixinExtrasBootstrap;
-import net.minecraftforge.fml.ModList;
-import net.minecraftforge.fml.ModLoadingException;
-import net.minecraftforge.fml.javafmlmod.FMLModContainer;
-import net.minecraftforge.fml.loading.FMLConfig;
 import net.minecraftforge.fml.loading.FMLLoader;
-import net.minecraftforge.fml.loading.ModSorter;
-import net.minecraftforge.forgespi.language.IModInfo;
-import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
+import net.minecraftforge.fml.loading.LoadingModList;
+import net.minecraftforge.fml.loading.moddiscovery.ModInfo;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
@@ -19,6 +14,9 @@ import java.util.Map;
 import java.util.Set;
 
 public class FFPluginForge implements IMixinConfigPlugin {
+
+    private static final String CREATE_MIXIN_PACKAGE = "traben.flowing_fluids.forge.mixin.create.";
+    private static final String MEKANISM_MIXIN_PACKAGE = "traben.flowing_fluids.forge.mixin.mekanism.";
 
     @Override
     public void onLoad(final String s) {
@@ -49,7 +47,29 @@ public class FFPluginForge implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(final String s, final String s1) {
+        if (s1 != null && s1.startsWith(CREATE_MIXIN_PACKAGE)) {
+            return isModLoadedDuringMixinSetup("create");
+        }
+        if (s1 != null && s1.startsWith(MEKANISM_MIXIN_PACKAGE)) {
+            return isModLoadedDuringMixinSetup("mekanism");
+        }
         return true;
+    }
+
+    private static boolean isModLoadedDuringMixinSetup(final String modId) {
+        try {
+            LoadingModList loadingModList = FMLLoader.getLoadingModList();
+            if (loadingModList == null) {
+                return false;
+            }
+            for (ModInfo mod : loadingModList.getMods()) {
+                if (modId.equals(mod.getModId())) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
 
     @Override
