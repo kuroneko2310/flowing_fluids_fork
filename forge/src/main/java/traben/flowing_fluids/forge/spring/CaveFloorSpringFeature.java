@@ -41,7 +41,7 @@ public class CaveFloorSpringFeature extends Feature<NoneFeatureConfiguration> {
                 SpringBiomeProfile.waterPlacementCap(random, level.getBiome(origin), 3),
                 spawnMultiplier,
                 1,
-                4
+                1
         );
         if (attemptBudget <= 0 || placementCap <= 0) {
             return false;
@@ -83,7 +83,7 @@ public class CaveFloorSpringFeature extends Feature<NoneFeatureConfiguration> {
             return false;
         }
 
-        if (!prepareOpenWaterColumn(level, pos)) {
+        if (!hasOpenWaterColumn(level, pos)) {
             return false;
         }
 
@@ -105,36 +105,36 @@ public class CaveFloorSpringFeature extends Feature<NoneFeatureConfiguration> {
 
         FloorSpringBlock springBlock = ForgeSpringRegistry.pickGeneratedFloorBlock(random, pos.getY(), seaLevel, damp);
         Direction facing = Direction.Plane.HORIZONTAL.getRandomDirection(random);
-        level.setBlock(pos, springBlock.defaultBlockState()
+        if (!level.setBlock(pos, springBlock.defaultBlockState()
                 .setValue(FloorSpringBlock.FACING, facing)
-                .setValue(FloorSpringBlock.WATERLOGGED, true), 2);
-        WorldgenSpringFluidSeeder.seedLinearSpring(level, pos, Direction.UP, (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER,
+                .setValue(FloorSpringBlock.WATERLOGGED, true), 2)) {
+            return false;
+        }
+        if (!fillOpenWaterColumn(level, pos)) {
+            return false;
+        }
+        WorldgenSpringFluidSeeder.seedLinearSpringInExistingCavity(level, pos, Direction.UP, (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER,
                 springBlock.strength().pulseMinHeight());
         level.scheduleTick(pos, springBlock, springBlock.nextTickDelay(random));
         return true;
     }
 
     private boolean canReplaceSpringCell(BlockState state) {
-        return SpringCavityCarver.canCarveWater(state);
+        return SpringCavityCarver.canPlaceSpringBlock(state, (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER);
     }
 
     private boolean canOpenUpward(BlockState state) {
-        if (state.isAir()) {
-            return true;
-        }
-        if (!state.getFluidState().isEmpty()) {
-            return state.getFluidState().getType().isSame(Fluids.WATER);
-        }
-        return state.canBeReplaced(Fluids.WATER) || SpringCavityCarver.canCarveWater(state);
+        return SpringCavityCarver.canPlaceSpringBlock(state, (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER);
     }
 
-    private boolean prepareOpenWaterColumn(WorldGenLevel level, BlockPos pos) {
-        BlockState aboveState = level.getBlockState(pos.above());
-        if (!canOpenUpward(aboveState)) {
-            return false;
-        }
-        return SpringCavityCarver.carveFluidCell(level, pos.above(), (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER)
-                && SpringCavityCarver.carveFluidCell(level, pos.above(2), (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER);
+    private boolean hasOpenWaterColumn(WorldGenLevel level, BlockPos pos) {
+        return canOpenUpward(level.getBlockState(pos.above()))
+                && canOpenUpward(level.getBlockState(pos.above(2)));
+    }
+
+    private boolean fillOpenWaterColumn(WorldGenLevel level, BlockPos pos) {
+        return SpringCavityCarver.fillExistingCavityFluidCell(level, pos.above(), (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER)
+                && SpringCavityCarver.fillExistingCavityFluidCell(level, pos.above(2), (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER);
     }
 
     private boolean prepareCaveBreathingRoom(WorldGenLevel level, BlockPos pos) {
@@ -150,7 +150,7 @@ public class CaveFloorSpringFeature extends Feature<NoneFeatureConfiguration> {
         if (openSides >= 2) {
             return true;
         }
-        return openSides + SpringCavityCarver.carveWaterBreathingRoom(level, pos, 2 - openSides) >= 2;
+        return false;
     }
 
     private boolean isFloorHost(WorldGenLevel level, BlockPos supportPos, BlockState supportState) {

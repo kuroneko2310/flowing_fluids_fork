@@ -41,7 +41,7 @@ public class CaveCeilingSpringFeature extends Feature<NoneFeatureConfiguration> 
                 SpringBiomeProfile.waterPlacementCap(random, level.getBiome(origin), 2),
                 spawnMultiplier,
                 1,
-                3
+                1
         );
         if (attemptBudget <= 0 || placementCap <= 0) {
             return false;
@@ -82,7 +82,7 @@ public class CaveCeilingSpringFeature extends Feature<NoneFeatureConfiguration> 
         if (!isCeilingHost(level, abovePos, aboveState)) {
             return false;
         }
-        if (!prepareOpenDrop(level, pos)) {
+        if (!hasOpenDrop(level, pos)) {
             return false;
         }
 
@@ -99,35 +99,36 @@ public class CaveCeilingSpringFeature extends Feature<NoneFeatureConfiguration> 
         }
 
         CeilingSpringBlock springBlock = ForgeSpringRegistry.pickGeneratedCeilingBlock(random, pos.getY(), seaLevel, damp);
-        level.setBlock(pos, springBlock.defaultBlockState()
+        if (!level.setBlock(pos, springBlock.defaultBlockState()
                 .setValue(CeilingSpringBlock.FACING, Direction.Plane.HORIZONTAL.getRandomDirection(random))
-                .setValue(CeilingSpringBlock.WATERLOGGED, true), 2);
-        WorldgenSpringFluidSeeder.seedLinearSpring(level, pos, Direction.DOWN, (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER,
+                .setValue(CeilingSpringBlock.WATERLOGGED, true), 2)) {
+            return false;
+        }
+        if (!fillOpenDrop(level, pos)) {
+            return false;
+        }
+        WorldgenSpringFluidSeeder.seedLinearSpringInExistingCavity(level, pos, Direction.DOWN, (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER,
                 springBlock.strength().pulseMinHeight());
         level.scheduleTick(pos, springBlock, springBlock.nextTickDelay(random));
         return true;
     }
 
     private boolean canReplaceSpringCell(BlockState state) {
-        return SpringCavityCarver.canCarveWater(state);
+        return SpringCavityCarver.canPlaceSpringBlock(state, (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER);
     }
 
-    private boolean prepareOpenDrop(WorldGenLevel level, BlockPos pos) {
-        if (!canOpenDownward(level.getBlockState(pos.below()))) {
-            return false;
-        }
-        return SpringCavityCarver.carveFluidCell(level, pos.below(), (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER)
-                && SpringCavityCarver.carveFluidCell(level, pos.below(2), (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER);
+    private boolean hasOpenDrop(WorldGenLevel level, BlockPos pos) {
+        return canOpenDownward(level.getBlockState(pos.below()))
+                && canOpenDownward(level.getBlockState(pos.below(2)));
+    }
+
+    private boolean fillOpenDrop(WorldGenLevel level, BlockPos pos) {
+        return SpringCavityCarver.fillExistingCavityFluidCell(level, pos.below(), (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER)
+                && SpringCavityCarver.fillExistingCavityFluidCell(level, pos.below(2), (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER);
     }
 
     private boolean canOpenDownward(BlockState state) {
-        if (state.isAir()) {
-            return true;
-        }
-        if (!state.getFluidState().isEmpty()) {
-            return state.getFluidState().getType().isSame(Fluids.WATER);
-        }
-        return state.canBeReplaced(Fluids.WATER) || SpringCavityCarver.canCarveWater(state);
+        return SpringCavityCarver.canPlaceSpringBlock(state, (net.minecraft.world.level.material.FlowingFluid) Fluids.WATER);
     }
 
     private boolean isCeilingHost(WorldGenLevel level, BlockPos supportPos, BlockState supportState) {

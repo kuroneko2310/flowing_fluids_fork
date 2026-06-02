@@ -27,6 +27,26 @@ final class SpringCavityCarver {
         return canCarveForFluid(state, (FlowingFluid) Fluids.WATER);
     }
 
+    static boolean canPlaceSpringBlock(BlockState state, FlowingFluid fluid) {
+        if (state.isAir()) {
+            return true;
+        }
+        if (!state.getFluidState().isEmpty()) {
+            return state.getFluidState().getType().isSame(fluid);
+        }
+        return state.canBeReplaced(fluid);
+    }
+
+    static boolean fillExistingCavityFluidCell(WorldGenLevel level, BlockPos pos, FlowingFluid fluid) {
+        BlockState state = level.getBlockState(pos);
+        if (!canPlaceSpringBlock(state, fluid)) {
+            return false;
+        }
+        level.setBlock(pos, fluid.defaultFluidState().createLegacyBlock(), 2);
+        AdaptiveTickScheduler.scheduleFluidTick(level, pos, fluid, fluid.getTickDelay(level));
+        return true;
+    }
+
     static boolean carveFluidCell(WorldGenLevel level, BlockPos pos, FlowingFluid fluid) {
         BlockState state = level.getBlockState(pos);
         if (!canCarveForFluid(state, fluid)) {

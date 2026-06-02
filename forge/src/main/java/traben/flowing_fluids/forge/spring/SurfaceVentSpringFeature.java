@@ -105,19 +105,7 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
         BlockState supportState = level.getBlockState(supportPos);
         BlockState shellState = chooseVentShellState(surfaceState, supportState);
 
-        if (!prepareSurfaceCap(level, surfacePos, surfaceState, shellState)) {
-            return false;
-        }
-        if (!prepareVentMouth(level, mouthPos)) {
-            return false;
-        }
-        if (!prepareVentSupport(level, supportPos, supportState, shellState)) {
-            return false;
-        }
         if (!hasCarveableShaft(level, springPos, surfacePos)) {
-            return false;
-        }
-        if (!ensureStableVentWalls(level, springPos, surfacePos, shellState)) {
             return false;
         }
 
@@ -136,10 +124,25 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
             }
         }
 
+        if (!prepareSurfaceCap(level, surfacePos, surfaceState, shellState)) {
+            return false;
+        }
+        if (!prepareVentMouth(level, mouthPos)) {
+            return false;
+        }
+        if (!prepareVentSupport(level, supportPos, supportState, shellState)) {
+            return false;
+        }
+        if (!ensureStableVentWalls(level, springPos, surfacePos, shellState)) {
+            return false;
+        }
+
         FloorSpringBlock springBlock = pickVentBlock(random, seaLevel, surfacePos.getY(), bias);
-        level.setBlock(springPos, springBlock.defaultBlockState()
+        if (!level.setBlock(springPos, springBlock.defaultBlockState()
                 .setValue(FloorSpringBlock.FACING, Direction.Plane.HORIZONTAL.getRandomDirection(random))
-                .setValue(FloorSpringBlock.WATERLOGGED, false), 2);
+                .setValue(FloorSpringBlock.WATERLOGGED, false), 2)) {
+            return false;
+        }
 
         fillVentColumn(level, springPos, mouthPos);
         level.scheduleTick(springPos, springBlock, springBlock.nextTickDelay(random));

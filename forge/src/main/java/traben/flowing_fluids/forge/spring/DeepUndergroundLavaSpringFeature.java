@@ -149,9 +149,11 @@ public class DeepUndergroundLavaSpringFeature extends Feature<NoneFeatureConfigu
                                 + DeepLavaUpwellingBias.floorStrengthBonus(upwellingScore)
                 )
         );
-        level.setBlock(pos, springBlock.defaultBlockState()
-                .setValue(FloorSpringBlock.FACING, net.minecraft.core.Direction.Plane.HORIZONTAL.getRandomDirection(random)), 2);
-        WorldgenSpringFluidSeeder.seedLinearSpring(level, pos, net.minecraft.core.Direction.UP,
+        if (!level.setBlock(pos, springBlock.defaultBlockState()
+                .setValue(FloorSpringBlock.FACING, net.minecraft.core.Direction.Plane.HORIZONTAL.getRandomDirection(random)), 2)) {
+            return false;
+        }
+        WorldgenSpringFluidSeeder.seedLinearSpringInExistingCavity(level, pos, net.minecraft.core.Direction.UP,
                 (net.minecraft.world.level.material.FlowingFluid) Fluids.LAVA, springBlock.strength().pulseMinHeight() + (inNether ? 1 : 0));
         level.scheduleTick(pos, springBlock, springBlock.nextTickDelay(random));
         return true;

@@ -142,9 +142,11 @@ public class DeepUndergroundCeilingLavaSpringFeature extends Feature<NoneFeature
                 lavaRichness,
                 Math.min(3, DeepLavaDepthProfile.strengthBonus(depthTier) + (inNether ? 1 : 0))
         );
-        level.setBlock(pos, springBlock.defaultBlockState()
-                .setValue(CeilingSpringBlock.FACING, Direction.Plane.HORIZONTAL.getRandomDirection(random)), 2);
-        WorldgenSpringFluidSeeder.seedLinearSpring(level, pos, Direction.DOWN,
+        if (!level.setBlock(pos, springBlock.defaultBlockState()
+                .setValue(CeilingSpringBlock.FACING, Direction.Plane.HORIZONTAL.getRandomDirection(random)), 2)) {
+            return false;
+        }
+        WorldgenSpringFluidSeeder.seedLinearSpringInExistingCavity(level, pos, Direction.DOWN,
                 (net.minecraft.world.level.material.FlowingFluid) Fluids.LAVA, springBlock.strength().pulseMinHeight());
         level.scheduleTick(pos, springBlock, springBlock.nextTickDelay(random));
         return true;

@@ -14,6 +14,16 @@ final class WorldgenSpringFluidSeeder {
 
     static void seedLinearSpring(WorldGenLevel level, BlockPos springPos, Direction growthDirection,
                                  FlowingFluid fluid, int maxLength) {
+        seedLinearSpring(level, springPos, growthDirection, fluid, maxLength, true);
+    }
+
+    static void seedLinearSpringInExistingCavity(WorldGenLevel level, BlockPos springPos, Direction growthDirection,
+                                                FlowingFluid fluid, int maxLength) {
+        seedLinearSpring(level, springPos, growthDirection, fluid, maxLength, false);
+    }
+
+    private static void seedLinearSpring(WorldGenLevel level, BlockPos springPos, Direction growthDirection,
+                                        FlowingFluid fluid, int maxLength, boolean carveClosedCavities) {
         if (maxLength <= 0) {
             return;
         }
@@ -23,7 +33,10 @@ final class WorldgenSpringFluidSeeder {
             cursor.set(springPos).move(growthDirection, offset);
             BlockState outputState = level.getBlockState(cursor);
             if (!FFFluidUtils.canStorePartialFluidAmount(level, cursor, outputState, fluid)) {
-                if (!SpringCavityCarver.carveFluidCell(level, cursor, fluid)) {
+                boolean filled = carveClosedCavities
+                        ? SpringCavityCarver.carveFluidCell(level, cursor, fluid)
+                        : SpringCavityCarver.fillExistingCavityFluidCell(level, cursor, fluid);
+                if (!filled) {
                     break;
                 }
                 continue;

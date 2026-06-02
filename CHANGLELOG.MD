@@ -1,4 +1,10 @@
 
+1.0.2
+- fixed cave water springs generating inside sealed stone instead of requiring an existing cave opening
+- fixed worldgen spring placement paths that could leave water or lava without the spring block when a later placement check failed
+- reduced cave spring clustering by limiting cave wall, floor, and ceiling spring placement to one generated spring per feature pass
+- fixed generated lava spring seeding so deep lava springs only fill existing open lava cavities instead of carving hidden lava pockets through solid stone
+
 1.0.1
 - fixed world-generation water plugging placing stone or sand too close to ocean and beach surfaces
 - fixed surface water vent springs replacing ocean, river, or beach water surfaces with stone-like vent shell blocks
