@@ -29,6 +29,7 @@ import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FlowingFluidsPlatform;
 import traben.flowing_fluids.api.FlowingFluidsAPI;
 import traben.flowing_fluids.flood.FloodEventSystem;
+import traben.flowing_fluids.performance.FluidPerformanceMonitor;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -84,6 +85,10 @@ public final class RainWaterSystem {
     };
     private static final int MIN_PLACEMENT_QUEUE_CAPACITY = 1;
     private static final int MAX_RAIN_PLACEMENTS_PROCESSED_PER_TICK = 256;
+    private static final double RAIN_LOAD_SHED_SOFT_MSPT = 55.0;
+    private static final double RAIN_LOAD_SHED_HARD_MSPT = 180.0;
+    private static final int RAIN_LOAD_SHED_SOFT_FLUID_TICKS = 131_072;
+    private static final int RAIN_LOAD_SHED_HARD_FLUID_TICKS = 262_144;
 
     private static final long FALLBACK_CACHE_RESYNC_TICKS = 20L * 60L * 5L;
     private static final long MIN_WAKE_TTL_TICKS = 200L;
@@ -128,7 +133,8 @@ public final class RainWaterSystem {
             clearWakeState(key);
             return;
         }
-        processPlacementQueue();
+        float loadMultiplier = computeRainLoadMultiplier(level);
+        processPlacementQueue(loadMultiplier);
 
         final long last = lastRunTick.getOrDefault(key, Long.MIN_VALUE);
         final int interval = FlowingFluids.config.rainGenerateIntervalTicks;
@@ -136,7 +142,7 @@ public final class RainWaterSystem {
         lastRunTick.put(key, now);
 
         final RandomSource random = level.getRandom();
-        final int maxChunksPerTick = FlowingFluids.config.rainMaxChunksPerTick;
+        final int maxChunksPerTick = computeLoadShedChunkLimit(FlowingFluids.config.rainMaxChunksPerTick, loadMultiplier);
         long[] chunkArray = collectActiveRainChunks(key, now);
         if (chunkArray.length == 0) return;
         final int minBuildY = level.getMinBuildHeight();
@@ -190,9 +196,12 @@ public final class RainWaterSystem {
                     level.getSeed()
             );
             final float intensityMultiplier = getRainIntensityMultiplier(intensityStage);
-            final int attempts = Math.max(1, Math.round(FlowingFluids.config.rainAttemptsPerChunk * chunkData.cache.precipMul * intensityMultiplier));
+            final int attempts = Math.max(1, Math.round(FlowingFluids.config.rainAttemptsPerChunk
+                    * chunkData.cache.precipMul
+                    * intensityMultiplier
+                    * loadMultiplier));
             spawnRainWaterInChunk(level, random, cx, cz, attempts, chunkData.cache.precipMul, intensityStage,
-                    intensityMultiplier, currentTime, mPos, mAbove, mCursor, minBuildY);
+                    intensityMultiplier, loadMultiplier, currentTime, mPos, mAbove, mCursor, minBuildY);
         }
     }
 
@@ -307,6 +316,7 @@ public final class RainWaterSystem {
                                               int attempts, float rainMul,
                                               RainIntensityStage intensityStage,
                                               float intensityMultiplier,
+                                              float loadMultiplier,
                                               long currentTime,
                                               BlockPos.MutableBlockPos mPos,
                                               BlockPos.MutableBlockPos mAbove,
@@ -323,7 +333,7 @@ public final class RainWaterSystem {
             return;
         }
 
-        final float effectiveChance = baseChance * congestionMultiplier;
+        final float effectiveChance = baseChance * congestionMultiplier * loadMultiplier;
         if (effectiveChance <= 0.0f) {
             return;
         }
@@ -571,13 +581,14 @@ public final class RainWaterSystem {
         return Math.max(minimumMultiplier, scaled);
     }
 
-    private static void processPlacementQueue() {
+    private static void processPlacementQueue(float loadMultiplier) {
         if (placementQueue.isEmpty()) {
             return;
         }
 
         final int configuredLimit = Math.max(MIN_PLACEMENT_QUEUE_CAPACITY, FlowingFluids.config.rainPlacementQueueSize);
-        final int maxProcessPerTick = Math.min(configuredLimit, MAX_RAIN_PLACEMENTS_PROCESSED_PER_TICK);
+        final int maxProcessPerTick = Math.min(configuredLimit,
+                Math.max(1, Math.round(MAX_RAIN_PLACEMENTS_PROCESSED_PER_TICK * loadMultiplier)));
         int processed = 0;
         final Map<ResourceKey<Level>, PlacementAggregation> aggregated = new HashMap<>();
 
@@ -598,6 +609,32 @@ public final class RainWaterSystem {
         for (PlacementAggregation perLevel : aggregated.values()) {
             perLevel.forEach(placement -> executeWaterPlacement(placement.level(), placement.pos(), placement.amount()));
         }
+    }
+
+    private static int computeLoadShedChunkLimit(int configuredMaxChunks, float loadMultiplier) {
+        if (configuredMaxChunks <= 0) {
+            return configuredMaxChunks;
+        }
+        return Math.max(1, Math.round(configuredMaxChunks * loadMultiplier));
+    }
+
+    private static float computeRainLoadMultiplier(ServerLevel level) {
+        float multiplier = 1.0f;
+        double avgMspt = FluidPerformanceMonitor.getInstance().getAverageServerMspt20();
+        if (avgMspt > RAIN_LOAD_SHED_SOFT_MSPT) {
+            double range = Math.max(1.0, RAIN_LOAD_SHED_HARD_MSPT - RAIN_LOAD_SHED_SOFT_MSPT);
+            double overload = Mth.clamp((avgMspt - RAIN_LOAD_SHED_SOFT_MSPT) / range, 0.0, 1.0);
+            multiplier *= (float) (1.0 - 0.85 * overload);
+        }
+
+        int queuedFluidTicks = level.getFluidTicks().count();
+        if (queuedFluidTicks > RAIN_LOAD_SHED_SOFT_FLUID_TICKS) {
+            float range = Math.max(1.0f, RAIN_LOAD_SHED_HARD_FLUID_TICKS - RAIN_LOAD_SHED_SOFT_FLUID_TICKS);
+            float overload = Mth.clamp((queuedFluidTicks - RAIN_LOAD_SHED_SOFT_FLUID_TICKS) / range, 0.0f, 1.0f);
+            multiplier *= 1.0f - 0.80f * overload;
+        }
+
+        return Mth.clamp(multiplier, 0.05f, 1.0f);
     }
 
     private static void mergePlacementTask(Map<ResourceKey<Level>, PlacementAggregation> aggregated,

@@ -1,4 +1,9 @@
 
+1.0.3
+- restored the ScheduledTick pressure valve so duplicate fluid wakeups are rejected when Minecraft's fluid tick queue is already heavily backlogged
+- added rain load shedding based on recent MSPT and queued fluid tick pressure so extreme rain settings throttle generation and placement instead of creating runaway lag
+- reduced save-time stalls from virtual waterlogging by only marking the saved data dirty when the stored fluid actually changes
+
 1.0.2
 - fixed cave water springs generating inside sealed stone instead of requiring an existing cave opening
 - fixed worldgen spring placement paths that could leave water or lava without the spring block when a later placement check failed

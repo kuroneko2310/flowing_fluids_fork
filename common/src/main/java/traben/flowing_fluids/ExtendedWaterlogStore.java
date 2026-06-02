@@ -266,7 +266,14 @@ public final class ExtendedWaterlogStore {
         }
 
         void set(BlockPos pos, Fluid fluid, int amount) {
-            putRaw(pos.asLong(), fluid, amount);
+            int clampedAmount = Math.max(1, Math.min(8, amount));
+            long posKey = pos.asLong();
+            StoredFluid previous = byPosition.get(posKey);
+            StoredFluid next = new StoredFluid(fluid, clampedAmount);
+            if (next.equals(previous)) {
+                return;
+            }
+            putRaw(posKey, fluid, clampedAmount);
             setDirty();
         }
 

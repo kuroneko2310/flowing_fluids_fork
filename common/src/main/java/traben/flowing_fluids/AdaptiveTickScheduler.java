@@ -812,7 +812,8 @@ public class AdaptiveTickScheduler {
         maybeCleanupScheduledFluidTicks(dimensionData, now);
 
         ScheduledFluidTickKey key = new ScheduledFluidTickKey(scheduledPos.asLong(), fluid);
-        long requestedDueTick = now + Math.max(1, delay);
+        int requestedDelayTicks = Math.max(1, delay);
+        long requestedDueTick = now + requestedDelayTicks;
         int queuedFluidTicks = lvl.getFluidTicks().count();
         boolean vanillaAlreadyHasTick = queuedFluidTicks >= SCHEDULED_FLUID_TICK_SOFT_LIMIT
                 && lvl.getFluidTicks().hasScheduledTick(scheduledPos, fluid);
@@ -834,7 +835,7 @@ public class AdaptiveTickScheduler {
 
         trackScheduledFluidTick(dimensionData, key, new ChunkPos(scheduledPos));
         monitor.recordFluidTickScheduleAccepted();
-        lvl.scheduleTick(scheduledPos, fluid, Math.max(1, delay));
+        lvl.scheduleTick(scheduledPos, fluid, requestedDelayTicks);
     }
 
     static boolean shouldAcceptScheduledFluidTick(Long existingDueTick, long requestedDueTick, long currentGameTick) {
