@@ -1,4 +1,9 @@
 
+1.0.4
+- fixed severe integrated-server tick stalls caused by repeatedly counting Minecraft's fluid ScheduledTick queue while it was already heavily backlogged
+- replaced full scheduled-fluid cleanup scans with a bounded deduplicated cleanup queue so an overloaded tick cannot repeatedly scan the same pending fluid wakeups
+- changed rain load shedding to use the mod's own tracked scheduled-fluid count instead of forcing a vanilla queue count on every server tick
+
 1.0.3
 - restored the ScheduledTick pressure valve so duplicate fluid wakeups are rejected when Minecraft's fluid tick queue is already heavily backlogged
 - added rain load shedding based on recent MSPT and queued fluid tick pressure so extreme rain settings throttle generation and placement instead of creating runaway lag

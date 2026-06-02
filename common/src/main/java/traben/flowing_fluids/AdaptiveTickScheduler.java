@@ -16,13 +16,14 @@ import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.performance.FluidPerformanceMonitor;
 import traben.flowing_fluids.util.DimensionKey;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * Next-generation adaptive tick delay scheduler with equilibrium index system.
@@ -56,6 +57,7 @@ public class AdaptiveTickScheduler {
     private static final float CALM_MACRO_MAX_FRONTIER_RATIO = 0.08f;
     private static final int CALM_MACRO_MIN_AVERAGE_LEVEL = FluidAmountConverter.toInternal(7);
     private static final long SCHEDULED_FLUID_TICK_CLEANUP_INTERVAL_TICKS = 40L;
+    private static final int SCHEDULED_FLUID_TICK_CLEANUP_BUDGET = 4096;
     private static final int SCHEDULED_FLUID_TICK_SOFT_LIMIT = 262_144;
 
     // Equilibrium thresholds
@@ -814,13 +816,13 @@ public class AdaptiveTickScheduler {
         ScheduledFluidTickKey key = new ScheduledFluidTickKey(scheduledPos.asLong(), fluid);
         int requestedDelayTicks = Math.max(1, delay);
         long requestedDueTick = now + requestedDelayTicks;
-        int queuedFluidTicks = lvl.getFluidTicks().count();
-        boolean vanillaAlreadyHasTick = queuedFluidTicks >= SCHEDULED_FLUID_TICK_SOFT_LIMIT
-                && lvl.getFluidTicks().hasScheduledTick(scheduledPos, fluid);
+        int trackedFluidTicks = getTrackedScheduledFluidTickCount(dimensionData);
+        boolean trackedAlreadyHasTick = trackedFluidTicks >= SCHEDULED_FLUID_TICK_SOFT_LIMIT
+                && dimensionData.scheduledFluidTickDueTicks.containsKey(key);
         boolean[] accepted = new boolean[1];
         dimensionData.scheduledFluidTickDueTicks.compute(key, (ignored, existingDueTick) -> {
             if (!shouldAcceptScheduledFluidTick(existingDueTick, requestedDueTick, now,
-                    vanillaAlreadyHasTick, queuedFluidTicks)) {
+                    trackedAlreadyHasTick, trackedFluidTicks)) {
                 return existingDueTick;
             }
             accepted[0] = true;
@@ -843,11 +845,24 @@ public class AdaptiveTickScheduler {
     }
 
     static boolean shouldAcceptScheduledFluidTick(Long existingDueTick, long requestedDueTick, long currentGameTick,
-                                                  boolean vanillaAlreadyHasTick, int queuedFluidTicks) {
-        if (vanillaAlreadyHasTick && queuedFluidTicks >= SCHEDULED_FLUID_TICK_SOFT_LIMIT) {
+                                                  boolean trackedAlreadyHasTick, int trackedFluidTicks) {
+        if (trackedAlreadyHasTick && trackedFluidTicks >= SCHEDULED_FLUID_TICK_SOFT_LIMIT) {
             return false;
         }
         return existingDueTick == null || existingDueTick <= currentGameTick || requestedDueTick < existingDueTick;
+    }
+
+    public static int getTrackedScheduledFluidTickCount(LevelAccessor level) {
+        if (level == null) {
+            return 0;
+        }
+        SchedulerDimensionData dimensionData = DIMENSION_DATA.get(DimensionKey.of(level));
+        return dimensionData == null ? 0 : getTrackedScheduledFluidTickCount(dimensionData);
+    }
+
+    private static int getTrackedScheduledFluidTickCount(SchedulerDimensionData dimensionData) {
+        long trackedCount = dimensionData.scheduledFluidTickDueTicks.mappingCount();
+        return trackedCount > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) trackedCount;
     }
 
     private static void trackScheduledFluidTick(SchedulerDimensionData dimensionData, ScheduledFluidTickKey key,
@@ -855,6 +870,9 @@ public class AdaptiveTickScheduler {
         dimensionData.scheduledFluidTickChunkIndex
             .computeIfAbsent(chunkPos, ignored -> ConcurrentHashMap.newKeySet())
             .add(key);
+        if (dimensionData.scheduledFluidTickCleanupQueued.add(key)) {
+            dimensionData.scheduledFluidTickCleanupQueue.add(key);
+        }
     }
 
     private static void untrackScheduledFluidTick(SchedulerDimensionData dimensionData, ScheduledFluidTickKey key) {
@@ -873,6 +891,9 @@ public class AdaptiveTickScheduler {
         if (dimensionData.scheduledFluidTickDueTicks.isEmpty()) {
             return;
         }
+        if (dimensionData.lastScheduledFluidTickCleanup == currentGameTick) {
+            return;
+        }
         if (dimensionData.lastScheduledFluidTickCleanup != Long.MIN_VALUE
             && currentGameTick - dimensionData.lastScheduledFluidTickCleanup < SCHEDULED_FLUID_TICK_CLEANUP_INTERVAL_TICKS
             && dimensionData.scheduledFluidTickDueTicks.size() < SCHEDULED_FLUID_TICK_SOFT_LIMIT) {
@@ -883,15 +904,28 @@ public class AdaptiveTickScheduler {
 
     private static void cleanupScheduledFluidTicks(SchedulerDimensionData dimensionData, long currentGameTick) {
         dimensionData.lastScheduledFluidTickCleanup = currentGameTick;
-        ArrayList<ScheduledFluidTickKey> expired = new ArrayList<>();
-        for (Map.Entry<ScheduledFluidTickKey, Long> entry : dimensionData.scheduledFluidTickDueTicks.entrySet()) {
-            if (entry.getValue() <= currentGameTick) {
-                expired.add(entry.getKey());
+        int scanned = 0;
+        while (scanned < SCHEDULED_FLUID_TICK_CLEANUP_BUDGET) {
+            ScheduledFluidTickKey key = dimensionData.scheduledFluidTickCleanupQueue.poll();
+            if (key == null) {
+                return;
             }
-        }
-        for (ScheduledFluidTickKey key : expired) {
-            dimensionData.scheduledFluidTickDueTicks.remove(key);
-            untrackScheduledFluidTick(dimensionData, key);
+            dimensionData.scheduledFluidTickCleanupQueued.remove(key);
+            Long dueTick = dimensionData.scheduledFluidTickDueTicks.get(key);
+            if (dueTick == null) {
+                scanned++;
+                continue;
+            }
+            if (dueTick <= currentGameTick) {
+                if (dimensionData.scheduledFluidTickDueTicks.remove(key, dueTick)) {
+                    untrackScheduledFluidTick(dimensionData, key);
+                }
+            } else {
+                if (dimensionData.scheduledFluidTickCleanupQueued.add(key)) {
+                    dimensionData.scheduledFluidTickCleanupQueue.add(key);
+                }
+            }
+            scanned++;
         }
     }
 
@@ -1397,6 +1431,8 @@ public class AdaptiveTickScheduler {
             removed.chunkTouchTicks.clear();
             removed.scheduledFluidTickDueTicks.clear();
             removed.scheduledFluidTickChunkIndex.clear();
+            removed.scheduledFluidTickCleanupQueue.clear();
+            removed.scheduledFluidTickCleanupQueued.clear();
         }
     }
 
@@ -1475,6 +1511,8 @@ public class AdaptiveTickScheduler {
         final ConcurrentHashMap<ChunkPos, Long> chunkTouchTicks = new ConcurrentHashMap<>();
         final ConcurrentHashMap<ScheduledFluidTickKey, Long> scheduledFluidTickDueTicks = new ConcurrentHashMap<>();
         final ConcurrentHashMap<ChunkPos, Set<ScheduledFluidTickKey>> scheduledFluidTickChunkIndex = new ConcurrentHashMap<>();
+        final Queue<ScheduledFluidTickKey> scheduledFluidTickCleanupQueue = new ConcurrentLinkedQueue<>();
+        final Set<ScheduledFluidTickKey> scheduledFluidTickCleanupQueued = ConcurrentHashMap.newKeySet();
         volatile long lastScheduledFluidTickCleanup = Long.MIN_VALUE;
     }
 

@@ -24,6 +24,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.Fluids;
 import org.slf4j.Logger;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FlowingFluidsPlatform;
@@ -627,7 +628,7 @@ public final class RainWaterSystem {
             multiplier *= (float) (1.0 - 0.85 * overload);
         }
 
-        int queuedFluidTicks = level.getFluidTicks().count();
+        int queuedFluidTicks = AdaptiveTickScheduler.getTrackedScheduledFluidTickCount(level);
         if (queuedFluidTicks > RAIN_LOAD_SHED_SOFT_FLUID_TICKS) {
             float range = Math.max(1.0f, RAIN_LOAD_SHED_HARD_FLUID_TICKS - RAIN_LOAD_SHED_SOFT_FLUID_TICKS);
             float overload = Mth.clamp((queuedFluidTicks - RAIN_LOAD_SHED_SOFT_FLUID_TICKS) / range, 0.0f, 1.0f);

@@ -53,7 +53,7 @@ class AdaptiveTickSchedulerRegressionTest {
     }
 
     @Test
-    void scheduledFluidTickGateUsesVanillaQueueAsPressureValveWhenBacklogged() {
+    void scheduledFluidTickGateUsesTrackedQueueAsPressureValveWhenBacklogged() {
         long now = 100L;
 
         assertFalse(AdaptiveTickScheduler.shouldAcceptScheduledFluidTick(null, now + 1, now, true, 262_144));
