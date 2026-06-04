@@ -61,12 +61,14 @@ public final class FluidAutoTickDelay {
         }
     }
 
-    public static int getAdjustedWaterTickDelay(int baseDelay) {
-        return Mth.clamp(baseDelay + waterExtraDelay, 1, 255);
+    public static float getAdjustedWaterTickDelay(float baseDelay) {
+        return Mth.clamp(FluidFineTickDelay.addExtraDelay(baseDelay, waterExtraDelay),
+                FluidFineTickDelay.MIN_BASE_DELAY, FluidFineTickDelay.MAX_BASE_DELAY);
     }
 
-    public static int getAdjustedLavaTickDelay(int baseDelay) {
-        return Mth.clamp(baseDelay + lavaExtraDelay, 1, 255);
+    public static float getAdjustedLavaTickDelay(float baseDelay) {
+        return Mth.clamp(FluidFineTickDelay.addExtraDelay(baseDelay, lavaExtraDelay),
+                FluidFineTickDelay.MIN_BASE_DELAY, FluidFineTickDelay.MAX_BASE_DELAY);
     }
 
     public static void reloadConfig() {
@@ -91,9 +93,12 @@ public final class FluidAutoTickDelay {
     public static String describeStatus() {
         return "Auto tick delay status"
                 + "\nEnabled: " + FlowingFluids.config.enableAutoTickDelay
-                + "\nWater extra delay: +" + waterExtraDelay + " (base " + FlowingFluids.config.waterTickDelay + ")"
-                + "\nLava extra delay: +" + lavaExtraDelay + " (base " + FlowingFluids.config.lavaTickDelay
-                + ", nether base " + FlowingFluids.config.lavaNetherTickDelay + ")"
+                + "\nWater extra delay: +" + waterExtraDelay + " (base "
+                + FluidFineTickDelay.describeBaseDelay(FlowingFluids.config.waterTickDelay) + ", effective "
+                + FluidFineTickDelay.describeEffectiveDelay(getAdjustedWaterTickDelay(FlowingFluids.config.waterTickDelay)) + ")"
+                + "\nLava extra delay: +" + lavaExtraDelay + " (base "
+                + FluidFineTickDelay.describeBaseDelay(FlowingFluids.config.lavaTickDelay) + ", nether base "
+                + FluidFineTickDelay.describeBaseDelay(FlowingFluids.config.lavaNetherTickDelay) + ")"
                 + "\nUpdate rate: " + FlowingFluids.config.autoTickDelayUpdateRateTicks + " ticks"
                 + "\nTarget MSPT multiplier: " + FlowingFluids.config.autoTickDelayTargetMsptMultiplier
                 + "\nLast MSPT: " + String.format("%.2f", lastMeasuredMspt)

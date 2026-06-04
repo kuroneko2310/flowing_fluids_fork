@@ -19,7 +19,7 @@ class WaterFlowProfileRegressionTest {
     }
 
     @Test
-    void snapshotRadiusShrinksWithDistanceLoadForChannelRequests() {
+    void snapshotRadiusShrinksWithDistanceLoadForChannelRequestsWithoutShortChannelCap() {
         int oldHorizontalDepth = FlowingFluids.config.horizontalSupplementDepth;
         int oldInletSteps = FlowingFluids.config.inletProbeMaxSteps;
         int oldBfsDistance = FlowingFluids.config.bfsMaxSearchDistance;
@@ -33,9 +33,33 @@ class WaterFlowProfileRegressionTest {
             int shedLoadRadius = WaterFlowProfile.computeDistanceScaledSnapshotRadius(
                 6, 0.35f, true, WaterFlowProfile.Regime.CHANNEL);
 
-            assertEquals(10, fullLoadRadius);
+            assertEquals(12, fullLoadRadius);
             assertEquals(9, shedLoadRadius);
             assertTrue(shedLoadRadius < fullLoadRadius);
+        } finally {
+            FlowingFluids.config.horizontalSupplementDepth = oldHorizontalDepth;
+            FlowingFluids.config.inletProbeMaxSteps = oldInletSteps;
+            FlowingFluids.config.bfsMaxSearchDistance = oldBfsDistance;
+        }
+    }
+
+    @Test
+    void channelEqualizerCanLookPastDefaultSearchDistanceAlongLongNarrowRuns() {
+        int oldHorizontalDepth = FlowingFluids.config.horizontalSupplementDepth;
+        int oldInletSteps = FlowingFluids.config.inletProbeMaxSteps;
+        int oldBfsDistance = FlowingFluids.config.bfsMaxSearchDistance;
+        try {
+            FlowingFluids.config.horizontalSupplementDepth = 8;
+            FlowingFluids.config.inletProbeMaxSteps = 8;
+            FlowingFluids.config.bfsMaxSearchDistance = 16;
+
+            assertEquals(64, WaterFlowProfile.computeConfiguredEqualizerDepthTarget(
+                WaterFlowProfile.Regime.CHANNEL, FlowingFluids.config.bfsMaxSearchDistance));
+
+            int radius = WaterFlowProfile.computeDistanceScaledSnapshotRadius(
+                48, 1.0f, true, WaterFlowProfile.Regime.CHANNEL);
+
+            assertEquals(48, radius);
         } finally {
             FlowingFluids.config.horizontalSupplementDepth = oldHorizontalDepth;
             FlowingFluids.config.inletProbeMaxSteps = oldInletSteps;

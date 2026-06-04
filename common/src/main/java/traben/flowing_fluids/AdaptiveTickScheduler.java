@@ -75,6 +75,18 @@ public class AdaptiveTickScheduler {
         return DIMENSION_DATA.computeIfAbsent(DimensionKey.of(level), key -> new SchedulerDimensionData());
     }
 
+    private static SchedulerDimensionData getExistingData(LevelAccessor level) {
+        return level == null ? null : DIMENSION_DATA.get(DimensionKey.of(level));
+    }
+
+    private static FluidStabilityData getExistingStabilityData(LevelAccessor level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return null;
+        }
+        SchedulerDimensionData dimensionData = getExistingData(level);
+        return dimensionData == null ? null : dimensionData.stabilityMap.get(pos.asLong());
+    }
+
     private static FluidStabilityData createAndTrackData(SchedulerDimensionData dimensionData, BlockPos pos, int initialAmount) {
         long posKey = pos.asLong();
         FluidStabilityData created = new FluidStabilityData(initialAmount, 0, BASE_DELAY);
@@ -372,7 +384,7 @@ public class AdaptiveTickScheduler {
      */
     public static boolean shouldRunBFS(Level level, BlockPos pos, int fluidAmount) {
         float equilibriumIndex = calculateEquilibriumIndex(level, pos, fluidAmount);
-        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        FluidStabilityData data = getExistingStabilityData(level, pos);
         if (data != null && data.rainBornCooldown > 0) {
             return false; // Rain-spawned water waits a few ticks before heavy processing
         }
@@ -413,7 +425,7 @@ public class AdaptiveTickScheduler {
      * Consumes a pending forced recheck flag for long-stable fluids.
      */
     public static boolean hasForcedRecheck(LevelAccessor level, BlockPos pos) {
-        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        FluidStabilityData data = getExistingStabilityData(level, pos);
         return data != null && data.pendingForcedRecheck;
     }
 
@@ -421,7 +433,7 @@ public class AdaptiveTickScheduler {
      * Consumes a pending forced recheck flag for long-stable fluids.
      */
     public static boolean consumeForcedRecheck(LevelAccessor level, BlockPos pos) {
-        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        FluidStabilityData data = getExistingStabilityData(level, pos);
         if (data == null || !data.pendingForcedRecheck) {
             return false;
         }
@@ -433,7 +445,7 @@ public class AdaptiveTickScheduler {
      * Returns the last calculated equilibrium index, or -1 if unknown.
      */
     public static float getLastEquilibriumIndex(LevelAccessor level, BlockPos pos) {
-        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        FluidStabilityData data = getExistingStabilityData(level, pos);
         return data == null ? -1f : data.lastEquilibriumIndex;
     }
 
@@ -441,9 +453,9 @@ public class AdaptiveTickScheduler {
      * Gets the BFS budget (max nodes) for a position based on area type.
      */
     public static int getBFSBudget(LevelAccessor level, BlockPos pos) {
-        SchedulerDimensionData dimensionData = getData(level);
+        SchedulerDimensionData dimensionData = getExistingData(level);
         ChunkPos chunkPos = new ChunkPos(pos);
-        AreaType areaType = dimensionData.areaTypes.getOrDefault(chunkPos, AreaType.NORMAL);
+        AreaType areaType = dimensionData == null ? AreaType.NORMAL : dimensionData.areaTypes.getOrDefault(chunkPos, AreaType.NORMAL);
 
         int baseBudget = switch (areaType) {
             case HIGH_ACTIVITY -> BFS_BUDGET_HIGH_ACTIVITY;
@@ -650,7 +662,8 @@ public class AdaptiveTickScheduler {
     }
 
     public static AreaType getAreaType(LevelAccessor level, ChunkPos chunkPos) {
-        return getData(level).areaTypes.getOrDefault(chunkPos, AreaType.NORMAL);
+        SchedulerDimensionData dimensionData = getExistingData(level);
+        return dimensionData == null ? AreaType.NORMAL : dimensionData.areaTypes.getOrDefault(chunkPos, AreaType.NORMAL);
     }
 
     /**
@@ -858,6 +871,18 @@ public class AdaptiveTickScheduler {
         }
         SchedulerDimensionData dimensionData = DIMENSION_DATA.get(DimensionKey.of(level));
         return dimensionData == null ? 0 : getTrackedScheduledFluidTickCount(dimensionData);
+    }
+
+    public static int getTrackedScheduledFluidTickCount(LevelAccessor level, ChunkPos chunkPos) {
+        if (level == null || chunkPos == null) {
+            return 0;
+        }
+        SchedulerDimensionData dimensionData = DIMENSION_DATA.get(DimensionKey.of(level));
+        if (dimensionData == null) {
+            return 0;
+        }
+        Set<ScheduledFluidTickKey> keys = dimensionData.scheduledFluidTickChunkIndex.get(chunkPos);
+        return keys == null ? 0 : keys.size();
     }
 
     private static int getTrackedScheduledFluidTickCount(SchedulerDimensionData dimensionData) {
@@ -1096,7 +1121,7 @@ public class AdaptiveTickScheduler {
         if (level instanceof Level lvl && FFFluidUtils.getEffectiveFluidState(lvl, pos).isEmpty()) {
             return null;
         }
-        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        FluidStabilityData data = getExistingStabilityData(level, pos);
         if (data == null || data.lastFlowDirection == null) {
             return null;
         }
@@ -1113,7 +1138,7 @@ public class AdaptiveTickScheduler {
         if (level == null || pos == null || maxAgeTicks <= 0) {
             return 0.0f;
         }
-        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        FluidStabilityData data = getExistingStabilityData(level, pos);
         if (data == null || data.lastFlowDirection == null || data.flowMomentumStrength <= 0.0f) {
             return 0.0f;
         }
@@ -1136,15 +1161,15 @@ public class AdaptiveTickScheduler {
         if (level == null || pos == null) {
             return;
         }
-        SchedulerDimensionData dimensionData = getData(level);
-        FluidStabilityData data = dimensionData.stabilityMap.get(pos.asLong());
         if (!stable) {
-            if (data == null) {
-                return;
+            FluidStabilityData data = getExistingStabilityData(level, pos);
+            if (data != null) {
+                data.poolStableTicks = 0;
             }
-            data.poolStableTicks = 0;
             return;
         }
+        SchedulerDimensionData dimensionData = getData(level);
+        FluidStabilityData data = dimensionData.stabilityMap.get(pos.asLong());
         if (data == null) {
             data = createAndTrackData(dimensionData, pos, 0);
         }
@@ -1171,7 +1196,7 @@ public class AdaptiveTickScheduler {
         if (level == null || pos == null || maxAgeTicks <= 0) {
             return 0;
         }
-        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        FluidStabilityData data = getExistingStabilityData(level, pos);
         if (data == null || data.poolStableTicks <= 0) {
             return 0;
         }
@@ -1188,7 +1213,7 @@ public class AdaptiveTickScheduler {
         if (level == null || pos == null) {
             return -1;
         }
-        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        FluidStabilityData data = getExistingStabilityData(level, pos);
         if (data == null || !data.hasRememberedPoolLevel()) {
             return -1;
         }
@@ -1249,7 +1274,8 @@ public class AdaptiveTickScheduler {
         if (!(level instanceof Level lvl) || pos == null || maxAgeTicks < 0) {
             return false;
         }
-        Long touchedTick = getData(level).chunkTouchTicks.get(new ChunkPos(pos));
+        SchedulerDimensionData dimensionData = getExistingData(level);
+        Long touchedTick = dimensionData == null ? null : dimensionData.chunkTouchTicks.get(new ChunkPos(pos));
         return touchedTick != null && lvl.getGameTime() - touchedTick <= maxAgeTicks;
     }
 
@@ -1257,7 +1283,7 @@ public class AdaptiveTickScheduler {
         if (!(level instanceof Level lvl)) {
             return false;
         }
-        FluidStabilityData data = getData(level).stabilityMap.get(pos.asLong());
+        FluidStabilityData data = getExistingStabilityData(level, pos);
         if (data == null) {
             return false;
         }
@@ -1287,8 +1313,18 @@ public class AdaptiveTickScheduler {
      * Called when chunk unloads or when bulk fluid changes occur.
      */
     public static void clearChunk(LevelAccessor level, ChunkPos chunkPos) {
-        SchedulerDimensionData dimensionData = getData(level);
+        if (level == null || chunkPos == null) {
+            return;
+        }
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        SchedulerDimensionData dimensionData = DIMENSION_DATA.get(dimensionKey);
+        if (dimensionData == null) {
+            return;
+        }
         clearChunk(dimensionData, chunkPos);
+        if (isEmptyDimensionData(dimensionData)) {
+            DIMENSION_DATA.remove(dimensionKey, dimensionData);
+        }
     }
 
     private static void clearChunk(SchedulerDimensionData dimensionData, ChunkPos chunkPos) {
@@ -1296,25 +1332,6 @@ public class AdaptiveTickScheduler {
         if (keys != null && !keys.isEmpty()) {
             for (Long key : keys) {
                 dimensionData.stabilityMap.remove(key);
-            }
-        } else {
-            // Fallback for legacy entries created before chunk indexing was populated.
-            int minX = chunkPos.getMinBlockX();
-            int maxX = chunkPos.getMaxBlockX();
-            int minZ = chunkPos.getMinBlockZ();
-            int maxZ = chunkPos.getMaxBlockZ();
-            LongOpenHashSet toRemove = new LongOpenHashSet();
-            for (Long key : dimensionData.stabilityMap.keySet()) {
-                int x = BlockPos.getX(key);
-                int z = BlockPos.getZ(key);
-                if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) {
-                    toRemove.add(key.longValue());
-                }
-            }
-            for (LongIterator it = toRemove.iterator(); it.hasNext(); ) {
-                long key = it.nextLong();
-                dimensionData.stabilityMap.remove(key);
-                untrackPosition(dimensionData, key);
             }
         }
 
@@ -1340,6 +1357,13 @@ public class AdaptiveTickScheduler {
 
     public static void performMaintenanceAll() {
         DIMENSION_DATA.keySet().forEach(key -> cleanupDimension(key, Long.MIN_VALUE));
+    }
+
+    public static boolean hasDimensionData(LevelAccessor level) {
+        if (level == null) {
+            return false;
+        }
+        return DIMENSION_DATA.containsKey(DimensionKey.of(level));
     }
 
     private static void cleanupDimension(DimensionKey key, long currentGameTick) {
@@ -1383,14 +1407,19 @@ public class AdaptiveTickScheduler {
             }
         }
 
-        if (dimensionData.stabilityMap.isEmpty()
+        if (isEmptyDimensionData(dimensionData)) {
+            DIMENSION_DATA.remove(key, dimensionData);
+        }
+    }
+
+    private static boolean isEmptyDimensionData(SchedulerDimensionData dimensionData) {
+        return dimensionData.stabilityMap.isEmpty()
             && dimensionData.chunkModificationTimes.isEmpty()
             && dimensionData.areaTypes.isEmpty()
             && dimensionData.chunkPositionIndex.isEmpty()
             && dimensionData.scheduledFluidTickDueTicks.isEmpty()
-            && dimensionData.scheduledFluidTickChunkIndex.isEmpty()) {
-            DIMENSION_DATA.remove(key, dimensionData);
-        }
+            && dimensionData.scheduledFluidTickChunkIndex.isEmpty()
+            && dimensionData.chunkTouchTicks.isEmpty();
     }
 
     private static void updateChunkModificationTime(LevelAccessor level, BlockPos pos) {

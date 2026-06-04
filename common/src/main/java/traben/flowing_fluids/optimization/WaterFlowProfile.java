@@ -42,6 +42,7 @@ public final class WaterFlowProfile {
         Regime.LOCAL, false, false, false, false, false,
         false, false, false, false, 0, 0, 0, 0.0f
     );
+    private static final int LONG_CHANNEL_EQUALIZER_DEPTH_CAP = 64;
 
     private final Regime regime;
     private final boolean broadSurface;
@@ -434,9 +435,21 @@ public final class WaterFlowProfile {
             case SUBTERRANEAN_POOL -> Math.min(maxDepth, 4);
             case IMPOUNDED -> Math.min(maxDepth, Math.max(5, configuredMaxDepth - 2));
             case BREACH -> Math.min(maxDepth, Math.max(6, configuredMaxDepth));
-            case CHANNEL -> Math.min(maxDepth, Math.max(5, configuredMaxDepth - 1));
+            case CHANNEL -> Math.min(maxDepth, computeConfiguredEqualizerDepthTarget(regime, configuredMaxDepth));
             case TRICKLE, LOCAL -> maxDepth;
         };
+    }
+
+    public int getConfiguredEqualizerDepthTarget(int configuredMaxDepth) {
+        return computeConfiguredEqualizerDepthTarget(regime, configuredMaxDepth);
+    }
+
+    static int computeConfiguredEqualizerDepthTarget(Regime regime, int configuredMaxDepth) {
+        int configured = Math.max(1, configuredMaxDepth);
+        if (regime == Regime.CHANNEL) {
+            return Math.max(configured, Math.min(LONG_CHANNEL_EQUALIZER_DEPTH_CAP, configured * 4));
+        }
+        return configured;
     }
 
     public int getMinimumEqualizerDepth() {
@@ -506,7 +519,8 @@ public final class WaterFlowProfile {
             case SUBTERRANEAN_POOL -> Math.min(snapshotRadius, 6);
             case IMPOUNDED -> Math.min(snapshotRadius, Math.max(8, FlowingFluids.config.bfsMaxSearchDistance));
             case BREACH -> Math.min(snapshotRadius, Math.max(10, FlowingFluids.config.bfsMaxSearchDistance + 2));
-            case CHANNEL -> Math.min(snapshotRadius, Math.max(8, FlowingFluids.config.bfsMaxSearchDistance));
+            case CHANNEL -> Math.min(snapshotRadius, Math.max(8,
+                computeConfiguredEqualizerDepthTarget(regime, FlowingFluids.config.bfsMaxSearchDistance)));
             case TRICKLE, LOCAL -> snapshotRadius;
         };
     }

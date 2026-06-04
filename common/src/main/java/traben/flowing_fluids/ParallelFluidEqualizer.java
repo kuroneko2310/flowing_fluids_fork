@@ -40,7 +40,10 @@ public final class ParallelFluidEqualizer {
 
     private static final ConcurrentHashMap<DimensionKey, Set<Long>> QUEUED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<Long, Long>> DEFER_COOLDOWNS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<Long>>> QUEUED_BY_CHUNK = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<Long>>> COOLDOWNS_BY_CHUNK = new ConcurrentHashMap<>();
     private static final Set<Long> ACTIVE = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentHashMap<ChunkPos, Set<Long>> ACTIVE_BY_CHUNK = new ConcurrentHashMap<>();
 
     private static final byte LOADED = 1;
     private static final byte AIR = 1 << 1;
@@ -86,7 +89,9 @@ public final class ParallelFluidEqualizer {
         if (isDeferredByCooldown(level, dimensionKey, pos, posKey)) {
             return;
         }
-        QUEUED.computeIfAbsent(dimensionKey, ignored -> ConcurrentHashMap.newKeySet()).add(posKey);
+        if (QUEUED.computeIfAbsent(dimensionKey, ignored -> ConcurrentHashMap.newKeySet()).add(posKey)) {
+            trackChunkIndex(QUEUED_BY_CHUNK, dimensionKey, posKey);
+        }
     }
 
     public static boolean hasQueued(LevelAccessor level) {
@@ -98,7 +103,9 @@ public final class ParallelFluidEqualizer {
     }
 
     public static int flush(ServerLevel level) {
-        Set<Long> queued = QUEUED.remove(DimensionKey.of(level));
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        Set<Long> queued = QUEUED.remove(dimensionKey);
+        QUEUED_BY_CHUNK.remove(dimensionKey);
         if (queued == null || queued.isEmpty()) {
             return 0;
         }
@@ -117,11 +124,13 @@ public final class ParallelFluidEqualizer {
             if (!ACTIVE.add(posKey)) {
                 continue;
             }
+            trackActive(posKey);
             Request request = prepare(level, candidate, captureCache);
             if (request != null) {
                 requests.add(request);
             } else {
                 ACTIVE.remove(posKey);
+                untrackActive(posKey);
             }
         }
         if (requests.isEmpty()) {
@@ -175,6 +184,8 @@ public final class ParallelFluidEqualizer {
             DimensionKey dimensionKey = DimensionKey.of(level);
             QUEUED.remove(dimensionKey);
             DEFER_COOLDOWNS.remove(dimensionKey);
+            QUEUED_BY_CHUNK.remove(dimensionKey);
+            COOLDOWNS_BY_CHUNK.remove(dimensionKey);
         }
     }
 
@@ -185,25 +196,95 @@ public final class ParallelFluidEqualizer {
         DimensionKey dimensionKey = DimensionKey.of(level);
         Set<Long> queued = QUEUED.get(dimensionKey);
         if (queued != null) {
-            queued.removeIf(posKey -> new ChunkPos(BlockPos.of(posKey)).equals(chunkPos));
+            removeIndexedChunk(QUEUED_BY_CHUNK, dimensionKey, queued, chunkPos);
             if (queued.isEmpty()) {
                 QUEUED.remove(dimensionKey, queued);
             }
         }
         ConcurrentHashMap<Long, Long> cooldowns = DEFER_COOLDOWNS.get(dimensionKey);
         if (cooldowns != null) {
-            cooldowns.keySet().removeIf(posKey -> new ChunkPos(BlockPos.of(posKey)).equals(chunkPos));
+            removeIndexedChunk(COOLDOWNS_BY_CHUNK, dimensionKey, cooldowns.keySet(), chunkPos);
             if (cooldowns.isEmpty()) {
                 DEFER_COOLDOWNS.remove(dimensionKey, cooldowns);
             }
         }
-        ACTIVE.removeIf(posKey -> new ChunkPos(BlockPos.of(posKey)).equals(chunkPos));
+        Set<Long> active = ACTIVE_BY_CHUNK.remove(chunkPos);
+        if (active != null) {
+            for (long posKey : active) {
+                ACTIVE.remove(posKey);
+            }
+        }
+    }
+
+    private static void trackChunkIndex(ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<Long>>> index,
+                                        DimensionKey dimensionKey, long posKey) {
+        index.computeIfAbsent(dimensionKey, ignored -> new ConcurrentHashMap<>())
+            .computeIfAbsent(chunkPos(posKey), ignored -> ConcurrentHashMap.newKeySet())
+            .add(posKey);
+    }
+
+    private static void untrackChunkIndex(ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<Long>>> index,
+                                          DimensionKey dimensionKey, long posKey) {
+        ConcurrentHashMap<ChunkPos, Set<Long>> byChunk = index.get(dimensionKey);
+        if (byChunk == null) {
+            return;
+        }
+        ChunkPos chunkPos = chunkPos(posKey);
+        Set<Long> keys = byChunk.get(chunkPos);
+        if (keys == null) {
+            return;
+        }
+        keys.remove(posKey);
+        if (keys.isEmpty()) {
+            byChunk.remove(chunkPos, keys);
+            if (byChunk.isEmpty()) {
+                index.remove(dimensionKey, byChunk);
+            }
+        }
+    }
+
+    private static void removeIndexedChunk(ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<Long>>> index,
+                                           DimensionKey dimensionKey, Set<Long> target, ChunkPos chunkPos) {
+        ConcurrentHashMap<ChunkPos, Set<Long>> byChunk = index.get(dimensionKey);
+        Set<Long> keys = byChunk == null ? null : byChunk.remove(chunkPos);
+        if (keys == null || keys.isEmpty()) {
+            return;
+        }
+        for (long posKey : keys) {
+            target.remove(posKey);
+        }
+        if (byChunk != null && byChunk.isEmpty()) {
+            index.remove(dimensionKey, byChunk);
+        }
+    }
+
+    private static void trackActive(long posKey) {
+        ACTIVE_BY_CHUNK.computeIfAbsent(chunkPos(posKey), ignored -> ConcurrentHashMap.newKeySet()).add(posKey);
+    }
+
+    private static void untrackActive(long posKey) {
+        ChunkPos chunkPos = chunkPos(posKey);
+        Set<Long> active = ACTIVE_BY_CHUNK.get(chunkPos);
+        if (active == null) {
+            return;
+        }
+        active.remove(posKey);
+        if (active.isEmpty()) {
+            ACTIVE_BY_CHUNK.remove(chunkPos, active);
+        }
+    }
+
+    private static ChunkPos chunkPos(long posKey) {
+        return new ChunkPos(BlockPos.getX(posKey) >> 4, BlockPos.getZ(posKey) >> 4);
     }
 
     public static void clearAll() {
         QUEUED.clear();
         DEFER_COOLDOWNS.clear();
+        QUEUED_BY_CHUNK.clear();
+        COOLDOWNS_BY_CHUNK.clear();
         ACTIVE.clear();
+        ACTIVE_BY_CHUNK.clear();
     }
 
     public static void shutdown() {
@@ -276,15 +357,22 @@ public final class ParallelFluidEqualizer {
             if (!level.isLoaded(pos)) {
                 continue;
             }
-            if (!AdaptiveTickScheduler.hasForcedRecheck(level, pos)
-                && AdaptiveTickScheduler.wasChunkTouchedRecently(level, pos, 0)) {
+            boolean forcedRecheck = AdaptiveTickScheduler.hasForcedRecheck(level, pos);
+            boolean chunkTouchedRecently = AdaptiveTickScheduler.wasChunkTouchedRecently(level, pos, 0);
+            boolean flowStateSampled = false;
+            boolean flowActive = false;
+            float flowMomentum = 0.0f;
+            if (!forcedRecheck && chunkTouchedRecently) {
                 int queuedAmount = FluidSpatialGrid.getFluidAmount(level, pos);
+                flowActive = AdaptiveTickScheduler.isFlowActiveNow(level, pos);
+                flowMomentum = AdaptiveTickScheduler.getFlowMomentum(level, pos, momentumAge);
+                flowStateSampled = true;
                 if (queuedAmount > 0
                     && shouldSkipQueuedSurgeCandidate(
                         false,
                         true,
-                        AdaptiveTickScheduler.isFlowActiveNow(level, pos),
-                        AdaptiveTickScheduler.getFlowMomentum(level, pos, momentumAge),
+                        flowActive,
+                        flowMomentum,
                         queuedAmount)) {
                     deferred.add(posKey);
                     continue;
@@ -293,6 +381,21 @@ public final class ParallelFluidEqualizer {
             ScanCandidate candidate = scanCandidate(level, posKey);
             if (candidate == null) {
                 continue;
+            }
+            if (!forcedRecheck
+                    && FlowingFluids.config.enableFluidComponentGraph
+                    && FlowingFluids.config.fluidComponentGraphAssistEqualizer
+                    && candidate.componentId() > 0
+                    && candidate.amount() >= FluidAmountConverter.toInternal(7)) {
+                if (!flowStateSampled) {
+                    flowActive = AdaptiveTickScheduler.isFlowActiveNow(level, pos);
+                    flowMomentum = AdaptiveTickScheduler.getFlowMomentum(level, pos, momentumAge);
+                }
+                if (FluidComponentGraph.shouldDeferDeepStableInterior(level, candidate.pos(), candidate.fluidType(),
+                        candidate.amount(), false, flowActive, flowMomentum)) {
+                    deferred.add(posKey);
+                    continue;
+                }
             }
             long bucketKey = packSelectionBucket(candidate.pos(), horizontalBucketSize, verticalBucketSize);
             if (candidate.componentId() > 0) {
@@ -336,6 +439,7 @@ public final class ParallelFluidEqualizer {
         long currentTick = level instanceof Level lvl ? lvl.getGameTime() : 0L;
         for (long posKey : deferred) {
             cooldowns.put(posKey, currentTick);
+            trackChunkIndex(COOLDOWNS_BY_CHUNK, dimensionKey, posKey);
         }
     }
 
@@ -357,6 +461,7 @@ public final class ParallelFluidEqualizer {
         boolean shouldRequeue = shouldRequeueDeferredNow(lastDeferTick, currentTick, flowActive, momentum);
         if (shouldRequeue) {
             cooldowns.remove(posKey);
+            untrackChunkIndex(COOLDOWNS_BY_CHUNK, dimensionKey, posKey);
             if (cooldowns.isEmpty()) {
                 DEFER_COOLDOWNS.remove(dimensionKey, cooldowns);
             }
@@ -522,7 +627,8 @@ public final class ParallelFluidEqualizer {
         maxNodes = flowProfile.clampEqualizerNodes(maxNodes);
         int minDepth = flowProfile.getMinimumEqualizerDepth();
         maxNodes = Math.max(flowProfile.getMinimumEqualizerNodes(), Math.round(maxNodes * distanceLoadFactor));
-        maxDepth = Math.min(Math.max(minDepth, FlowingFluids.config.bfsMaxSearchDistance), maxDepth);
+        int configuredDepthTarget = flowProfile.getConfiguredEqualizerDepthTarget(FlowingFluids.config.bfsMaxSearchDistance);
+        maxDepth = Math.min(Math.max(minDepth, configuredDepthTarget), maxDepth);
         maxDepth = Math.max(minDepth, Math.round(maxDepth * Math.max(0.6f, distanceLoadFactor)));
 
         int snapshotRadius = flowProfile.computeDistanceScaledSnapshotRadius(maxDepth, distanceLoadFactor);
@@ -646,6 +752,7 @@ public final class ParallelFluidEqualizer {
             return computeInternal(request);
         } finally {
             ACTIVE.remove(request.startPos().asLong());
+            untrackActive(request.startPos().asLong());
         }
     }
 

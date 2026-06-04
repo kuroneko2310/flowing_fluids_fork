@@ -223,7 +223,6 @@ public final class FlowingFluids {
         FluidComponentGraph.clearDimension(level);
         ParallelFluidEqualizer.clearDimension(level);
         ParallelFluidTickManager.clearDimension(level);
-        MudificationSystem.clearDimension(level);
         ExtendedWaterlogStore.clearDimension(level);
         traben.flowing_fluids.optimization.HierarchicalDistanceManager.getInstance().clearDimension(level);
     }

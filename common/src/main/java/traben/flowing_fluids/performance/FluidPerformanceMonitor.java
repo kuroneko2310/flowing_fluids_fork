@@ -139,11 +139,11 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
     }
 
     public void onServerTick(MinecraftServer server, boolean enabled, int interval) {
-        if (server == null) {
+        if (server == null || !enabled) {
             return;
         }
         recordServerMspt(getCurrentMspt(server));
-        tick(enabled, interval);
+        tick(true, interval);
     }
 
     public void tick(boolean enabled, int interval) {

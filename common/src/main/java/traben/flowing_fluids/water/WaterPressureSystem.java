@@ -90,13 +90,24 @@ public final class WaterPressureSystem {
      */
     public static void handleLevelTick(ServerLevel level) {
         FFConfig config = FlowingFluids.config;
-        if (level == null || config == null || !config.enableMod || !config.enableWaterPressure
-                || config.isDimensionExcluded(level)) {
-            clearDimension(level);
+        if (level == null || config == null) {
+            return;
+        }
+        if (!config.enableMod || !config.enableWaterPressure || config.isDimensionExcluded(level)) {
+            if (LEVEL_STATE.containsKey(level.dimension())) {
+                clearDimension(level);
+            }
             return;
         }
 
-        LevelState state = getState(level);
+        LevelState state = LEVEL_STATE.get(level.dimension());
+        if (state == null || state.data.isEmpty()) {
+            if (state != null) {
+                LEVEL_STATE.remove(level.dimension(), state);
+            }
+            return;
+        }
+
         int currentTick = level.getServer().getTickCount();
 
         if (state.lastCleanupTick == -1 || currentTick - state.lastCleanupTick >= Math.max(20, config.waterPressureScanInterval * 2)) {

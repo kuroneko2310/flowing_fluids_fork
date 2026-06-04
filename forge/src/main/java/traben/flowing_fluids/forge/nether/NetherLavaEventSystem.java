@@ -42,6 +42,9 @@ public final class NetherLavaEventSystem {
         NetherLavaState state = ACTIVE_STATES.computeIfAbsent(level.dimension(),
                 ignored -> new NetherLavaState(nextDailyRollTick(level.getGameTime())));
         long now = level.getGameTime();
+        if (state.activeEvents.isEmpty() && now < state.nextDailyRollTick) {
+            return;
+        }
 
         expireEndedEvents(level, state, now);
 

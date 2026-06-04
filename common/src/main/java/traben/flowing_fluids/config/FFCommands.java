@@ -33,12 +33,14 @@ import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FluidComponentGraph;
+import traben.flowing_fluids.FluidAmountConverter;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FlowingFluidsPlatform;
 import traben.flowing_fluids.PlugWaterFeature;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.flood.FloodEventSystem;
 import traben.flowing_fluids.performance.FluidAutoTickDelay;
+import traben.flowing_fluids.performance.FluidFineTickDelay;
 import traben.flowing_fluids.rain.RainWaterSystem;
 import traben.flowing_fluids.water.WaterPressureSystem;
 
@@ -75,8 +77,132 @@ public class FFCommands {
         return 1;
     }
 
+    private static String onOff(boolean value) {
+        return value ? "ON" : "OFF";
+    }
+
+    private static String commandUsage(String commandName, String argumentName) {
+        return "/" + commandName + " <" + argumentName + ">";
+    }
+
+    private static String describeSettingsGuide() {
+        return "Flowing Fluids 設定ガイド"
+                + "\n設定が多いので、まず目的別に見るのがおすすめです。各カテゴリ名だけ実行すると、用途と現在値が表示されます。"
+                + "\n"
+                + "\nよく使う入口:"
+                + "\n- /flowing_fluids settings guide : この一覧"
+                + "\n- /flowing_fluids settings behaviour guide : 水の動き・速度・圧力系"
+                + "\n- /flowing_fluids siphons status : サイフォン/水圧経路の要約"
+                + "\n- /flowing_fluids settings rain status : 雨・水たまり・雨補給"
+                + "\n- /flowing_fluids settings snowmelt status : 雪解け水"
+                + "\n- /flowing_fluids settings drying status : 蒸発・熱波・乾季"
+                + "\n- /flowing_fluids settings flood status : 洪水イベント"
+                + "\n- /flowing_fluids settings springs status : 湧き水/溶岩泉"
+                + "\n- /flowing_fluids settings water_pressure status : ドア/柵などへの水圧破壊"
+                + "\n- /flowing_fluids settings component_graph status : 平衡化・経路ソルバー・局所グラフ"
+                + "\n"
+                + "\n調整の目安:"
+                + "\n- 見た目や遊び心を変えたい: behaviour, siphons, springs, flood"
+                + "\n- 重さを抑えたい: component_graph, tick_delays__aka__flow_speeds, rain, snowmelt"
+                + "\n- ワールド生成や海/川の無限水を調整したい: sea_level_override, infinite_biomes, springs"
+                + "\n- 原因調査や実験をしたい: status, inspect_here, runtime_status, ~debug"
+                + "\n"
+                + "\n注意:"
+                + "\n- 互換性のため古いコマンド名も残しています。迷ったらカテゴリの status/guide を見てください。"
+                + "\n- route_solver や component_graph は実験・高度設定です。まず OFF の既定値で遊び、必要な時だけ ON にすると戻しやすいです。";
+    }
+
+    private static String describeBehaviourGuide() {
+        return "水の動き・経路・体験を変える設定ガイド"
+                + "\nこのカテゴリは、水がどこまで探すか、どれくらい速く動くか、圧力や経路をどう扱うかを決めます。"
+                + "\n"
+                + "\n基本:"
+                + "\n- tick_delays__aka__flow_speeds : 水/溶岩の更新間隔。小さいほど速いが重くなりやすいです。"
+                + "\n- flow_distances : 通常の坂探し距離。上げると遠くまで流れを探します。"
+                + "\n- fluid_processing_distance : プレイヤーからどの距離まで流体を処理するか。"
+                + "\n- fluid_height : 水の見た目/当たり判定の高さ。"
+                + "\n"
+                + "\n水の性格:"
+                + "\n- flow_speed : 軽量な擬似流速。水路や勢いに少し個性を出します。"
+                + "\n- hydraulic_flow : 深さ・上流・水路幅から水圧っぽい流れを足します。"
+                + "\n- cavity_pressure : 洞窟や穴に水頭を持たせ、押し込まれた水が上がりやすくなります。"
+                + "\n- siphons : ノズル/水路/地形で水を持ち上げたり回り込ませる設定です。"
+                + "\n- component_graph route_solver : 水塊の平衡化を、隣接edgeごとの経路計算へ切り替える実験設定です。"
+                + "\n"
+                + "\n環境:"
+                + "\n- rain : 雨による水たまり/補給/濡れた地面。"
+                + "\n- snowmelt : 雪や氷が溶けて水になる処理。"
+                + "\n- drying : 蒸発、熱波、乾季、熱いブロックによる乾燥。"
+                + "\n- flood : 雨やコマンドで起きる洪水イベント。"
+                + "\n- springs : 湧き水と溶岩泉の生成・脈動。"
+                + "\n"
+                + "\n迷った時の順番:"
+                + "\n1. status で現在値を見る"
+                + "\n2. preset があるカテゴリは preset を使う"
+                + "\n3. 数値は少しずつ変える"
+                + "\n4. 水が変になったら対象カテゴリの enable を OFF に戻す";
+    }
+
+    private static String describeCommandAudit() {
+        return "コマンド整理メモ"
+                + "\n現在の方針: 既存ワールドと手癖を壊さないため、古いコマンドは消さず、用途別の guide/status で案内します。"
+                + "\n"
+                + "\n普段使い:"
+                + "\n- settings guide : 入口"
+                + "\n- settings behaviour guide : 水の動き"
+                + "\n- rain/snowmelt/drying/flood/springs status : 環境イベント"
+                + "\n- siphons status : 水圧・地形サイフォン"
+                + "\n"
+                + "\n高度設定:"
+                + "\n- advanced_flow_distances : 探索距離やBFS距離。広げるほど重くなりやすいです。"
+                + "\n- component_graph : 局所グラフ、平衡化補助、route_solver。挙動比較しながら使う実験寄りです。"
+                + "\n- auto_tick_delay : サーバー負荷に応じて流体tickを緩めます。見た目より安定優先の時に使います。"
+                + "\n- water_pressure : ドアや柵などを水圧で壊す演出。ワールド影響が大きいのでOFF確認が大事です。"
+                + "\n"
+                + "\n互換/古い入口:"
+                + "\n- behavior と behaviour は両方残します。中身は同じ案内へ寄せています。"
+                + "\n- siphons はトップにも behaviour 内にもあります。探しやすさのための重複です。"
+                + "\n- ~debug は調査用です。通常プレイの調整ではまず触らなくて大丈夫です。"
+                + "\n"
+                + "\n足りていないもの:"
+                + "\n- すべての古い個別説明文の完全な日本語化はまだ途中です。今は共通表示と guide/status で迷子を減らしています。"
+                + "\n- 次にやるなら、文字化けしている個別説明をカテゴリごとに置き換えるのがよさそうです。";
+    }
+
+    private static int settingsGuide(CommandContext<CommandSourceStack> context) {
+        return message(context, describeSettingsGuide());
+    }
+
+    private static int behaviourGuide(CommandContext<CommandSourceStack> context) {
+        return message(context, describeBehaviourGuide());
+    }
+
+    private static int commandAudit(CommandContext<CommandSourceStack> context) {
+        return message(context, describeCommandAudit());
+    }
+
     private static int componentGraphStatus(CommandContext<CommandSourceStack> context) {
-        return message(context, FluidComponentGraph.describeStatus(context.getSource().getLevel()));
+        return message(context, "平衡化・局所グラフ・経路ソルバー"
+                + "\n用途: 水塊の再計算、BFSの補助、実験的な経路計算をまとめて調整します。"
+                + "\n"
+                + "\n局所グラフ:"
+                + "\n- enable: " + onOff(FlowingFluids.config.enableFluidComponentGraph)
+                + "\n- equalizer_assist: " + onOff(FlowingFluids.config.fluidComponentGraphAssistEqualizer)
+                + "\n- max_updates_per_tick: " + FlowingFluids.config.fluidComponentGraphMaxUpdatesPerTick
+                + "\n- max_scan_nodes: " + FlowingFluids.config.fluidComponentGraphMaxScanNodes
+                + "\n"
+                + "\n経路ソルバー:"
+                + "\n- route_solver: " + onOff(FlowingFluids.config.enableRouteSolver)
+                + "\n- route_iterations: " + FlowingFluids.config.routeSolverIterations
+                + "\n- route_edge_transfer: " + FlowingFluids.config.routeSolverMaxTransferPerEdge
+                + "\n- route_downhill_bias: " + FlowingFluids.config.routeSolverDownhillBias
+                + "\n"
+                + "\n使い分け:"
+                + "\n- 軽い観察/安全寄り: enable OFF または route_solver OFF"
+                + "\n- 局所更新を使いたい: enable ON"
+                + "\n- 水の配分そのものを経路型にしたい: route_solver ON"
+                + "\n"
+                + FluidComponentGraph.describeStatus(context.getSource().getLevel()));
     }
 
     private static int clearComponentGraphRuntime(CommandContext<CommandSourceStack> context) {
@@ -85,21 +211,22 @@ public class FFCommands {
     }
 
     private static int rainStatus(CommandContext<CommandSourceStack> context) {
-        return message(context, "Rain settings overview"
-                + "\nEnabled: " + FlowingFluids.config.enableRainSystem
-                + "\nGenerate interval: " + FlowingFluids.config.rainGenerateIntervalTicks + " ticks"
-                + "\nChunk radius: " + FlowingFluids.config.rainChunkRadius
-                + "\nAttempts per chunk: " + FlowingFluids.config.rainAttemptsPerChunk
-                + "\nBase chance / amount: " + FlowingFluids.config.rainBaseGenerateChance + " / " + FlowingFluids.config.rainBaseWaterAmount
-                + "\nWetness persist: " + FlowingFluids.config.rainWetnessPersistTicks + " ticks"
-                + "\nCatchment: radius=" + FlowingFluids.config.rainCatchmentRadius + ", max=" + FlowingFluids.config.rainCatchmentMaxBoost
-                + "\nUpstream: radius=" + FlowingFluids.config.rainUpstreamSearchRadius + ", max=" + FlowingFluids.config.rainUpstreamMaxBoost
-                + "\nIntensity multipliers: drizzle=" + FlowingFluids.config.rainIntensityDrizzleMultiplier
+        return message(context, "雨・水たまり・雨補給ステータス"
+                + "\n用途: 降雨中に地表へ薄い水を置く、周囲の集水地形で補正する、濡れた地面を少し残す設定です。"
+                + "\n有効: " + onOff(FlowingFluids.config.enableRainSystem)
+                + "\n生成間隔: " + FlowingFluids.config.rainGenerateIntervalTicks + " ticks"
+                + "\n処理半径: " + FlowingFluids.config.rainChunkRadius + " chunks"
+                + "\n1チャンク試行回数: " + FlowingFluids.config.rainAttemptsPerChunk
+                + "\n基本確率 / 基本水量: " + FlowingFluids.config.rainBaseGenerateChance + " / " + FlowingFluids.config.rainBaseWaterAmount
+                + "\n濡れ残り時間: " + FlowingFluids.config.rainWetnessPersistTicks + " ticks"
+                + "\n集水補正: radius=" + FlowingFluids.config.rainCatchmentRadius + ", max=" + FlowingFluids.config.rainCatchmentMaxBoost
+                + "\n上流補正: radius=" + FlowingFluids.config.rainUpstreamSearchRadius + ", max=" + FlowingFluids.config.rainUpstreamMaxBoost
+                + "\n雨の強さ補正: drizzle=" + FlowingFluids.config.rainIntensityDrizzleMultiplier
                 + ", steady=" + FlowingFluids.config.rainIntensitySteadyMultiplier
                 + ", heavy=" + FlowingFluids.config.rainIntensityHeavyMultiplier
                 + ", thunderstorm=" + FlowingFluids.config.rainIntensityThunderstormMultiplier
-                + "\nExtra puddles: chance=" + FlowingFluids.config.rainSurfaceSpawnChance + ", level=" + FlowingFluids.config.rainSurfaceSpawnLevel
-                + "\nUse `/flowing_fluids settings rain runtime_status`, `inspect_here`, or `preset` for more.");
+                + "\n追加水たまり: chance=" + FlowingFluids.config.rainSurfaceSpawnChance + ", level=" + FlowingFluids.config.rainSurfaceSpawnLevel
+                + "\n見る場所: runtime_status で実行状態、inspect_here で立っている場所の雨判定、preset でまとめ調整。");
     }
 
     private static int rainRuntimeStatus(CommandContext<CommandSourceStack> context) {
@@ -122,12 +249,14 @@ public class FFCommands {
 
     private static int floodStatus(CommandContext<CommandSourceStack> context) {
         BlockPos pos = BlockPos.containing(context.getSource().getPosition());
-        return message(context, "Flood event settings"
-                + "\nEnabled: " + FlowingFluids.config.enableFloodEvents
-                + "\nNatural storm chance per day: " + FlowingFluids.config.floodStartChancePerDay
-                + "\nRequires rain: " + FlowingFluids.config.floodRequiresRain
-                + "\nThunderstorm multiplier: " + FlowingFluids.config.floodThunderstormChanceMultiplier
-                + "\nAnnounce events: " + FlowingFluids.config.announceFloodEvents
+        return message(context, "洪水イベント設定"
+                + "\n用途: 雨やコマンドで一時的に水位を上げ、低地や岸辺へ水を押し出します。"
+                + "\n有効: " + onOff(FlowingFluids.config.enableFloodEvents)
+                + "\n自然発生確率/日: " + FlowingFluids.config.floodStartChancePerDay
+                + "\n雨が必要: " + onOff(FlowingFluids.config.floodRequiresRain)
+                + "\n雷雨倍率: " + FlowingFluids.config.floodThunderstormChanceMultiplier
+                + "\n告知: " + onOff(FlowingFluids.config.announceFloodEvents)
+                + "\n調整先: start_chance_per_day, default_radius, duration, pulse_interval, placements_per_pulse"
                 + "\n" + FloodEventSystem.describeFlood(context.getSource().getLevel(), pos));
     }
 
@@ -322,48 +451,54 @@ public class FFCommands {
     }
 
     private static int flowSpeedStatus(CommandContext<CommandSourceStack> context) {
-        return message(context, describeFlowSpeedStatus());
-    }
-
-    private static int mudificationStatus(CommandContext<CommandSourceStack> context) {
-        return message(context, "Mudification settings"
-                + "\nEnabled: " + FlowingFluids.config.enableMudification
-                + "\nStrength: " + FlowingFluids.config.mudificationStrength
-                + "\nAffects banks: " + FlowingFluids.config.mudificationAffectsBanks
-                + "\nOnly successful flowing-water writes build exposure."
-                + "\nPlayer-placed soil stays protected, but farmland can still turn to mud.");
+        return message(context, "流速レイヤー"
+                + "\n用途: 重い連続速度シミュレーションではなく、既存の水路プロフィールと momentum から軽量な擬似流速を作ります。"
+                + "\n有効: " + onOff(FlowingFluids.config.enableFlowSpeedControl)
+                + "\n強さ: " + FlowingFluids.config.flowSpeedStrength
+                + "\n影響:"
+                + "\n- 薄い水際の広がりに少し前進バイアスを足します"
+                + "\n- 速い流れのプロフィールで移送量を少し強めます"
+                + "\n- 水路や決壊流に、少しだけ方向性と勢いを持たせます"
+                + "\n変更: /flowing_fluids settings behaviour flow_speed enable on|off"
+                + "\n強さ: /flowing_fluids settings behaviour flow_speed strength <value>");
     }
 
     private static int hydraulicBlocksStatus(CommandContext<CommandSourceStack> context) {
-        return message(context, "Hydraulic block settings"
-                + "\nEnabled: " + FlowingFluids.config.enableHydraulicBlocks
-                + "\nWaterway liner: strongly lowers channel drag on narrow lined beds."
-                + "\nPressure nozzle: pumps water from its back face to its front face in any of 6 directions."
-                + "\nPressure nozzle also pushes water touching its four side faces toward the nozzle facing."
-                + "\nPump transfers conserve water by moving only existing levels and retaining source water."
-                + "\nHydraulic siphons can lift through lined/nozzle paths, but still outlet below the source surface.");
+        return message(context, "水圧ブロック設定"
+                + "\n用途: 水路ライナーや圧力ノズルが、水の流れ解析やサイフォン経路へ与える影響をまとめます。"
+                + "\n有効: " + onOff(FlowingFluids.config.enableHydraulicBlocks)
+                + "\n水路ライナー: 細い水路の抵抗を下げ、流れやすい人工水路にします。"
+                + "\n圧力ノズル: 背面から前面へ水を押し、6方向の向きに対応します。"
+                + "\nサイフォン: ライナー/ノズル経路なら持ち上げや迂回が起きやすくなります。"
+                + "\n注意: 水量は保存されます。水を無から増やす設定ではありません。");
     }
 
     private static int siphonsStatus(CommandContext<CommandSourceStack> context) {
-        return message(context, "Siphon settings"
-                + "\nEnabled: " + FlowingFluids.config.enableSiphons
-                + "\nHydraulic max search nodes: " + FlowingFluids.config.hydraulicSiphonMaxSearchNodes
-                + "\nHydraulic max path length: " + FlowingFluids.config.hydraulicSiphonMaxPathLength
-                + "\nHydraulic max lift: " + FlowingFluids.config.hydraulicSiphonMaxLift
-                + "\nHydraulic source surface scan nodes: " + FlowingFluids.config.hydraulicSiphonSourceSurfaceScanNodes
-                + "\nHydraulic max pressure head: " + FlowingFluids.config.hydraulicSiphonMaxPressureHead
-                + "\nHydraulic max transfer per tick: " + FlowingFluids.config.hydraulicSiphonMaxTransferPerTick
-                + "\nNatural terrain siphons: " + FlowingFluids.config.enableNaturalTerrainSiphons
-                + "\nNatural max search nodes: " + FlowingFluids.config.naturalSiphonMaxSearchNodes
-                + "\nNatural max path length: " + FlowingFluids.config.naturalSiphonMaxPathLength
-                + "\nNatural max lift: " + FlowingFluids.config.naturalSiphonMaxLift
-                + "\nNatural min filled amount: " + FlowingFluids.config.naturalSiphonMinFilledAmount
-                + "\nNatural max transfer per tick: " + FlowingFluids.config.naturalSiphonMaxTransferPerTick
-                + "\nNatural cooldown ticks: " + FlowingFluids.config.naturalSiphonCooldownTicks
-                + "\nNatural require enclosed path: " + FlowingFluids.config.naturalSiphonRequireEnclosedPath
-                + "\nNatural allow open surface: " + FlowingFluids.config.naturalSiphonAllowOpenSurface
-                + "\nSame-level outlets anywhere: " + FlowingFluids.config.siphonSameLevelOutletsAnywhere
-                + "\nHydraulic siphons use guide/nozzle pressure. Natural siphons use bounded terrain pressure, overtop cells, and cave confinement.");
+        return message(context, "サイフォン設定"
+                + "\n用途: 水をただ横へ広げるだけでなく、圧力・地形・ノズルで回り込みや持ち上げを許す設定です。"
+                + "\n全体: " + onOff(FlowingFluids.config.enableSiphons)
+                + "\n"
+                + "\n水圧/機械式:"
+                + "\n- max_search_nodes: " + FlowingFluids.config.hydraulicSiphonMaxSearchNodes
+                + "\n- max_path_length: " + FlowingFluids.config.hydraulicSiphonMaxPathLength
+                + "\n- max_lift: " + FlowingFluids.config.hydraulicSiphonMaxLift
+                + "\n- source_surface_scan_nodes: " + FlowingFluids.config.hydraulicSiphonSourceSurfaceScanNodes
+                + "\n- max_pressure_head: " + FlowingFluids.config.hydraulicSiphonMaxPressureHead
+                + "\n- max_transfer_per_tick: " + FlowingFluids.config.hydraulicSiphonMaxTransferPerTick
+                + "\n"
+                + "\n自然地形:"
+                + "\n- enable: " + onOff(FlowingFluids.config.enableNaturalTerrainSiphons)
+                + "\n- max_search_nodes: " + FlowingFluids.config.naturalSiphonMaxSearchNodes
+                + "\n- max_path_length: " + FlowingFluids.config.naturalSiphonMaxPathLength
+                + "\n- max_lift: " + FlowingFluids.config.naturalSiphonMaxLift
+                + "\n- min_filled_amount: " + FlowingFluids.config.naturalSiphonMinFilledAmount
+                + "\n- max_transfer_per_tick: " + FlowingFluids.config.naturalSiphonMaxTransferPerTick
+                + "\n- cooldown_ticks: " + FlowingFluids.config.naturalSiphonCooldownTicks
+                + "\n- require_enclosed_path: " + onOff(FlowingFluids.config.naturalSiphonRequireEnclosedPath)
+                + "\n- allow_open_surface: " + onOff(FlowingFluids.config.naturalSiphonAllowOpenSurface)
+                + "\n- same_level_outlets_anywhere: " + onOff(FlowingFluids.config.siphonSameLevelOutletsAnywhere)
+                + "\n"
+                + "\nプリセット: /flowing_fluids siphons preset cave_fill または conservative");
     }
 
     private static int hydraulicSiphonsStatus(CommandContext<CommandSourceStack> context) {
@@ -1235,22 +1370,34 @@ public class FFCommands {
 
     private static  LiteralArgumentBuilder<CommandSourceStack> floatCommand(String name, String description, String argName, float min, float max, Consumer<Float> setter, Supplier<Float> getter) {
         return Commands.literal(name)
-                .executes(cont -> message(cont, description + "\nCurrent value of " + name + " = " + getter.get()))
+                .executes(cont -> message(cont,
+                        "設定: " + name
+                                + "\n用途: " + description
+                                + "\n現在値: " + getter.get()
+                                + "\n入力範囲: " + min + " - " + max
+                                + "\n変更: " + commandUsage(cont.getInput(), argName)
+                                + "\n目安: 小さくすると控えめ、大きくすると効果が強くなります。"))
                 .then(Commands.argument(argName, FloatArgumentType.floatArg(min, max))
                         .executes(cont -> {
                             setter.accept(cont.getArgument(argName, Float.class));
-                            return messageAndSaveConfig(cont, name + " set to " + getter.get());
+                            return messageAndSaveConfig(cont, "設定を更新しました: " + name + " = " + getter.get());
                         })
                 );
     }
 
     private static  LiteralArgumentBuilder<CommandSourceStack> intCommand(String name, String description, String argName, int min, int max, Consumer<Integer> setter, Supplier<Integer> getter) {
         return Commands.literal(name)
-                .executes(cont -> message(cont, description + "\nCurrent value of " + name + " = " + getter.get()))
+                .executes(cont -> message(cont,
+                        "設定: " + name
+                                + "\n用途: " + description
+                                + "\n現在値: " + getter.get()
+                                + "\n入力範囲: " + min + " - " + max
+                                + "\n変更: " + commandUsage(cont.getInput(), argName)
+                                + "\n目安: 距離・回数・上限系は、大きいほど広く/強くなりますが重くなりやすいです。"))
                 .then(Commands.argument(argName, IntegerArgumentType.integer(min, max))
                         .executes(cont -> {
                             setter.accept(cont.getArgument(argName, Integer.class));
-                            return messageAndSaveConfig(cont, name + " set to " + getter.get());
+                            return messageAndSaveConfig(cont, "設定を更新しました: " + name + " = " + getter.get());
                         })
                 );
     }
@@ -1261,7 +1408,12 @@ public class FFCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> booleanCommand(String name, String description, String messageOn, String messageOff, BooleanConsumer setter, BooleanSupplier getter) {
         return Commands.literal(name)
-                .executes(cont -> message(cont, description + "\n" + name + " is currently set to: " + (getter.getAsBoolean() ? "on" : "off")))
+                .executes(cont -> message(cont,
+                        "設定: " + name
+                                + "\n用途: " + description
+                                + "\n現在値: " + onOff(getter.getAsBoolean())
+                                + "\n変更: /" + cont.getInput() + " on または /" + cont.getInput() + " off"
+                                + "\n目安: ONで機能を使い、OFFで安全に切り戻せます。"))
                 .then(Commands.literal("on")
                         .executes(cont -> {
                             setter.accept(true);
@@ -1295,6 +1447,27 @@ public class FFCommands {
                         "Allow stable component interiors to use focused equalizer snapshots instead of broad captures.",
                         a -> FlowingFluids.config.fluidComponentGraphAssistEqualizer = a,
                         () -> FlowingFluids.config.fluidComponentGraphAssistEqualizer))
+                .then(booleanCommand("route_solver",
+                        "Experimental route/potential water equalizer. When enabled, water moves across connected route edges instead of globally flattening the whole candidate set.",
+                        "Route solver enabled for water equalization.",
+                        "Route solver disabled; classic equalizer restored.",
+                        a -> FlowingFluids.config.enableRouteSolver = a,
+                        () -> FlowingFluids.config.enableRouteSolver))
+                .then(intCommand("route_iterations",
+                        "Relaxation passes used by the route solver. Higher values let water settle farther per equalizer pass.",
+                        "passes", 1, 16,
+                        a -> FlowingFluids.config.routeSolverIterations = a,
+                        () -> FlowingFluids.config.routeSolverIterations))
+                .then(intCommand("route_edge_transfer",
+                        "Maximum internal water amount moved across one route edge per pass.",
+                        "amount", 1, FluidAmountConverter.getMaxInternal(),
+                        a -> FlowingFluids.config.routeSolverMaxTransferPerEdge = a,
+                        () -> FlowingFluids.config.routeSolverMaxTransferPerEdge))
+                .then(floatCommand("route_downhill_bias",
+                        "Extra pull applied to downward route edges.",
+                        "bias", 1.0f, 8.0f,
+                        a -> FlowingFluids.config.routeSolverDownhillBias = a,
+                        () -> FlowingFluids.config.routeSolverDownhillBias))
                 .then(intCommand("max_updates_per_tick",
                         "Maximum dirty graph seeds processed per dimension tick. Higher catches up faster, lower smooths cost.",
                         "updates", 1, 4096,
@@ -1747,10 +1920,14 @@ public class FFCommands {
         var commands = Commands.literal("flowing_fluids")
                 .requires(source -> source.hasPermission(4) || (source.getServer().isSingleplayer() && source.getPlayer() != null && source.getServer().isSingleplayerOwner(source.getPlayer().getGameProfile()))
                 ).then(Commands.literal("help")
-                        .executes(c -> message(c, "Use any of the commands without adding any of it's arguments, E.G '/flowing_fluids settings', to get a description of what the command does and it's current value."))
+                        .executes(FFCommands::settingsGuide)
                 ).then(siphonsCommand()
                 ).then(Commands.literal("settings")
-                        .executes(commandContext -> message(commandContext, "Settings for Flowing Fluids, use these to change how fluids behave."))
+                        .executes(FFCommands::settingsGuide)
+                        .then(Commands.literal("guide")
+                                .executes(FFCommands::settingsGuide))
+                        .then(Commands.literal("command_audit")
+                                .executes(FFCommands::commandAudit))
                         .then(booleanCommand("plug_fluids_during_world_gen",
                                         "Enables or disables plugging all fluids that are generated with air beside or below them.\nThis is an IMMENSE reduction in lag during world generation.",
                                         "World gen fluid plugging is now enabled.",
@@ -1824,10 +2001,14 @@ public class FFCommands {
                                 () -> FlowingFluids.config.enableMod)
 
                         ).then(Commands.literal("behavior")
-                                .executes(commandContext -> message(commandContext, "Behavior settings for Flowing Fluids. Use /flowing_fluids settings behaviour for the full settings tree."))
+                                .executes(FFCommands::behaviourGuide)
+                                .then(Commands.literal("guide")
+                                        .executes(FFCommands::behaviourGuide))
                                 .then(siphonsCommand())
                         ).then(Commands.literal("behaviour")
-                                .executes(commandContext -> message(commandContext, "Behaviour settings for Flowing Fluids, use these to change how fluids behave."))
+                                .executes(FFCommands::behaviourGuide)
+                                .then(Commands.literal("guide")
+                                        .executes(FFCommands::behaviourGuide))
                                 .then(intCommand("min_level_for_ice",
                                         "Controls the minimum level of water that will freeze, this is useful for making ice form in partial height water.\nThe default value is 4, and the maximum value is 8.",
                                         "level", 0, 8,
@@ -1866,23 +2047,6 @@ public class FFCommands {
                                                 "strength", 0.0f, 2.0f,
                                                 a -> FlowingFluids.config.flowSpeedStrength = a,
                                                 () -> FlowingFluids.config.flowSpeedStrength))
-                                ).then(Commands.literal("mudification")
-                                        .executes(FFCommands::mudificationStatus)
-                                        .then(Commands.literal("status")
-                                                .executes(FFCommands::mudificationStatus))
-                                        .then(booleanCommand("enable",
-                                                "Controls whether repeated fast water exposure can turn natural soil into mud.",
-                                                a -> FlowingFluids.config.enableMudification = a,
-                                                () -> FlowingFluids.config.enableMudification))
-                                        .then(floatCommand("strength",
-                                                "Adjusts how quickly exposure builds up before dirt-like blocks become mud.",
-                                                "strength", 0.0f, 4.0f,
-                                                a -> FlowingFluids.config.mudificationStrength = a,
-                                                () -> FlowingFluids.config.mudificationStrength))
-                                        .then(booleanCommand("banks",
-                                                "Controls whether FAST and TORRENT flows can also splash mudification onto nearby banks.",
-                                                a -> FlowingFluids.config.mudificationAffectsBanks = a,
-                                                () -> FlowingFluids.config.mudificationAffectsBanks))
                                 ).then(Commands.literal("hydraulic_blocks")
                                         .executes(FFCommands::hydraulicBlocksStatus)
                                         .then(Commands.literal("status")
@@ -2068,31 +2232,31 @@ public class FFCommands {
                                         )
                                 ).then(componentGraphCommand()
                                 ).then(Commands.literal("tick_delays__aka__flow_speeds")
-                                        .executes(cont -> message(cont, "Modifies the tick delay fluids will have between spreading updates\nThe vanilla value is always 5 for water but lava will vary between 10 and 30 depending on if it is in the Nether."))
+                                        .executes(cont -> message(cont, "Modifies the tick delay fluids will have between spreading updates.\nValues may be fractional: 0.5 means up to two flow substeps per server tick, while 1.5 alternates 1 and 2 tick scheduling for a 1.5 tick average.\nThe vanilla value is always 5 for water but lava will vary between 10 and 30 depending on if it is in the Nether."))
                                         .then(Commands.literal("water")
                                                 .executes(cont -> message(cont, "Modifies the base tick delay water will have between spreading updates.\nThe vanilla value is always 5 for water.\nWater base tick delay is currently set to " + FlowingFluids.config.waterTickDelay
                                                         + "\n\n" + FluidAutoTickDelay.describeStatus()))
-                                                .then(Commands.argument("delay", IntegerArgumentType.integer(1, 255))
+                                                .then(Commands.argument("delay", FloatArgumentType.floatArg(FluidFineTickDelay.MIN_BASE_DELAY, FluidFineTickDelay.MAX_BASE_DELAY))
                                                         .executes(cont -> {
-                                                            FlowingFluids.config.waterTickDelay = cont.getArgument("delay", Integer.class);
+                                                            FlowingFluids.config.waterTickDelay = cont.getArgument("delay", Float.class);
                                                             return messageAndSaveConfig(cont, "Water tick delay set to " + FlowingFluids.config.waterTickDelay);
                                                         })
                                                 )
                                         ).then(Commands.literal("lava")
                                                 .executes(cont -> message(cont, "Modifies the base tick delay lava will have between spreading updates in the overworld.\nThe vanilla value is always 30 for lava in the overworld.\nLava base tick delay is currently set to " + FlowingFluids.config.lavaTickDelay
                                                         + "\n\n" + FluidAutoTickDelay.describeStatus()))
-                                                .then(Commands.argument("delay", IntegerArgumentType.integer(1, 255))
+                                                .then(Commands.argument("delay", FloatArgumentType.floatArg(FluidFineTickDelay.MIN_BASE_DELAY, FluidFineTickDelay.MAX_BASE_DELAY))
                                                         .executes(cont -> {
-                                                            FlowingFluids.config.lavaTickDelay = cont.getArgument("delay", Integer.class);
+                                                            FlowingFluids.config.lavaTickDelay = cont.getArgument("delay", Float.class);
                                                             return messageAndSaveConfig(cont, "Lava tick delay set to " + FlowingFluids.config.lavaTickDelay);
                                                         })
                                                 )
                                         ).then(Commands.literal("lava_nether")
                                                 .executes(cont -> message(cont, "Modifies the base tick delay lava will have between spreading updates in the nether.\nThe vanilla value is always 10 for lava in the nether.\nLava nether base tick delay is currently set to " + FlowingFluids.config.lavaNetherTickDelay
                                                         + "\n\n" + FluidAutoTickDelay.describeStatus()))
-                                                .then(Commands.argument("delay", IntegerArgumentType.integer(1, 255))
+                                                .then(Commands.argument("delay", FloatArgumentType.floatArg(FluidFineTickDelay.MIN_BASE_DELAY, FluidFineTickDelay.MAX_BASE_DELAY))
                                                         .executes(cont -> {
-                                                            FlowingFluids.config.lavaNetherTickDelay = cont.getArgument("delay", Integer.class);
+                                                            FlowingFluids.config.lavaNetherTickDelay = cont.getArgument("delay", Float.class);
                                                             return messageAndSaveConfig(cont, "Lava_nether tick delay set to " + FlowingFluids.config.lavaNetherTickDelay);
                                                         })
                                                 )

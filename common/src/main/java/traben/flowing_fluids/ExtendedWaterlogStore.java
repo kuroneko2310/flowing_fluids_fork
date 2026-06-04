@@ -66,8 +66,13 @@ public final class ExtendedWaterlogStore {
         DimensionKey key = DimensionKey.of(level);
         DimensionStore store = STORE.computeIfAbsent(key, k -> new DimensionStore());
         long posKey = pos.asLong();
+        StoredFluid next = new StoredFluid(fluid, clampedAmount);
         synchronized (store) {
-            StoredFluid previous = store.byPosition.put(posKey, new StoredFluid(fluid, clampedAmount));
+            StoredFluid previous = store.byPosition.get(posKey);
+            if (next.equals(previous)) {
+                return;
+            }
+            store.byPosition.put(posKey, next);
             if (previous == null) {
                 long chunkKey = chunkKeyFromPos(posKey);
                 store.chunkIndex.computeIfAbsent(chunkKey, k -> ConcurrentHashMap.newKeySet()).add(posKey);
@@ -83,15 +88,22 @@ public final class ExtendedWaterlogStore {
         DimensionStore store = STORE.get(key);
         if (store != null) {
             long posKey = pos.asLong();
+            boolean removedFromStore = false;
             synchronized (store) {
                 StoredFluid removed = store.byPosition.remove(posKey);
                 if (removed != null) {
                     removeFromChunkIndex(store, posKey);
+                    removedFromStore = true;
                 }
                 if (store.byPosition.isEmpty()) {
                     STORE.remove(key, store);
                 }
             }
+            if (!removedFromStore) {
+                return;
+            }
+        } else {
+            return;
         }
         if (level instanceof ServerLevel serverLevel) {
             PersistentData.get(serverLevel).remove(pos);
@@ -159,10 +171,16 @@ public final class ExtendedWaterlogStore {
             return;
         }
 
-        List<StoredFluidEntry> entries = PersistentData.get(serverLevel).getChunkEntries(chunkPos);
         DimensionKey key = DimensionKey.of(level);
-        DimensionStore store = STORE.computeIfAbsent(key, k -> new DimensionStore());
         long chunkKey = chunkKey(chunkPos.x, chunkPos.z);
+        PersistentData persistentData = PersistentData.get(serverLevel);
+        List<StoredFluidEntry> entries = persistentData.getChunkEntries(chunkPos);
+        DimensionStore existingStore = STORE.get(key);
+        if (entries.isEmpty() && (existingStore == null || !existingStore.chunkIndex.containsKey(chunkKey))) {
+            return;
+        }
+
+        DimensionStore store = STORE.computeIfAbsent(key, k -> new DimensionStore());
 
         synchronized (store) {
             Set<Long> previous = store.chunkIndex.remove(chunkKey);
@@ -238,6 +256,10 @@ public final class ExtendedWaterlogStore {
 
         private static PersistentData get(ServerLevel level) {
             return level.getDataStorage().computeIfAbsent(PersistentData::load, PersistentData::new, DATA_NAME);
+        }
+
+        boolean isEmpty() {
+            return byPosition.isEmpty();
         }
 
         private static PersistentData load(CompoundTag tag) {

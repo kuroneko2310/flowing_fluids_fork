@@ -1,4 +1,8 @@
 
+1.0.5
+- added fractional fluid tick delays for water and lava, including 0.5 tick style substeps and 1.5 tick average scheduling
+- updated `/flowing_fluids settings behaviour tick_delays__aka__flow_speeds` commands to accept decimal delay values
+
 1.0.4
 - fixed severe integrated-server tick stalls caused by repeatedly counting Minecraft's fluid ScheduledTick queue while it was already heavily backlogged
 - replaced full scheduled-fluid cleanup scans with a bounded deduplicated cleanup queue so an overloaded tick cannot repeatedly scan the same pending fluid wakeups

@@ -231,7 +231,7 @@ public class ParallelFluidTickManager {
 
         int distanceDelay = (int) Math.min(8, Math.sqrt(distanceSq) / 16);
         int stabilityBias = entry.isSource() ? 1 : -1;
-        int adjustedDelay = Math.max(1, FlowingFluids.config.waterTickDelay + distanceDelay + stabilityBias);
+        int adjustedDelay = Math.max(1, (int) Math.ceil(FlowingFluids.config.waterTickDelay + distanceDelay + stabilityBias));
 
         return new ScheduledFluidTick(entry.pos(), entry.fluidType(), adjustedDelay, entry.isSource(), distanceSq);
     }

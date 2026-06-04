@@ -18,6 +18,7 @@ import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.FFFluidUtils;
+import traben.flowing_fluids.FluidAmountConverter;
 import traben.flowing_fluids.FluidRegressionLogic;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FlowingFluidsPlatform;
@@ -89,9 +90,9 @@ public class FFConfig {
     public int waterFlowDistance = 4;
     public int lavaFlowDistance = 2;
     public int lavaNetherFlowDistance = 4;
-    public int waterTickDelay = 4;
-    public int lavaTickDelay = 15;
-    public int lavaNetherTickDelay = 5;
+    public float waterTickDelay = 4.0f;
+    public float lavaTickDelay = 15.0f;
+    public float lavaNetherTickDelay = 5.0f;
     public int randomTickLevelingDistance = 32;
     public WaterProcessingMode waterProcessingMode = WaterProcessingMode.MODERN;
 
@@ -132,6 +133,10 @@ public class FFConfig {
     public boolean fluidComponentGraphAssistEqualizer = true; // Let stable graph interiors use focused equalizer snapshots
     public int fluidComponentGraphMaxUpdatesPerTick = 96; // Dirty graph seeds processed per level tick
     public int fluidComponentGraphMaxScanNodes = 512; // Maximum nodes rebuilt for one local component
+    public boolean enableRouteSolver = false; // Experimental edge/potential route solver for water equalization
+    public int routeSolverIterations = 4; // Relaxation passes for route-based water movement
+    public int routeSolverMaxTransferPerEdge = 16; // Max internal water amount moved across one route edge per pass
+    public float routeSolverDownhillBias = 2.0f; // Extra pull for downward route edges
 
     // Flow cohesion and inertia
     public float waterAffinityStrength = 0.2f; // Bias flow toward nearby water (0 = off)
@@ -161,9 +166,9 @@ public class FFConfig {
     public boolean enableCavityPressureRise = true; // Let enclosed spaces build water head and rise when flow is sustained
     public float cavityPressureStrength = 1.0f; // How strongly enclosed-space pressure biases transfer and filling
     public float connectedHeadStrength = 0.8f; // Extra bias from nearby connected higher water surfaces
-    public boolean enableMudification = true; // Let repeated fast water turn natural soil into mud
-    public float mudificationStrength = 1.0f; // Exposure multiplier for mudification buildup
-    public boolean mudificationAffectsBanks = true; // Allow fast channels to wet adjacent banks as well
+    public boolean enableMudification = false; // Retired; kept for config/network compatibility
+    public float mudificationStrength = 1.0f; // Retired; kept for config/network compatibility
+    public boolean mudificationAffectsBanks = false; // Retired; kept for config/network compatibility
     public boolean enableHydraulicBlocks = true; // Allow liner and nozzle support blocks to bias water flow
     public boolean enableSiphons = true; // Enable bounded water siphons
     public int hydraulicSiphonMaxSearchNodes = 256; // Maximum BFS nodes per hydraulic siphon search
@@ -522,9 +527,9 @@ public class FFConfig {
         waterFlowDistance = buffer.readVarInt();
         lavaFlowDistance = buffer.readVarInt();
         lavaNetherFlowDistance = buffer.readVarInt();
-        waterTickDelay = buffer.readVarInt();
-        lavaTickDelay = buffer.readVarInt();
-        lavaNetherTickDelay = buffer.readVarInt();
+        waterTickDelay = buffer.readFloat();
+        lavaTickDelay = buffer.readFloat();
+        lavaNetherTickDelay = buffer.readFloat();
         randomTickLevelingDistance = buffer.readVarInt();
         waterProcessingMode = buffer.readEnum(WaterProcessingMode.class);
 
@@ -554,6 +559,10 @@ public class FFConfig {
         fluidComponentGraphAssistEqualizer = buffer.readBoolean();
         fluidComponentGraphMaxUpdatesPerTick = buffer.readVarInt();
         fluidComponentGraphMaxScanNodes = buffer.readVarInt();
+        enableRouteSolver = buffer.readBoolean();
+        routeSolverIterations = buffer.readVarInt();
+        routeSolverMaxTransferPerEdge = buffer.readVarInt();
+        routeSolverDownhillBias = buffer.readFloat();
         waterAffinityStrength = buffer.readFloat();
         flowInertiaStrength = buffer.readFloat();
         flowInertiaMaxAgeTicks = buffer.readVarInt();
@@ -822,9 +831,9 @@ public class FFConfig {
         buffer.writeVarInt(waterFlowDistance);
         buffer.writeVarInt(lavaFlowDistance);
         buffer.writeVarInt(lavaNetherFlowDistance);
-        buffer.writeVarInt(waterTickDelay);
-        buffer.writeVarInt(lavaTickDelay);
-        buffer.writeVarInt(lavaNetherTickDelay);
+        buffer.writeFloat(waterTickDelay);
+        buffer.writeFloat(lavaTickDelay);
+        buffer.writeFloat(lavaNetherTickDelay);
         buffer.writeVarInt(randomTickLevelingDistance);
         buffer.writeEnum(waterProcessingMode);
 
@@ -854,6 +863,10 @@ public class FFConfig {
         buffer.writeBoolean(fluidComponentGraphAssistEqualizer);
         buffer.writeVarInt(fluidComponentGraphMaxUpdatesPerTick);
         buffer.writeVarInt(fluidComponentGraphMaxScanNodes);
+        buffer.writeBoolean(enableRouteSolver);
+        buffer.writeVarInt(routeSolverIterations);
+        buffer.writeVarInt(routeSolverMaxTransferPerEdge);
+        buffer.writeFloat(routeSolverDownhillBias);
         buffer.writeFloat(waterAffinityStrength);
         buffer.writeFloat(flowInertiaStrength);
         buffer.writeVarInt(flowInertiaMaxAgeTicks);
@@ -1181,9 +1194,9 @@ public class FFConfig {
         int oldWaterFlowDistance = waterFlowDistance;
         int oldLavaFlowDistance = lavaFlowDistance;
         int oldLavaNetherFlowDistance = lavaNetherFlowDistance;
-        int oldWaterTickDelay = waterTickDelay;
-        int oldLavaTickDelay = lavaTickDelay;
-        int oldLavaNetherTickDelay = lavaNetherTickDelay;
+        float oldWaterTickDelay = waterTickDelay;
+        float oldLavaTickDelay = lavaTickDelay;
+        float oldLavaNetherTickDelay = lavaNetherTickDelay;
         int oldRandomTickLevelingDistance = randomTickLevelingDistance;
         int oldAutoTickDelayUpdateRateTicks = autoTickDelayUpdateRateTicks;
         float oldAutoTickDelayTargetMsptMultiplier = autoTickDelayTargetMsptMultiplier;
@@ -1201,6 +1214,9 @@ public class FFConfig {
         int oldPerformanceLogInterval = performanceLogInterval;
         int oldFluidComponentGraphMaxUpdatesPerTick = fluidComponentGraphMaxUpdatesPerTick;
         int oldFluidComponentGraphMaxScanNodes = fluidComponentGraphMaxScanNodes;
+        int oldRouteSolverIterations = routeSolverIterations;
+        int oldRouteSolverMaxTransferPerEdge = routeSolverMaxTransferPerEdge;
+        float oldRouteSolverDownhillBias = routeSolverDownhillBias;
         int oldRainChunkRadius = rainChunkRadius;
         float oldFlowSpeedStrength = flowSpeedStrength;
         float oldPressureFlowBonusStrength = pressureFlowBonusStrength;
@@ -1313,9 +1329,9 @@ public class FFConfig {
         waterFlowDistance = Math.max(1, waterFlowDistance);
         lavaFlowDistance = Math.max(1, lavaFlowDistance);
         lavaNetherFlowDistance = Math.max(1, lavaNetherFlowDistance);
-        waterTickDelay = Math.max(1, waterTickDelay);
-        lavaTickDelay = Math.max(1, lavaTickDelay);
-        lavaNetherTickDelay = Math.max(1, lavaNetherTickDelay);
+        waterTickDelay = traben.flowing_fluids.performance.FluidFineTickDelay.sanitizeBaseDelay(waterTickDelay);
+        lavaTickDelay = traben.flowing_fluids.performance.FluidFineTickDelay.sanitizeBaseDelay(lavaTickDelay);
+        lavaNetherTickDelay = traben.flowing_fluids.performance.FluidFineTickDelay.sanitizeBaseDelay(lavaNetherTickDelay);
         randomTickLevelingDistance = Math.max(0, randomTickLevelingDistance);
 
         maxWaterFlowDistance = Math.max(waterFlowDistance, maxWaterFlowDistance);
@@ -1336,6 +1352,9 @@ public class FFConfig {
         autoTickDelayLavaMaxExtraDelay = Math.max(0, Math.min(64, autoTickDelayLavaMaxExtraDelay));
         fluidComponentGraphMaxUpdatesPerTick = Math.max(1, Math.min(4096, fluidComponentGraphMaxUpdatesPerTick));
         fluidComponentGraphMaxScanNodes = Math.max(16, Math.min(8192, fluidComponentGraphMaxScanNodes));
+        routeSolverIterations = Math.max(1, Math.min(16, routeSolverIterations));
+        routeSolverMaxTransferPerEdge = Math.max(1, Math.min(FluidAmountConverter.getMaxInternal(), routeSolverMaxTransferPerEdge));
+        routeSolverDownhillBias = Math.max(1.0f, Math.min(8.0f, routeSolverDownhillBias));
         rainChunkRadius = Math.max(0, rainChunkRadius);
         flowSpeedStrength = Math.max(0.0f, Math.min(2.0f, flowSpeedStrength));
         pressureFlowBonusStrength = Math.max(0.0f, Math.min(2.0f, pressureFlowBonusStrength));
@@ -1464,6 +1483,9 @@ public class FFConfig {
         appendCorrection(corrections, "performanceLogInterval", oldPerformanceLogInterval, performanceLogInterval);
         appendCorrection(corrections, "fluidComponentGraphMaxUpdatesPerTick", oldFluidComponentGraphMaxUpdatesPerTick, fluidComponentGraphMaxUpdatesPerTick);
         appendCorrection(corrections, "fluidComponentGraphMaxScanNodes", oldFluidComponentGraphMaxScanNodes, fluidComponentGraphMaxScanNodes);
+        appendCorrection(corrections, "routeSolverIterations", oldRouteSolverIterations, routeSolverIterations);
+        appendCorrection(corrections, "routeSolverMaxTransferPerEdge", oldRouteSolverMaxTransferPerEdge, routeSolverMaxTransferPerEdge);
+        appendCorrection(corrections, "routeSolverDownhillBias", oldRouteSolverDownhillBias, routeSolverDownhillBias);
         appendCorrection(corrections, "autoTickDelayUpdateRateTicks", oldAutoTickDelayUpdateRateTicks, autoTickDelayUpdateRateTicks);
         appendCorrection(corrections, "autoTickDelayTargetMsptMultiplier", oldAutoTickDelayTargetMsptMultiplier, autoTickDelayTargetMsptMultiplier);
         appendCorrection(corrections, "autoTickDelayWaterMaxExtraDelay", oldAutoTickDelayWaterMaxExtraDelay, autoTickDelayWaterMaxExtraDelay);

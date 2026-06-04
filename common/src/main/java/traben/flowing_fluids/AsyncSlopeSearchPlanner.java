@@ -16,7 +16,7 @@ import org.jetbrains.annotations.Nullable;
 import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.ArrayDeque;
-import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,6 +40,7 @@ public final class AsyncSlopeSearchPlanner {
     private static final ConcurrentHashMap<RequestKey, Integer> COMPLETED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<DimensionKey, AtomicLong> DIMENSION_EPOCHS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ChunkScope, AtomicLong> CHUNK_EPOCHS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ChunkScope, Set<RequestKey>> REQUESTS_BY_CHUNK = new ConcurrentHashMap<>();
 
     private static volatile ForkJoinPool pool = createPool();
 
@@ -105,6 +106,7 @@ public final class AsyncSlopeSearchPlanner {
 
         Integer completed = COMPLETED.remove(key);
         if (completed != null) {
+            unindexRequest(key);
             return completed;
         }
 
@@ -136,10 +138,15 @@ public final class AsyncSlopeSearchPlanner {
             }
             return null;
         }
+        indexRequest(key);
 
         future.whenComplete((distance, throwable) -> {
-            PENDING.remove(key);
+            if (!PENDING.remove(key, future)) {
+                unindexRequest(key);
+                return;
+            }
             if (!isRequestStillCurrent(key)) {
+                unindexRequest(key);
                 return;
             }
             if (throwable != null) {
@@ -163,8 +170,7 @@ public final class AsyncSlopeSearchPlanner {
         }
         DimensionKey key = DimensionKey.of(level);
         bumpChunkEpoch(key, chunkPos);
-        PENDING.entrySet().removeIf(entry -> cancelIfMatches(entry, entry.getKey().matchesChunk(key, chunkPos)));
-        COMPLETED.entrySet().removeIf(entry -> entry.getKey().matchesChunk(key, chunkPos));
+        clearIndexedChunk(new ChunkScope(key, chunkPos.x, chunkPos.z));
     }
 
     public static void clearDimension(Level level) {
@@ -173,8 +179,11 @@ public final class AsyncSlopeSearchPlanner {
         }
         DimensionKey key = DimensionKey.of(level);
         bumpDimensionEpoch(key);
-        PENDING.entrySet().removeIf(entry -> cancelIfMatches(entry, entry.getKey().dimension().equals(key)));
-        COMPLETED.entrySet().removeIf(entry -> entry.getKey().dimension().equals(key));
+        for (ChunkScope scope : REQUESTS_BY_CHUNK.keySet()) {
+            if (scope.dimension().equals(key)) {
+                clearIndexedChunk(scope);
+            }
+        }
         CHUNK_EPOCHS.keySet().removeIf(scope -> scope.dimension().equals(key));
     }
 
@@ -186,6 +195,7 @@ public final class AsyncSlopeSearchPlanner {
         PENDING.clear();
         COMPLETED.clear();
         CHUNK_EPOCHS.clear();
+        REQUESTS_BY_CHUNK.clear();
     }
 
     public static void shutdown() {
@@ -200,9 +210,11 @@ public final class AsyncSlopeSearchPlanner {
         try {
             Integer computed = future.join();
             PENDING.remove(key, future);
+            unindexRequest(key);
             return computed == null ? NO_SLOPE_FOUND : computed;
         } catch (CompletionException exception) {
             PENDING.remove(key, future);
+            unindexRequest(key);
             Throwable cause = exception.getCause() != null ? exception.getCause() : exception;
             FlowingFluids.warn("Async slope planner completion failed for " + BlockPos.of(key.sourcePos()) + " / "
                     + key.direction() + ": " + cause.getMessage());
@@ -229,12 +241,34 @@ public final class AsyncSlopeSearchPlanner {
         }
     }
 
-    private static boolean cancelIfMatches(Map.Entry<RequestKey, CompletableFuture<Integer>> entry, boolean matches) {
-        if (!matches) {
-            return false;
+    private static void indexRequest(RequestKey key) {
+        REQUESTS_BY_CHUNK.computeIfAbsent(key.chunkScope(), ignored -> ConcurrentHashMap.newKeySet()).add(key);
+    }
+
+    private static void unindexRequest(RequestKey key) {
+        ChunkScope scope = key.chunkScope();
+        Set<RequestKey> requests = REQUESTS_BY_CHUNK.get(scope);
+        if (requests == null) {
+            return;
         }
-        entry.getValue().cancel(false);
-        return true;
+        requests.remove(key);
+        if (requests.isEmpty()) {
+            REQUESTS_BY_CHUNK.remove(scope, requests);
+        }
+    }
+
+    private static void clearIndexedChunk(ChunkScope scope) {
+        Set<RequestKey> requests = REQUESTS_BY_CHUNK.remove(scope);
+        if (requests == null || requests.isEmpty()) {
+            return;
+        }
+        for (RequestKey request : requests) {
+            CompletableFuture<Integer> pending = PENDING.remove(request);
+            if (pending != null) {
+                pending.cancel(false);
+            }
+            COMPLETED.remove(request);
+        }
     }
 
     private static long currentDimensionEpoch(Level level) {
@@ -267,8 +301,8 @@ public final class AsyncSlopeSearchPlanner {
         if (key.dimensionEpoch() != currentDimensionEpoch(key.dimension())) {
             return false;
         }
-        ChunkPos chunkPos = new ChunkPos(BlockPos.of(key.sourcePos()));
-        return key.chunkEpoch() == currentChunkEpoch(key.dimension(), chunkPos);
+        return key.chunkEpoch() == currentChunkEpoch(key.dimension(),
+                new ChunkPos(BlockPos.getX(key.sourcePos()) >> 4, BlockPos.getZ(key.sourcePos()) >> 4));
     }
 
     private static int computeSlopeDistance(SlopeSnapshot snapshot, BlockPos sourcePos, Direction initialDirection,
@@ -358,8 +392,8 @@ public final class AsyncSlopeSearchPlanner {
     private record RequestKey(DimensionKey dimension, long sourcePos, long dimensionEpoch, long chunkEpoch, Direction direction,
                               Fluid sourceFluid, int sourceAmount,
                               boolean enforceSameFluidOrEmpty, int slopeFindDistance) {
-        private boolean matchesChunk(DimensionKey dimensionKey, ChunkPos chunkPos) {
-            return dimension.equals(dimensionKey) && new ChunkPos(BlockPos.of(sourcePos)).equals(chunkPos);
+        private ChunkScope chunkScope() {
+            return new ChunkScope(dimension, BlockPos.getX(sourcePos) >> 4, BlockPos.getZ(sourcePos) >> 4);
         }
     }
 

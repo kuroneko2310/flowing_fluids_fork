@@ -53,4 +53,21 @@ class FluidComponentGraphTest {
         assertFalse(FluidComponentGraph.isStableInterior(cell, outlet));
         assertFalse(FluidComponentGraph.isStableInterior(cell, noisy));
     }
+
+    @Test
+    void deepStableInteriorOnlyAcceptsQuietCellsBelowSurface() {
+        FluidComponentGraph.FluidComponentCell cell = new FluidComponentGraph.FluidComponentCell(
+            Fluids.WATER, FluidAmountConverter.toInternal(8), 5, false, false, false);
+        FluidComponentGraph.FluidComponentSummary deepQuiet = new FluidComponentGraph.FluidComponentSummary(
+            5, Fluids.WATER, 64, 64 * FluidAmountConverter.toInternal(8), 2, 0, 0, 40, 64, false);
+        FluidComponentGraph.FluidComponentSummary inlet = new FluidComponentGraph.FluidComponentSummary(
+            5, Fluids.WATER, 64, 64 * FluidAmountConverter.toInternal(8), 2, 0, 1, 40, 64, false);
+        FluidComponentGraph.FluidComponentSummary noisy = new FluidComponentGraph.FluidComponentSummary(
+            5, Fluids.WATER, 64, 64 * FluidAmountConverter.toInternal(8), 8, 0, 0, 40, 64, false);
+
+        assertTrue(FluidComponentGraph.isDeepStableInterior(cell, deepQuiet, 60));
+        assertFalse(FluidComponentGraph.isDeepStableInterior(cell, deepQuiet, 63));
+        assertFalse(FluidComponentGraph.isDeepStableInterior(cell, inlet, 60));
+        assertFalse(FluidComponentGraph.isDeepStableInterior(cell, noisy, 60));
+    }
 }

@@ -34,13 +34,19 @@ public final class DryingEventSystem {
     }
 
     public static void onLevelTick(ServerLevel level) {
-        if (!FlowingFluids.config.enableMod || FlowingFluids.config.isDimensionExcluded(level) || !isClimateDimension(level)) {
+        if (!FlowingFluids.config.enableMod
+                || FlowingFluids.config.isDimensionExcluded(level)
+                || !isClimateDimension(level)
+                || (!FlowingFluids.config.enableDrySeasonEvents && !FlowingFluids.config.enableHeatwaveEvents)) {
             ACTIVE_STATES.remove(level.dimension());
             return;
         }
 
         DryingState state = ACTIVE_STATES.computeIfAbsent(level.dimension(), key -> new DryingState(nextDailyRollTick(level.getGameTime())));
         long now = level.getGameTime();
+        if (!state.hasActiveClimate(now) && now < state.nextDailyRollTick) {
+            return;
+        }
 
         if (state.heatwaveEndTick > 0L && now >= state.heatwaveEndTick) {
             state.heatwaveEndTick = 0L;
@@ -103,7 +109,7 @@ public final class DryingEventSystem {
         if (interval <= 1) {
             return true;
         }
-        return Math.floorMod(level.getGameTime(), interval) == Math.floorMod(pos.hashCode(), interval);
+        return Math.floorMod(level.getGameTime(), interval) == Math.floorMod(Long.hashCode(pos.asLong()), interval);
     }
 
     public static float getSurfaceEvaporationChance(Level level) {
@@ -492,6 +498,10 @@ public final class DryingEventSystem {
 
         private boolean isDrySeasonActive(long now) {
             return drySeasonEndTick > now;
+        }
+
+        private boolean hasActiveClimate(long now) {
+            return isHeatwaveActive(now) || isDrySeasonActive(now);
         }
     }
 }

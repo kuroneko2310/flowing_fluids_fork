@@ -53,9 +53,19 @@ public final class FlowingFluidsTick {
         DimensionKey key = DimensionKey.of(level);
         long last = lastMaintenanceTick.getOrDefault(key, Long.MIN_VALUE);
         if (last == Long.MIN_VALUE || now - last >= MAINTENANCE_INTERVAL_TICKS) {
-            AdaptiveTickScheduler.performMaintenance(level);
-            FluidSpatialGrid.performMaintenance(level);
-            lastMaintenanceTick.put(key, now);
+            boolean hasSchedulerData = AdaptiveTickScheduler.hasDimensionData(level);
+            boolean hasSpatialData = FluidSpatialGrid.hasDimensionStorage(level);
+            if (hasSchedulerData) {
+                AdaptiveTickScheduler.performMaintenance(level);
+            }
+            if (hasSpatialData) {
+                FluidSpatialGrid.performMaintenance(level);
+            }
+            if (hasSchedulerData || hasSpatialData) {
+                lastMaintenanceTick.put(key, now);
+            } else {
+                lastMaintenanceTick.remove(key);
+            }
         }
     }
 
@@ -63,8 +73,9 @@ public final class FlowingFluidsTick {
         if (!FlowingFluids.config.enableMod) {
             return;
         }
-        ExtendedWaterlogStore.loadChunk(level, chunkPos);
-        FluidSpatialGrid.initializeChunk(level, chunkPos);
+        if (FlowingFluids.config.enableExtendedWaterlogging) {
+            ExtendedWaterlogStore.loadChunk(level, chunkPos);
+        }
     }
 
     public static void onChunkUnload(LevelAccessor level, ChunkPos chunkPos) {

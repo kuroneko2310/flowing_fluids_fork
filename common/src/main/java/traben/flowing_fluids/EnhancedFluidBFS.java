@@ -224,6 +224,7 @@ public class EnhancedFluidBFS {
 
         int[] finalAmounts = new int[validPos.size()];
         int[] yLevels = new int[validPos.size()];
+        long[] positionKeys = new long[validPos.size()];
         int[] supportScores = new int[validPos.size()];
         int[] distances = new int[validPos.size()];
         List<Integer> wetOrder = new ArrayList<>(validPos.size());
@@ -233,6 +234,7 @@ public class EnhancedFluidBFS {
             int amount = validAmounts.get(i);
             finalAmounts[i] = amount;
             yLevels[i] = pos.getY();
+            positionKeys[i] = pos.asLong();
             distances[i] = Math.abs(pos.getX() - positions.get(0).getX())
                     + Math.abs(pos.getY() - positions.get(0).getY())
                     + Math.abs(pos.getZ() - positions.get(0).getZ());
@@ -267,7 +269,21 @@ public class EnhancedFluidBFS {
             return Long.compare(validPos.get(a).asLong(), validPos.get(b).asLong());
         });
 
-        int remaining = equalizeAmounts(finalAmounts, yLevels, wetOrder, dryOrder, totalAmount, preferWaterSurfacePotential);
+        int[] resolvedAmounts = finalAmounts;
+        int remaining = 0;
+        if (shouldUseRouteSolver(preferWaterSurfacePotential)) {
+            FluidRouteSolver.Result routeResult = FluidRouteSolver.solve(
+                finalAmounts,
+                yLevels,
+                positionKeys,
+                FlowingFluids.config.routeSolverIterations,
+                FlowingFluids.config.routeSolverMaxTransferPerEdge,
+                FlowingFluids.config.routeSolverDownhillBias
+            );
+            resolvedAmounts = routeResult.amountsInternal();
+        } else {
+            remaining = equalizeAmounts(finalAmounts, yLevels, wetOrder, dryOrder, totalAmount, preferWaterSurfacePotential);
+        }
 
         int changedCells = 0;
 
@@ -275,7 +291,7 @@ public class EnhancedFluidBFS {
         for (int index = 0; index < validPos.size(); index++) {
             BlockPos pos = validPos.get(index);
             int originalAmount = validAmounts.get(index);
-            int newAmount = finalAmounts[index];
+            int newAmount = resolvedAmounts[index];
             if (newAmount == originalAmount) {
                 continue;
             }
@@ -299,9 +315,15 @@ public class EnhancedFluidBFS {
                 && FlowingFluids.config.enableAnalyticPoolDormancy) {
             for (int index = 0; index < validPos.size(); index++) {
                 AdaptiveTickScheduler.markPoolStable(level, validPos.get(index), true,
-                    FluidAmountConverter.toBlockState(finalAmounts[index]));
+                    FluidAmountConverter.toBlockState(resolvedAmounts[index]));
             }
         }
+    }
+
+    private static boolean shouldUseRouteSolver(boolean preferWaterSurfacePotential) {
+        return preferWaterSurfacePotential
+            && FlowingFluids.config != null
+            && FlowingFluids.config.enableRouteSolver;
     }
 
     private static Fluid findFirstFluidType(List<BlockPos> positions, FluidSectionDataCache cache) {

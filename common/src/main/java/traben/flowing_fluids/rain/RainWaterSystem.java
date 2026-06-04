@@ -63,6 +63,7 @@ public final class RainWaterSystem {
     private static final ConcurrentHashMap<ResourceKey<Level>, ConcurrentHashMap<Long, Long>> activeRainChunks = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Level>, ConcurrentHashMap<UUID, Long>> lastPlayerRainChunks = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Level>, Boolean> lastRainState = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ResourceKey<Level>, Long> lastWakeCleanupTick = new ConcurrentHashMap<>();
 
     private static final ConcurrentLinkedQueue<RainPlacementTask> placementQueue = new ConcurrentLinkedQueue<>();
     private static final AtomicInteger placementQueueSize = new AtomicInteger(0);
@@ -93,6 +94,7 @@ public final class RainWaterSystem {
 
     private static final long FALLBACK_CACHE_RESYNC_TICKS = 20L * 60L * 5L;
     private static final long MIN_WAKE_TTL_TICKS = 200L;
+    private static final long WAKE_CLEANUP_INTERVAL_TICKS = 20L;
 
     private RainWaterSystem() {
     }
@@ -109,6 +111,7 @@ public final class RainWaterSystem {
         activeRainChunks.clear();
         lastPlayerRainChunks.clear();
         lastRainState.clear();
+        lastWakeCleanupTick.clear();
 
         if (!FlowingFluids.config.rainEnableChunkCaching) {
             chunkCache.clear();
@@ -126,14 +129,14 @@ public final class RainWaterSystem {
 
         final long now = level.getGameTime();
         final ResourceKey<Level> key = level.dimension();
+        if (!level.isRaining()) {
+            markRainInactive(key);
+            return;
+        }
+
         performCacheMaintenanceIfNeeded(level, now);
         final List<ChunkPos> playerChunks = new ArrayList<>();
         refreshWakeChunks(level, key, now, playerChunks);
-        if (!level.isRaining()) {
-            purgeQueuedPlacements(key);
-            clearWakeState(key);
-            return;
-        }
         float loadMultiplier = computeRainLoadMultiplier(level);
         processPlacementQueue(loadMultiplier);
 
@@ -740,13 +743,8 @@ public final class RainWaterSystem {
     }
 
     private static void refreshWakeChunks(ServerLevel level, ResourceKey<Level> levelKey, long now, List<ChunkPos> playerChunks) {
-        boolean raining = level.isRaining();
         boolean wasRaining = lastRainState.getOrDefault(levelKey, Boolean.FALSE);
-        lastRainState.put(levelKey, raining);
-
-        if (!raining) {
-            return;
-        }
+        lastRainState.put(levelKey, Boolean.TRUE);
 
         ConcurrentHashMap<Long, Long> wakeChunks = activeRainChunks.computeIfAbsent(levelKey, ignored -> new ConcurrentHashMap<>());
         ConcurrentHashMap<UUID, Long> playerState = lastPlayerRainChunks.computeIfAbsent(levelKey, ignored -> new ConcurrentHashMap<>());
@@ -776,7 +774,11 @@ public final class RainWaterSystem {
         }
 
         playerState.keySet().removeIf(uuid -> !activePlayers.contains(uuid));
-        wakeChunks.entrySet().removeIf(entry -> entry.getValue() < now);
+        long lastCleanup = lastWakeCleanupTick.getOrDefault(levelKey, Long.MIN_VALUE);
+        if (lastCleanup == Long.MIN_VALUE || now - lastCleanup >= WAKE_CLEANUP_INTERVAL_TICKS) {
+            wakeChunks.entrySet().removeIf(entry -> entry.getValue() < now);
+            lastWakeCleanupTick.put(levelKey, now);
+        }
     }
 
     private static long[] collectActiveRainChunks(ResourceKey<Level> levelKey, long now) {
@@ -850,10 +852,22 @@ public final class RainWaterSystem {
         return wakeChunks.values().stream().filter(expiry -> expiry >= now).count();
     }
 
+    private static void markRainInactive(ResourceKey<Level> levelKey) {
+        Boolean wasRaining = lastRainState.put(levelKey, Boolean.FALSE);
+        boolean hadWakeState = activeRainChunks.containsKey(levelKey) || lastPlayerRainChunks.containsKey(levelKey);
+        if (Boolean.TRUE.equals(wasRaining) || hadWakeState) {
+            purgeQueuedPlacements(levelKey);
+            activeRainChunks.remove(levelKey);
+            lastPlayerRainChunks.remove(levelKey);
+            lastWakeCleanupTick.remove(levelKey);
+        }
+    }
+
     private static void clearWakeState(ResourceKey<Level> levelKey) {
         activeRainChunks.remove(levelKey);
         lastPlayerRainChunks.remove(levelKey);
         lastRainState.remove(levelKey);
+        lastWakeCleanupTick.remove(levelKey);
     }
 
     private static void updateBiomeMultipliers() {

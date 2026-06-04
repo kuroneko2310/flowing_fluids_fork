@@ -14,9 +14,11 @@ import java.util.Map;
 
 public final class InfiniteBiomeRefillSuppression {
     private static final int EXPIRY_TICKS = 20;
+    private static final int CLEANUP_INTERVAL_TICKS = 20;
 
     private static final Map<DimensionKey, Long2IntOpenHashMap> RADII = new HashMap<>();
     private static final Map<DimensionKey, Long2LongOpenHashMap> EXPIRES_AT = new HashMap<>();
+    private static final Map<DimensionKey, Long> NEXT_CLEANUP_TICK = new HashMap<>();
 
     private InfiniteBiomeRefillSuppression() {
     }
@@ -49,7 +51,7 @@ public final class InfiniteBiomeRefillSuppression {
                 continue;
             }
             int radius = radii.get(suppressorPos);
-            if (BlockPos.of(suppressorPos).distSqr(pos) <= (double) radius * radius) {
+            if (distSqr(suppressorPos, pos) <= (double) radius * radius) {
                 return true;
             }
         }
@@ -68,6 +70,11 @@ public final class InfiniteBiomeRefillSuppression {
         }
 
         long now = level.getGameTime();
+        long nextCleanup = NEXT_CLEANUP_TICK.getOrDefault(key, Long.MIN_VALUE);
+        if (nextCleanup != Long.MIN_VALUE && now < nextCleanup) {
+            return;
+        }
+        NEXT_CLEANUP_TICK.put(key, now + CLEANUP_INTERVAL_TICKS);
         Iterator<Long2LongMap.Entry> iterator = expiresAt.long2LongEntrySet().fastIterator();
         while (iterator.hasNext()) {
             Long2LongMap.Entry entry = iterator.next();
@@ -79,6 +86,7 @@ public final class InfiniteBiomeRefillSuppression {
         if (radii.isEmpty()) {
             RADII.remove(key);
             EXPIRES_AT.remove(key);
+            NEXT_CLEANUP_TICK.remove(key);
         }
     }
 
@@ -89,10 +97,19 @@ public final class InfiniteBiomeRefillSuppression {
         DimensionKey key = DimensionKey.of(level);
         RADII.remove(key);
         EXPIRES_AT.remove(key);
+        NEXT_CLEANUP_TICK.remove(key);
     }
 
     public static void clearAll() {
         RADII.clear();
         EXPIRES_AT.clear();
+        NEXT_CLEANUP_TICK.clear();
+    }
+
+    private static double distSqr(long packedPos, BlockPos pos) {
+        double dx = BlockPos.getX(packedPos) - pos.getX();
+        double dy = BlockPos.getY(packedPos) - pos.getY();
+        double dz = BlockPos.getZ(packedPos) - pos.getZ();
+        return dx * dx + dy * dy + dz * dz;
     }
 }

@@ -11,7 +11,6 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
@@ -30,7 +29,6 @@ import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.Nullable;
 import traben.flowing_fluids.AdaptiveTickScheduler;
-import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 
 public class FloorSpringBlock extends Block implements SimpleWaterloggedBlock {
@@ -101,10 +99,7 @@ public class FloorSpringBlock extends Block implements SimpleWaterloggedBlock {
         if (state.getValue(WATERLOGGED)) {
             AdaptiveTickScheduler.scheduleFluidTick(level, pos, Fluids.WATER, Fluids.WATER.getTickDelay(level));
         }
-        if (direction == Direction.DOWN && !state.canSurvive(level, pos)) {
-            return detachedState(level, pos, state);
-        }
-        SpringTickScheduler.schedule(level, pos, this, strength.minimumDelay());
+        SpringTickScheduler.scheduleWakeup(level, pos, this, strength.minimumDelay());
         return state;
     }
 
@@ -112,7 +107,7 @@ public class FloorSpringBlock extends Block implements SimpleWaterloggedBlock {
     public void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
         super.onPlace(state, level, pos, oldState, movedByPiston);
         if (!level.isClientSide && !oldState.is(state.getBlock())) {
-            SpringTickScheduler.schedule(level, pos, this, strength.minimumDelay());
+            SpringTickScheduler.scheduleWakeup(level, pos, this, strength.minimumDelay());
         }
     }
 
@@ -120,17 +115,12 @@ public class FloorSpringBlock extends Block implements SimpleWaterloggedBlock {
     public void neighborChanged(BlockState state, Level level, BlockPos pos, Block block, BlockPos fromPos, boolean moving) {
         super.neighborChanged(state, level, pos, block, fromPos, moving);
         if (!level.isClientSide) {
-            SpringTickScheduler.schedule(level, pos, this, strength.minimumDelay());
+            SpringTickScheduler.scheduleWakeup(level, pos, this, strength.minimumDelay());
         }
     }
 
     @Override
     public void tick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
-        if (!state.canSurvive(level, pos)) {
-            replaceDetachedSpring(level, pos, state);
-            return;
-        }
-
         if (!FlowingFluids.config.enableMod
                 || FlowingFluids.config.isDimensionExcluded(level)
                 || !FlowingFluids.config.isFluidAllowed(sourceFluid)) {
@@ -156,22 +146,6 @@ public class FloorSpringBlock extends Block implements SimpleWaterloggedBlock {
                 ? SpringColumnPulseController.nextPulseDelay(level, pos, strength, sourceFluid)
                 : Math.max(strength.minimumDelay() * 4, nextTickDelay(random) * 2);
         SpringTickScheduler.schedule(level, pos, this, nextDelay);
-    }
-
-    private BlockState detachedState(LevelAccessor level, BlockPos pos, BlockState state) {
-        FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, pos, state);
-        return fluidState.getType().isSame(sourceFluid) && fluidState.getAmount() > 0
-                ? fluidState.createLegacyBlock()
-                : Blocks.AIR.defaultBlockState();
-    }
-
-    private void replaceDetachedSpring(ServerLevel level, BlockPos pos, BlockState state) {
-        BlockState detachedState = detachedState(level, pos, state);
-        if (detachedState.isAir()) {
-            level.destroyBlock(pos, false);
-            return;
-        }
-        level.setBlock(pos, detachedState, 3);
     }
 
     private boolean maybeBreakSpring(ServerLevel level, BlockPos pos, BlockState state, RandomSource random) {

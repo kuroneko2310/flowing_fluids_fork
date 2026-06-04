@@ -426,7 +426,13 @@ public class FluidSpatialGrid {
      * FIXED: Also clear access time.
      */
     public static void clearChunk(LevelAccessor level, ChunkPos chunkPos) {
-        DimensionStorage storage = getStorage(level);
+        if (level == null || chunkPos == null) {
+            return;
+        }
+        DimensionStorage storage = DIMENSION_STORES.get(DimensionKey.of(level));
+        if (storage == null) {
+            return;
+        }
         storage.chunkGrids.remove(chunkPos);
         storage.chunkAccessTimes.remove(chunkPos);
         storage.dirtyFrontierChunks.remove(chunkPos);
@@ -527,6 +533,13 @@ public class FluidSpatialGrid {
 
     public static void performMaintenanceAll() {
         DIMENSION_STORES.keySet().forEach(FluidSpatialGrid::cleanupStorage);
+    }
+
+    public static boolean hasDimensionStorage(LevelAccessor level) {
+        if (level == null) {
+            return false;
+        }
+        return DIMENSION_STORES.containsKey(DimensionKey.of(level));
     }
 
     private static void cleanupStorage(DimensionKey key) {

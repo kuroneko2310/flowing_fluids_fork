@@ -10,6 +10,14 @@ final class SpringTickScheduler {
     }
 
     static void schedule(LevelAccessor level, BlockPos pos, Block springBlock, int delay) {
+        schedule(level, pos, springBlock, delay, false);
+    }
+
+    static void scheduleWakeup(LevelAccessor level, BlockPos pos, Block springBlock, int delay) {
+        schedule(level, pos, springBlock, delay, true);
+    }
+
+    private static void schedule(LevelAccessor level, BlockPos pos, Block springBlock, int delay, boolean wakeup) {
         if (level == null || pos == null || springBlock == null) {
             return;
         }
@@ -18,7 +26,7 @@ final class SpringTickScheduler {
         if (level instanceof Level lvl && lvl.isClientSide()) {
             return;
         }
-        if (level.getBlockTicks().hasScheduledTick(scheduledPos, springBlock)) {
+        if (!wakeup && level.getBlockTicks().hasScheduledTick(scheduledPos, springBlock)) {
             return;
         }
         level.scheduleTick(scheduledPos, springBlock, safeDelay);

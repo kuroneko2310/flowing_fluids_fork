@@ -52,6 +52,7 @@ public class HierarchicalDistanceManager {
     private static final int SIMULATION_TIER_PLAYER_GRID_RADIUS = 2;
     private static final Map<DimensionKey, Map<Long, List<PlayerCacheEntry>>> playerGridCache = new ConcurrentHashMap<>();
     private static final Map<DimensionKey, Map<TerrainCacheKey, TerrainCacheEntry>> terrainTypeCache = new ConcurrentHashMap<>();
+    private static final Map<DimensionKey, Map<ChunkPos, Set<TerrainCacheKey>>> terrainKeysByChunk = new ConcurrentHashMap<>();
     private static final Map<DimensionKey, Long> lastPlayerCacheUpdate = new ConcurrentHashMap<>();
     private static final long PLAYER_CACHE_REFRESH_INTERVAL = 1000; // Update every 1 second (20 ticks)
 
@@ -137,10 +138,6 @@ public class HierarchicalDistanceManager {
         return tier == RangeTier.FAR || tier == RangeTier.DISTANT;
     }
 
-    public boolean shouldUseCostFieldFallback(RangeTier tier) {
-        return tier == RangeTier.NEAR || tier == RangeTier.MID;
-    }
-
     public int getCorridorSearchClamp(RangeTier tier) {
         return switch (tier) {
             case NEAR -> 8;
@@ -213,8 +210,9 @@ public class HierarchicalDistanceManager {
     public TerrainType estimateTerrainType(BlockPos pos, Level level) {
         ChunkPos chunkPos = new ChunkPos(pos);
         AdaptiveTickScheduler.AreaType areaType = AdaptiveTickScheduler.getAreaType(level, chunkPos);
+        DimensionKey dimensionKey = DimensionKey.of(level);
         Map<TerrainCacheKey, TerrainCacheEntry> dimensionCache =
-            terrainTypeCache.computeIfAbsent(DimensionKey.of(level), ignored -> new ConcurrentHashMap<>());
+            terrainTypeCache.computeIfAbsent(dimensionKey, ignored -> new ConcurrentHashMap<>());
         TerrainCacheKey cacheKey = TerrainCacheKey.of(pos, chunkPos);
 
         TerrainCacheEntry cached = dimensionCache.get(cacheKey);
@@ -224,6 +222,10 @@ public class HierarchicalDistanceManager {
 
         TerrainType computed = classifyTerrainType(pos, level, areaType);
         dimensionCache.put(cacheKey, new TerrainCacheEntry(areaType, computed));
+        terrainKeysByChunk
+            .computeIfAbsent(dimensionKey, ignored -> new ConcurrentHashMap<>())
+            .computeIfAbsent(chunkPos, ignored -> ConcurrentHashMap.newKeySet())
+            .add(cacheKey);
         return computed;
     }
 
@@ -414,13 +416,26 @@ public class HierarchicalDistanceManager {
         if (level == null || chunkPos == null) {
             return;
         }
-        Map<TerrainCacheKey, TerrainCacheEntry> dimensionCache = terrainTypeCache.get(DimensionKey.of(level));
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        Map<TerrainCacheKey, TerrainCacheEntry> dimensionCache = terrainTypeCache.get(dimensionKey);
+        Map<ChunkPos, Set<TerrainCacheKey>> dimensionIndex = terrainKeysByChunk.get(dimensionKey);
+        Set<TerrainCacheKey> cacheKeys = dimensionIndex == null ? null : dimensionIndex.remove(chunkPos);
         if (dimensionCache == null) {
+            if (dimensionIndex != null && dimensionIndex.isEmpty()) {
+                terrainKeysByChunk.remove(dimensionKey, dimensionIndex);
+            }
             return;
         }
-        dimensionCache.keySet().removeIf(key -> key.chunkPos.equals(chunkPos));
+        if (cacheKeys != null) {
+            for (TerrainCacheKey cacheKey : cacheKeys) {
+                dimensionCache.remove(cacheKey);
+            }
+        }
         if (dimensionCache.isEmpty()) {
-            terrainTypeCache.remove(DimensionKey.of(level), dimensionCache);
+            terrainTypeCache.remove(dimensionKey, dimensionCache);
+            if (dimensionIndex != null && dimensionIndex.isEmpty()) {
+                terrainKeysByChunk.remove(dimensionKey, dimensionIndex);
+            }
         }
     }
 
@@ -430,6 +445,7 @@ public class HierarchicalDistanceManager {
         }
         DimensionKey dimensionKey = DimensionKey.of(level);
         terrainTypeCache.remove(dimensionKey);
+        terrainKeysByChunk.remove(dimensionKey);
         playerGridCache.remove(dimensionKey);
         lastPlayerCacheUpdate.remove(dimensionKey);
     }

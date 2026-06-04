@@ -17,6 +17,7 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.LevelReader;
@@ -59,6 +60,8 @@ import traben.flowing_fluids.config.FFConfig;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.optimization.HierarchicalDistanceManager;
 import traben.flowing_fluids.optimization.WaterFlowProfile;
+import traben.flowing_fluids.performance.FluidAutoTickDelay;
+import traben.flowing_fluids.performance.FluidFineTickDelay;
 import traben.flowing_fluids.performance.FluidPerformanceMonitor;
 import traben.flowing_fluids.performance.InfiniteBiomeRefillFallbackController;
 
@@ -99,6 +102,10 @@ public abstract class MixinFlowingFluid extends Fluid {
     @Unique
     private static final ThreadLocal<boolean[]> ff$ASYNC_SLOPE_PENDING =
             ThreadLocal.withInitial(() -> new boolean[1]);
+
+    @Unique
+    private static final ThreadLocal<int[]> ff$FINE_TICK_DEPTH =
+            ThreadLocal.withInitial(() -> new int[1]);
 
     @Unique
     private static final Object ff$THIN_FRAGMENT_RECLAIM_LOCK = new Object();
@@ -255,7 +262,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         //random settle behaviour
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.randomTickLevelingDistance > 0
-                && level.getChunkAt(pos).getFluidTicks().count() < 16 //ignore chunks with many updating fluids
+                && AdaptiveTickScheduler.getTrackedScheduledFluidTickCount(level, new ChunkPos(pos)) < 16 //ignore chunks with many updating fluids
                 && FlowingFluids.config.isFluidAllowed(this)
                 && !FFFluidUtils.getEffectiveFluidState(level, pos.above()).getType().isSame(this)//don't settle if there is a fluid above
         ) {
@@ -661,9 +668,53 @@ public abstract class MixinFlowingFluid extends Fluid {
                 FlowingFluids.setManeuveringFluids(false);
                 FlowingFluids.pistonTick = false;
                 ff$recordFluidTickSample(monitorEnabled, monitor, monitorStartNanos, monitorStartAllocatedBytes, monitorFlowDistance);
+                ff$runFineTickSubsteps(level, blockPos, fluidState);
             }
         }
 
+    }
+
+    @Unique
+    private void ff$runFineTickSubsteps(final Level level, final BlockPos blockPos, final FluidState originalState) {
+        int[] depth = ff$FINE_TICK_DEPTH.get();
+        if (depth[0] > 0 || level.isClientSide() || originalState == null || !FlowingFluids.config.isFluidAllowed(originalState)) {
+            return;
+        }
+
+        float adjustedDelay;
+        if (originalState.is(FluidTags.WATER)) {
+            adjustedDelay = FluidAutoTickDelay.getAdjustedWaterTickDelay(FlowingFluids.config.waterTickDelay);
+        } else if (originalState.is(FluidTags.LAVA)) {
+            adjustedDelay = FluidAutoTickDelay.getAdjustedLavaTickDelay(level.dimensionType().ultraWarm()
+                    ? FlowingFluids.config.lavaNetherTickDelay
+                    : FlowingFluids.config.lavaTickDelay);
+        } else {
+            return;
+        }
+
+        int additionalSubsteps = FluidFineTickDelay.getAdditionalSubsteps(level, blockPos, originalState.getType(), adjustedDelay);
+        if (additionalSubsteps <= 0) {
+            return;
+        }
+
+        depth[0]++;
+        try {
+            for (int i = 0; i < additionalSubsteps; i++) {
+                FluidState currentState = FFFluidUtils.getEffectiveFluidState(level, blockPos);
+                if (currentState.isEmpty() || !currentState.getType().isSame(originalState.getType())) {
+                    return;
+                }
+#if MC > MC_21
+                if (level instanceof ServerLevel serverLevel) {
+                    ((FlowingFluid) (Object) this).tick(serverLevel, blockPos, level.getBlockState(blockPos), currentState);
+                }
+#else
+                ((FlowingFluid) (Object) this).tick(level, blockPos, currentState);
+#endif
+            }
+        } finally {
+            depth[0]--;
+        }
     }
 
     @Unique

@@ -28,8 +28,6 @@ import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FlowingFluidsTick;
 import traben.flowing_fluids.ParallelFluidTickManager;
-import traben.flowing_fluids.MudificationSystem;
-import traben.flowing_fluids.PlacedTerrainTracker;
 import traben.flowing_fluids.config.FFCommands;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.flood.FloodEventSystem;
@@ -106,7 +104,6 @@ public final class FlowingFluidsForge {
             NetherLavaEventSystem.onLevelUnload(level);
             RainWaterSystem.onLevelUnload(level);
             FlowingFluidsTick.onLevelUnload(level);
-            MudificationSystem.clearDimension(level);
             InfiniteBiomeRefillSuppression.onLevelUnload(level);
         }
     }
@@ -169,31 +166,6 @@ public final class FlowingFluidsForge {
         DryingEventSystem.clearAll();
         WaterPressureSystem.clearAll();
         NetherLavaEventSystem.clearAll();
-        MudificationSystem.clearAll();
-    }
-
-    @SubscribeEvent
-    public static void onTerrainPlaced(BlockEvent.EntityPlaceEvent event) {
-        if (!(event.getLevel() instanceof net.minecraft.server.level.ServerLevel level)
-            || !(event.getEntity() instanceof Player)) {
-            return;
-        }
-
-        BlockState placedState = event.getPlacedBlock();
-        if (placedState.is(MudificationSystem.MUDIFIABLE_TO_MUD)) {
-            PlacedTerrainTracker.get(level).markPlayerPlaced(event.getPos());
-        } else {
-            PlacedTerrainTracker.get(level).clearPlayerPlaced(event.getPos());
-        }
-
-    }
-
-    @SubscribeEvent
-    public static void onTerrainBroken(BlockEvent.BreakEvent event) {
-        if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level
-            && event.getState().is(MudificationSystem.MUDIFIABLE_TO_MUD)) {
-            PlacedTerrainTracker.get(level).clearPlayerPlaced(event.getPos());
-        }
     }
 
     @SubscribeEvent

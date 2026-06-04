@@ -33,6 +33,7 @@ import traben.flowing_fluids.FluidRegressionLogic;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.performance.FluidAutoTickDelay;
+import traben.flowing_fluids.performance.FluidFineTickDelay;
 import traben.flowing_fluids.performance.InfiniteBiomeRefillFallbackController;
 
 
@@ -542,8 +543,8 @@ private void ff$trySpawnSurfaceWater(Level level, BlockPos origin, RandomSource 
     @Inject(method = "getTickDelay", at = @At(value = "RETURN"), cancellable = true)
     private void ff$modifyTickDelay(final LevelReader level, final CallbackInfoReturnable<Integer> cir) {
         if (FlowingFluids.config.enableMod && FlowingFluids.config.isFluidAllowed(this)) {
-            cir.setReturnValue(FluidAutoTickDelay.getAdjustedWaterTickDelay(
-                    Mth.clamp(FlowingFluids.config.waterTickDelay, 1, 255)));
+            cir.setReturnValue(FluidFineTickDelay.toScheduledTickDelay(level, this,
+                    FluidAutoTickDelay.getAdjustedWaterTickDelay(FlowingFluids.config.waterTickDelay)));
         }
     }
 }

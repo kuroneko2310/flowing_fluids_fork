@@ -15,6 +15,7 @@ import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -47,17 +48,14 @@ public final class FluidComponentGraph {
         DimensionGraph graph = graph(level);
         long key = pos.asLong();
         if (amount <= 0) {
-            graph.cells.remove(key);
-            Integer componentId = graph.componentByCell.remove(key);
-            if (componentId != null) {
-                graph.summaries.remove(componentId);
-            }
+            removeCell(graph, key);
         } else {
             FluidComponentCell existing = graph.cells.get(key);
             int componentId = existing != null && existing.fluid().isSame(fluid)
                 ? existing.componentId()
                 : 0;
             graph.cells.put(key, new FluidComponentCell(fluid, amount, componentId, false, false, false));
+            trackCell(graph, key);
         }
         markDirty(level, pos);
         for (Direction direction : ALL_DIRECTIONS) {
@@ -91,6 +89,7 @@ public final class FluidComponentGraph {
             }
             for (long seed : batch) {
                 graph.dirtySeeds.remove(seed);
+                untrackDirtySeed(graph, seed);
             }
         }
 
@@ -138,6 +137,39 @@ public final class FluidComponentGraph {
         return summary.frontierCells() <= Math.max(2, summary.cellCount() / 8);
     }
 
+    public static boolean shouldDeferDeepStableInterior(LevelAccessor level, BlockPos pos, Fluid fluid, int amount,
+                                                        boolean forcedRecheck, boolean flowActive, float flowMomentum) {
+        if (forcedRecheck || flowActive || flowMomentum > 0.12f
+                || !isEnabled() || level == null || pos == null || fluid == null
+                || !FlowingFluids.config.fluidComponentGraphAssistEqualizer
+                || amount < FluidAmountConverter.toInternal(7)) {
+            return false;
+        }
+        DimensionGraph graph = GRAPHS.get(DimensionKey.of(level));
+        if (graph == null) {
+            return false;
+        }
+        FluidComponentCell cell = graph.cells.get(pos.asLong());
+        if (cell == null || !cell.fluid().isSame(fluid) || cell.amount() < FluidAmountConverter.toInternal(7)) {
+            return false;
+        }
+        FluidComponentSummary summary = graph.summaries.get(cell.componentId());
+        return isDeepStableInterior(cell, summary, pos.getY());
+    }
+
+    static boolean isDeepStableInterior(FluidComponentCell cell, FluidComponentSummary summary, int y) {
+        if (!isStableInterior(cell, summary)) {
+            return false;
+        }
+        if (summary.inletCells() > 0 || summary.cellCount() < 24) {
+            return false;
+        }
+        if (summary.frontierCells() > Math.max(1, summary.cellCount() / 16)) {
+            return false;
+        }
+        return summary.maxY() - y >= 3;
+    }
+
     public static void clearDimension(LevelAccessor level) {
         if (level != null) {
             GRAPHS.remove(DimensionKey.of(level));
@@ -152,10 +184,20 @@ public final class FluidComponentGraph {
         if (graph == null) {
             return;
         }
-        graph.cells.keySet().removeIf(posKey -> new ChunkPos(BlockPos.of(posKey)).equals(chunkPos));
-        graph.componentByCell.keySet().removeIf(posKey -> new ChunkPos(BlockPos.of(posKey)).equals(chunkPos));
+        Set<Long> cellKeys = graph.cellsByChunk.remove(chunkPos);
+        if (cellKeys != null) {
+            for (long posKey : cellKeys) {
+                graph.cells.remove(posKey);
+                graph.componentByCell.remove(posKey);
+            }
+        }
         synchronized (graph.dirtySeeds) {
-            graph.dirtySeeds.removeIf(posKey -> new ChunkPos(BlockPos.of(posKey)).equals(chunkPos));
+            Set<Long> dirtyKeys = graph.dirtySeedsByChunk.remove(chunkPos);
+            if (dirtyKeys != null) {
+                for (long posKey : dirtyKeys) {
+                    graph.dirtySeeds.remove(posKey);
+                }
+            }
         }
         graph.summaries.clear();
     }
@@ -203,7 +245,10 @@ public final class FluidComponentGraph {
         }
         DimensionGraph graph = graph(level);
         synchronized (graph.dirtySeeds) {
-            graph.dirtySeeds.add(pos.asLong());
+            long posKey = pos.asLong();
+            if (graph.dirtySeeds.add(posKey)) {
+                trackDirtySeed(graph, posKey);
+            }
         }
     }
 
@@ -211,8 +256,7 @@ public final class FluidComponentGraph {
         BlockPos seedPos = BlockPos.of(seedKey);
         Fluid seedFluid = cache.fluidType(seedPos);
         if (seedFluid == null) {
-            graph.cells.remove(seedKey);
-            graph.componentByCell.remove(seedKey);
+            removeCell(graph, seedKey);
             return;
         }
         int componentId = NEXT_COMPONENT_ID.getAndIncrement();
@@ -258,6 +302,7 @@ public final class FluidComponentGraph {
             graph.cells.put(currentKey, new FluidComponentCell(seedFluid, amount, componentId,
                 shape.frontier(), shape.outlet(), shape.inlet()));
             graph.componentByCell.put(currentKey, componentId);
+            trackCell(graph, currentKey);
 
             for (Direction direction : ALL_DIRECTIONS) {
                 int nx = x + direction.getStepX();
@@ -335,6 +380,48 @@ public final class FluidComponentGraph {
     private record CellShape(boolean frontier, boolean outlet, boolean inlet) {
     }
 
+    private static void trackCell(DimensionGraph graph, long posKey) {
+        graph.cellsByChunk
+            .computeIfAbsent(chunkPos(posKey), ignored -> ConcurrentHashMap.newKeySet())
+            .add(posKey);
+    }
+
+    private static void removeCell(DimensionGraph graph, long posKey) {
+        graph.cells.remove(posKey);
+        Integer componentId = graph.componentByCell.remove(posKey);
+        if (componentId != null) {
+            graph.summaries.remove(componentId);
+        }
+        Set<Long> cellKeys = graph.cellsByChunk.get(chunkPos(posKey));
+        if (cellKeys != null) {
+            cellKeys.remove(posKey);
+            if (cellKeys.isEmpty()) {
+                graph.cellsByChunk.remove(chunkPos(posKey), cellKeys);
+            }
+        }
+    }
+
+    private static void trackDirtySeed(DimensionGraph graph, long posKey) {
+        graph.dirtySeedsByChunk
+            .computeIfAbsent(chunkPos(posKey), ignored -> ConcurrentHashMap.newKeySet())
+            .add(posKey);
+    }
+
+    private static void untrackDirtySeed(DimensionGraph graph, long posKey) {
+        Set<Long> dirtyKeys = graph.dirtySeedsByChunk.get(chunkPos(posKey));
+        if (dirtyKeys == null) {
+            return;
+        }
+        dirtyKeys.remove(posKey);
+        if (dirtyKeys.isEmpty()) {
+            graph.dirtySeedsByChunk.remove(chunkPos(posKey), dirtyKeys);
+        }
+    }
+
+    private static ChunkPos chunkPos(long posKey) {
+        return new ChunkPos(BlockPos.getX(posKey) >> 4, BlockPos.getZ(posKey) >> 4);
+    }
+
     public record FluidComponentCell(Fluid fluid, int amount, int componentId,
                                      boolean frontier, boolean outlet, boolean inlet) {
     }
@@ -354,6 +441,8 @@ public final class FluidComponentGraph {
         private final ConcurrentHashMap<Long, FluidComponentCell> cells = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<Integer, FluidComponentSummary> summaries = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<Long, Integer> componentByCell = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<ChunkPos, Set<Long>> cellsByChunk = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<ChunkPos, Set<Long>> dirtySeedsByChunk = new ConcurrentHashMap<>();
         private final LongOpenHashSet dirtySeeds = new LongOpenHashSet();
         private volatile long lastProcessedTick = Long.MIN_VALUE;
 
