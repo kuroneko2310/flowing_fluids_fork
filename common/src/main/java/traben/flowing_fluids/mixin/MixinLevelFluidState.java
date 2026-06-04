@@ -24,9 +24,6 @@ public abstract class MixinLevelFluidState {
         }
 
         Level level = (Level) (Object) this;
-        if (level.isClientSide) {
-            return;
-        }
         BlockState state = level.getBlockState(pos);
         if (!ExtendedWaterlogStore.has(level, pos) && !FFFluidUtils.supportsVirtualFluidState(level, state)) {
             return;
