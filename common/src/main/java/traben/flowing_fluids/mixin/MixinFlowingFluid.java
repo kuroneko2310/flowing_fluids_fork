@@ -63,6 +63,7 @@ import traben.flowing_fluids.optimization.WaterFlowProfile;
 import traben.flowing_fluids.performance.FluidAutoTickDelay;
 import traben.flowing_fluids.performance.FluidFineTickDelay;
 import traben.flowing_fluids.performance.FluidPerformanceMonitor;
+import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
 import traben.flowing_fluids.performance.InfiniteBiomeRefillFallbackController;
 
 import java.util.List;
@@ -384,6 +385,13 @@ public abstract class MixinFlowingFluid extends Fluid {
                     : getSlopeFindDistance(level));
             // cancel the original tick
             ci.cancel();
+
+            if (FluidTickWorkloadGovernor.shouldDefer(level, blockPos, this, monitorFlowDistance)) {
+                int deferredDelay = FluidTickWorkloadGovernor.getDeferredDelay(level, blockPos, this, monitorFlowDistance);
+                AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, deferredDelay);
+                ff$recordFluidTickSample(monitorEnabled, monitor, monitorStartNanos, monitorStartAllocatedBytes, monitorFlowDistance);
+                return;
+            }
 
             if (FlowingFluids.config.dontTickAtLocation(blockPos, level)) {
                 AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, 200 + level.random.nextInt(200)); // 10 - 20 seconds delay

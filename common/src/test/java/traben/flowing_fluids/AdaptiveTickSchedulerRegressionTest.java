@@ -74,13 +74,13 @@ class AdaptiveTickSchedulerRegressionTest {
     }
 
     @Test
-    void loadSmoothingKeepsNormalDelaysNearRequestedValue() {
+    void loadSmoothingNeverPullsNormalDelaysEarlier() {
         BlockPos pos = new BlockPos(12, 64, -8);
         Fluid fluid = mock(Fluid.class);
 
         for (long tick = 0L; tick < 80L; tick++) {
             int delay = AdaptiveTickScheduler.computeLoadSmoothedDelay(pos, fluid, tick, 3);
-            assertTrue(delay >= 2 && delay <= 4);
+            assertTrue(delay >= 3 && delay <= 4);
         }
     }
 }

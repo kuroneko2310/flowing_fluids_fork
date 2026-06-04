@@ -5,6 +5,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelAccessor;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.optimization.HierarchicalDistanceManager;
+import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
 import traben.flowing_fluids.snow.SnowmeltWaterSystem;
 import traben.flowing_fluids.util.DimensionKey;
 
@@ -28,6 +29,7 @@ public final class FlowingFluidsTick {
             FluidTickBuffer.clearDimension(level);
             FluidComponentGraph.clearDimension(level);
             ExtendedWaterlogStore.clearDimension(level);
+            FluidTickWorkloadGovernor.clearDimension(level);
             HierarchicalDistanceManager.getInstance().clearDimension(level);
             return;
         }
@@ -109,6 +111,7 @@ public final class FlowingFluidsTick {
         FluidComponentGraph.clearDimension(level);
         ExtendedWaterlogStore.clearDimension(level);
         FluidActivityTracker.clearDimension(level);
+        FluidTickWorkloadGovernor.clearDimension(level);
         HierarchicalDistanceManager.getInstance().clearDimension(level);
     }
 }

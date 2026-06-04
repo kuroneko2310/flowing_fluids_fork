@@ -14,6 +14,7 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.performance.FluidPerformanceMonitor;
+import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
 import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.Collection;
@@ -830,9 +831,11 @@ public class AdaptiveTickScheduler {
         maybeCleanupScheduledFluidTicks(dimensionData, now);
 
         ScheduledFluidTickKey key = new ScheduledFluidTickKey(scheduledPos.asLong(), fluid);
-        int requestedDelayTicks = computeLoadSmoothedDelay(scheduledPos, fluid, now, Math.max(1, delay));
-        long requestedDueTick = now + requestedDelayTicks;
         int trackedFluidTicks = getTrackedScheduledFluidTickCount(dimensionData);
+        int adjustedDelay = FluidTickWorkloadGovernor.adjustRequestedDelay(
+            lvl, scheduledPos, fluid, Math.max(1, delay), trackedFluidTicks);
+        int requestedDelayTicks = computeLoadSmoothedDelay(scheduledPos, fluid, now, adjustedDelay);
+        long requestedDueTick = now + requestedDelayTicks;
         boolean trackedAlreadyHasTick = trackedFluidTicks >= SCHEDULED_FLUID_TICK_SOFT_LIMIT
                 && dimensionData.scheduledFluidTickDueTicks.containsKey(key);
         boolean[] accepted = new boolean[1];
@@ -870,10 +873,10 @@ public class AdaptiveTickScheduler {
             return requestedDelayTicks;
         }
 
-        int slots = offsetRadius * 2 + 1;
+        int slots = offsetRadius + 1;
         long phaseTick = Math.floorDiv(currentGameTick, requestedDelayTicks);
         long mixed = mixScheduleSmoothing(pos.asLong(), fluid, phaseTick);
-        int offset = (int) Long.remainderUnsigned(mixed, slots) - offsetRadius;
+        int offset = (int) Long.remainderUnsigned(mixed, slots);
         return Mth.clamp(requestedDelayTicks + offset, 1, 255);
     }
 
