@@ -22,6 +22,7 @@ import traben.flowing_fluids.config.FFConfig;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.flood.FloodEventSystem;
 import traben.flowing_fluids.performance.FluidAutoTickDelay;
+import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
 import traben.flowing_fluids.performance.InfiniteBiomeRefillFallbackController;
 import traben.flowing_fluids.rain.RainWaterSystem;
 import traben.flowing_fluids.water.WaterPressureSystem;
@@ -223,6 +224,7 @@ public final class FlowingFluids {
         FluidComponentGraph.clearDimension(level);
         ParallelFluidEqualizer.clearDimension(level);
         ParallelFluidTickManager.clearDimension(level);
+        FluidTickWorkloadGovernor.clearDimension(level);
         ExtendedWaterlogStore.clearDimension(level);
         traben.flowing_fluids.optimization.HierarchicalDistanceManager.getInstance().clearDimension(level);
     }

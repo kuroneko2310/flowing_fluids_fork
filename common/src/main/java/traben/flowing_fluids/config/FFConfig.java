@@ -128,6 +128,13 @@ public class FFConfig {
     public int autoTickDelayLavaMaxExtraDelay = 8; // Maximum extra delay added to lava ticks at runtime
     public boolean autoTickDelayLogAdjustments = true; // Log when the runtime delay bias changes
 
+    // Workload governor and parallel wake scheduling
+    public boolean enableFluidWorkloadGovernor = true; // Protects server ticks from runaway fluid scheduled-tick storms
+    public boolean fluidWorkloadGovernorSpatialDeferral = false; // Extra spatial skipping under high MSPT; off by default for responsive flow
+    public boolean fluidWorkloadGovernorQueuePressureDelay = false; // Add delay at schedule time only when explicitly prioritizing stability
+    public int activeWakeFlushBudgetPerTick = 0; // 0 = no per-tick wake limit; coalescing and parallel planning still apply
+    public int activeWakeMaxDelayTicks = 1; // Max spread delay for active wake scheduling; 1 keeps visible flow responsive
+
     // Fluid component graph
     public boolean enableFluidComponentGraph = false; // Track local fluid components from deltas instead of broad rescans
     public boolean fluidComponentGraphAssistEqualizer = true; // Let stable graph interiors use focused equalizer snapshots
@@ -1202,6 +1209,8 @@ public class FFConfig {
         float oldAutoTickDelayTargetMsptMultiplier = autoTickDelayTargetMsptMultiplier;
         int oldAutoTickDelayWaterMaxExtraDelay = autoTickDelayWaterMaxExtraDelay;
         int oldAutoTickDelayLavaMaxExtraDelay = autoTickDelayLavaMaxExtraDelay;
+        int oldActiveWakeFlushBudgetPerTick = activeWakeFlushBudgetPerTick;
+        int oldActiveWakeMaxDelayTicks = activeWakeMaxDelayTicks;
         int oldMaxWaterFlowDistance = maxWaterFlowDistance;
         int oldBfsMaxSearchDistance = bfsMaxSearchDistance;
         int oldPlayerBlockDistanceForFlowing = playerBlockDistanceForFlowing;
@@ -1350,6 +1359,8 @@ public class FFConfig {
         autoTickDelayTargetMsptMultiplier = Math.max(0.25f, Math.min(2.0f, autoTickDelayTargetMsptMultiplier));
         autoTickDelayWaterMaxExtraDelay = Math.max(0, Math.min(64, autoTickDelayWaterMaxExtraDelay));
         autoTickDelayLavaMaxExtraDelay = Math.max(0, Math.min(64, autoTickDelayLavaMaxExtraDelay));
+        activeWakeFlushBudgetPerTick = Math.max(0, Math.min(1_000_000, activeWakeFlushBudgetPerTick));
+        activeWakeMaxDelayTicks = Math.max(1, Math.min(40, activeWakeMaxDelayTicks));
         fluidComponentGraphMaxUpdatesPerTick = Math.max(1, Math.min(4096, fluidComponentGraphMaxUpdatesPerTick));
         fluidComponentGraphMaxScanNodes = Math.max(16, Math.min(8192, fluidComponentGraphMaxScanNodes));
         routeSolverIterations = Math.max(1, Math.min(16, routeSolverIterations));
@@ -1490,6 +1501,8 @@ public class FFConfig {
         appendCorrection(corrections, "autoTickDelayTargetMsptMultiplier", oldAutoTickDelayTargetMsptMultiplier, autoTickDelayTargetMsptMultiplier);
         appendCorrection(corrections, "autoTickDelayWaterMaxExtraDelay", oldAutoTickDelayWaterMaxExtraDelay, autoTickDelayWaterMaxExtraDelay);
         appendCorrection(corrections, "autoTickDelayLavaMaxExtraDelay", oldAutoTickDelayLavaMaxExtraDelay, autoTickDelayLavaMaxExtraDelay);
+        appendCorrection(corrections, "activeWakeFlushBudgetPerTick", oldActiveWakeFlushBudgetPerTick, activeWakeFlushBudgetPerTick);
+        appendCorrection(corrections, "activeWakeMaxDelayTicks", oldActiveWakeMaxDelayTicks, activeWakeMaxDelayTicks);
         appendCorrection(corrections, "flowSpeedStrength", oldFlowSpeedStrength, flowSpeedStrength);
         appendCorrection(corrections, "rainChunkRadius", oldRainChunkRadius, rainChunkRadius);
         appendCorrection(corrections, "pressureFlowBonusStrength", oldPressureFlowBonusStrength, pressureFlowBonusStrength);

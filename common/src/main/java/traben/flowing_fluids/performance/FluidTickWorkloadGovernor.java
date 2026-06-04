@@ -5,6 +5,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.material.Fluid;
+import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,9 +29,13 @@ public final class FluidTickWorkloadGovernor {
         if (!(level instanceof ServerLevel) || pos == null || fluid == null) {
             return false;
         }
+        if (!FlowingFluids.config.enableFluidWorkloadGovernor) {
+            return false;
+        }
 
         double mspt = getMspt(level);
-        if (shouldSpatiallyDefer(pos, fluid, level.getGameTime(), mspt, flowDistance)) {
+        if (FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral
+                && shouldSpatiallyDefer(pos, fluid, level.getGameTime(), mspt, flowDistance)) {
             return true;
         }
 
@@ -63,6 +68,10 @@ public final class FluidTickWorkloadGovernor {
         if (!(level instanceof ServerLevel) || pos == null || fluid == null) {
             return delay;
         }
+        if (!FlowingFluids.config.enableFluidWorkloadGovernor
+                || !FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay) {
+            return delay;
+        }
 
         int pressureDelay = getQueuePressureDelay(level, trackedFluidTicks);
         if (pressureDelay <= delay) {
@@ -72,6 +81,31 @@ public final class FluidTickWorkloadGovernor {
         long mixed = mix(pos.asLong(), fluid, level.getGameTime());
         int jitter = (int) Long.remainderUnsigned(mixed, Math.max(1, pressureDelay));
         return Mth.clamp(Math.max(delay, pressureDelay + jitter), 1, MAX_DEFER_DELAY);
+    }
+
+    public static int getBulkWakeFlushBudget(Level level, int queuedWakeTicks) {
+        int configured = FlowingFluids.config.activeWakeFlushBudgetPerTick;
+        if (configured <= 0) {
+            return Math.max(0, queuedWakeTicks);
+        }
+        int base = computeBulkWakeFlushBudgetForMspt(getMspt(level));
+        base = Math.min(base, configured);
+        if (queuedWakeTicks >= 131_072) {
+            return Math.min(configured, Math.max(base, 4096));
+        }
+        if (queuedWakeTicks >= 32_768) {
+            return Math.min(configured, Math.max(base, 2048));
+        }
+        return base;
+    }
+
+    public static int getBulkWakeMaxDelay(Level level, int queuedWakeTicks) {
+        if (!FlowingFluids.config.enableFluidWorkloadGovernor
+                || !FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay) {
+            return FlowingFluids.config.activeWakeMaxDelayTicks;
+        }
+        int pressureDelay = computeQueuePressureDelay(getMspt(level), queuedWakeTicks);
+        return Mth.clamp(Math.max(FlowingFluids.config.activeWakeMaxDelayTicks, pressureDelay + 2), 1, MAX_DEFER_DELAY);
     }
 
     public static void clearDimension(Level level) {
@@ -88,17 +122,17 @@ public final class FluidTickWorkloadGovernor {
         int distancePenalty = Math.max(0, flowDistance - 2) * 384;
         int budget;
         if (mspt >= 250.0) {
-            budget = EXTREME_BUDGET;
+            budget = Math.max(EXTREME_BUDGET, 512);
         } else if (mspt >= 120.0) {
-            budget = CRITICAL_BUDGET;
+            budget = Math.max(CRITICAL_BUDGET, 2048);
         } else if (mspt >= 70.0) {
-            budget = OVERLOADED_BUDGET;
+            budget = Math.max(OVERLOADED_BUDGET, 8192);
         } else if (mspt >= 45.0) {
-            budget = BUSY_BUDGET;
+            budget = Math.max(BUSY_BUDGET, 16_384);
         } else {
-            budget = HEALTHY_BUDGET;
+            budget = Math.max(HEALTHY_BUDGET, 65_536);
         }
-        return Math.max(32, budget - distancePenalty);
+        return Math.max(256, budget - distancePenalty);
     }
 
     static boolean shouldSpatiallyDefer(BlockPos pos, Fluid fluid, long gameTime, double mspt, int flowDistance) {
@@ -138,7 +172,23 @@ public final class FluidTickWorkloadGovernor {
         return 1;
     }
 
+    static int computeBulkWakeFlushBudgetForMspt(double mspt) {
+        if (mspt >= 250.0) {
+            return 512;
+        }
+        if (mspt >= 120.0) {
+            return 1024;
+        }
+        if (mspt >= 70.0) {
+            return 2048;
+        }
+        return 8192;
+    }
+
     private static int getBaseDeferredDelay(Level level, int flowDistance) {
+        if (!FlowingFluids.config.enableFluidWorkloadGovernor) {
+            return 1;
+        }
         double mspt = getMspt(level);
         if (mspt >= 120.0) {
             return 6 + Math.max(0, flowDistance - 2);

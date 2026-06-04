@@ -51,6 +51,19 @@ class FluidTickWorkloadGovernorTest {
     }
 
     @Test
+    void bulkWakeBudgetShrinksUnderLoad() {
+        int healthy = FluidTickWorkloadGovernor.computeBulkWakeFlushBudgetForMspt(20.0);
+        int overloaded = FluidTickWorkloadGovernor.computeBulkWakeFlushBudgetForMspt(90.0);
+        int critical = FluidTickWorkloadGovernor.computeBulkWakeFlushBudgetForMspt(150.0);
+        int extreme = FluidTickWorkloadGovernor.computeBulkWakeFlushBudgetForMspt(300.0);
+
+        assertTrue(healthy > overloaded);
+        assertTrue(overloaded > critical);
+        assertTrue(critical > extreme);
+        assertTrue(extreme > 0);
+    }
+
+    @Test
     void spatialDeferralLeavesSomePositionsAdmittedAcrossTime() {
         Fluid fluid = mock(Fluid.class);
         BlockPos pos = new BlockPos(17, 64, -9);

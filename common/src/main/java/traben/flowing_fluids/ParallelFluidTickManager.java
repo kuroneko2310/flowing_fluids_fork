@@ -8,6 +8,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
+import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
 import traben.flowing_fluids.util.DimensionKey;
 
 import java.util.*;
@@ -33,6 +34,8 @@ public class ParallelFluidTickManager {
 
     private static volatile ForkJoinPool fluidWorkerPool = createWorkerPool();
     private static final ConcurrentHashMap<DimensionKey, EnumMap<DelayBucket, LongOpenHashSet>> queuedStableTicks =
+        new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<DimensionKey, WakeTickQueue> queuedActiveWakeTicks =
         new ConcurrentHashMap<>();
 
     /**
@@ -77,6 +80,64 @@ public class ParallelFluidTickManager {
         synchronized (dimensionQueues) {
             dimensionQueues.get(bucket).add(pos.asLong());
         }
+    }
+
+    public static void queueActiveWakeTick(LevelAccessor level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return;
+        }
+        WakeTickQueue queue = queuedActiveWakeTicks.computeIfAbsent(DimensionKey.of(level), ignored -> new WakeTickQueue());
+        long posKey = pos.asLong();
+        if (queue.queued.add(posKey)) {
+            queue.pending.add(posKey);
+        }
+    }
+
+    public static void queueActiveWakeTicks(LevelAccessor level, Collection<BlockPos> positions) {
+        if (level == null || positions == null || positions.isEmpty()) {
+            return;
+        }
+        WakeTickQueue queue = queuedActiveWakeTicks.computeIfAbsent(DimensionKey.of(level), ignored -> new WakeTickQueue());
+        for (BlockPos pos : positions) {
+            if (pos == null) {
+                continue;
+            }
+            long posKey = pos.asLong();
+            if (queue.queued.add(posKey)) {
+                queue.pending.add(posKey);
+            }
+        }
+    }
+
+    public static int flushQueuedActiveWakeTicks(ServerLevel level) {
+        WakeTickQueue queue = queuedActiveWakeTicks.get(DimensionKey.of(level));
+        if (queue == null) {
+            return 0;
+        }
+
+        int queuedSize = queue.queued.size();
+        int budget = FluidTickWorkloadGovernor.getBulkWakeFlushBudget(level, queuedSize);
+        if (budget <= 0) {
+            return 0;
+        }
+
+        List<BlockPos> positions = new ArrayList<>(Math.min(queuedSize, budget));
+        Long posKey;
+        while (positions.size() < budget && (posKey = queue.pending.poll()) != null) {
+            if (queue.queued.remove(posKey)) {
+                positions.add(BlockPos.of(posKey));
+            }
+        }
+
+        if (queue.queued.isEmpty()) {
+            queuedActiveWakeTicks.remove(DimensionKey.of(level), queue);
+        }
+        if (positions.isEmpty()) {
+            return 0;
+        }
+
+        int maxDelay = FluidTickWorkloadGovernor.getBulkWakeMaxDelay(level, queuedSize);
+        return scheduleRandomizedFluidTicks(level, positions, 1, maxDelay, RANDOM_DELAY_SALT ^ 0x414354495645L);
     }
 
     public static int flushQueuedDistantStableTicks(ServerLevel level) {
@@ -140,6 +201,7 @@ public class ParallelFluidTickManager {
             return;
         }
         queuedStableTicks.remove(DimensionKey.of(level));
+        queuedActiveWakeTicks.remove(DimensionKey.of(level));
     }
 
     private static FluidChunkSnapshot createSnapshot(ServerLevel level, ChunkPos chunkPos, List<BlockPos> positions) {
@@ -308,6 +370,11 @@ public class ParallelFluidTickManager {
     private record FluidChunkSnapshot(ChunkPos chunkPos, BlockPos chunkCenter, List<FluidEntry> entries) {
     }
 
+    private static final class WakeTickQueue {
+        final Queue<Long> pending = new ConcurrentLinkedQueue<>();
+        final Set<Long> queued = ConcurrentHashMap.newKeySet();
+    }
+
     @FunctionalInterface
     private interface TickPlanner {
         ScheduledFluidTick plan(FluidChunkSnapshot snapshot, FluidEntry entry);
@@ -372,6 +439,7 @@ public class ParallelFluidTickManager {
      */
     public static void shutdown() {
         queuedStableTicks.clear();
+        queuedActiveWakeTicks.clear();
         synchronized (ParallelFluidTickManager.class) {
             fluidWorkerPool = null;
         }

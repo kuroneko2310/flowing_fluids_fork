@@ -38,6 +38,7 @@ public final class FlowingFluidsTick {
         if (FluidSpatialGrid.hasPendingChunkInitializations(level)) {
             FluidSpatialGrid.processPendingChunkInitializations(level, CHUNK_INITIALIZATION_BUDGET_PER_TICK);
         }
+        ParallelFluidTickManager.flushQueuedActiveWakeTicks(level);
         ParallelFluidTickManager.flushQueuedDistantStableTicks(level);
         if (FluidTickBuffer.hasPendingChanges(level)) {
             FluidTickBuffer.applyAll(level);
