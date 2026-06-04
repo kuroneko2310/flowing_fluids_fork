@@ -140,6 +140,14 @@ public class ParallelFluidTickManager {
         return scheduleRandomizedFluidTicks(level, positions, 1, maxDelay, RANDOM_DELAY_SALT ^ 0x414354495645L);
     }
 
+    public static int getQueuedActiveWakeTickCount(LevelAccessor level) {
+        if (level == null) {
+            return 0;
+        }
+        WakeTickQueue queue = queuedActiveWakeTicks.get(DimensionKey.of(level));
+        return queue == null ? 0 : queue.queued.size();
+    }
+
     public static int flushQueuedDistantStableTicks(ServerLevel level) {
         EnumMap<DelayBucket, LongOpenHashSet> dimensionQueues = queuedStableTicks.get(DimensionKey.of(level));
         if (dimensionQueues == null) {

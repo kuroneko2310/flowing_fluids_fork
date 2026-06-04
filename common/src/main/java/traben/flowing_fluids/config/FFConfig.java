@@ -132,8 +132,8 @@ public class FFConfig {
     public boolean enableFluidWorkloadGovernor = true; // Protects server ticks from runaway fluid scheduled-tick storms
     public boolean fluidWorkloadGovernorSpatialDeferral = false; // Extra spatial skipping under high MSPT; off by default for responsive flow
     public boolean fluidWorkloadGovernorQueuePressureDelay = false; // Add delay at schedule time only when explicitly prioritizing stability
-    public int activeWakeFlushBudgetPerTick = 0; // 0 = no per-tick wake limit; coalescing and parallel planning still apply
-    public int activeWakeMaxDelayTicks = 1; // Max spread delay for active wake scheduling; 1 keeps visible flow responsive
+    public int activeWakeFlushBudgetPerTick = 16_384; // Active water wake positions flushed per level tick; 0 disables the cap
+    public int activeWakeMaxDelayTicks = 2; // Max spread delay for active wake scheduling; lower is faster, higher is smoother
 
     // Fluid component graph
     public boolean enableFluidComponentGraph = false; // Track local fluid components from deltas instead of broad rescans

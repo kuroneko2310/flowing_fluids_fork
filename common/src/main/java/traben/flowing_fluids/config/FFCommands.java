@@ -36,6 +36,7 @@ import traben.flowing_fluids.FluidComponentGraph;
 import traben.flowing_fluids.FluidAmountConverter;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FlowingFluidsPlatform;
+import traben.flowing_fluids.ParallelFluidTickManager;
 import traben.flowing_fluids.PlugWaterFeature;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.flood.FloodEventSystem;
@@ -271,6 +272,7 @@ public class FFCommands {
     }
 
     private static int fluidGovernorStatus(CommandContext<CommandSourceStack> context) {
+        int queuedActiveWakes = ParallelFluidTickManager.getQueuedActiveWakeTickCount(context.getSource().getLevel());
         return message(context, "Fluid workload governor"
                 + "\n用途: 水の計算を止めるためではなく、ScheduledTick が暴走した時だけワールドtickを守ります。"
                 + "\n"
@@ -282,9 +284,10 @@ public class FFCommands {
                 + "\nactive wake:"
                 + "\n- flush_budget_per_tick: " + formatUnlimited(FlowingFluids.config.activeWakeFlushBudgetPerTick)
                 + "\n- max_delay_ticks: " + FlowingFluids.config.activeWakeMaxDelayTicks
+                + "\n- queued_now: " + queuedActiveWakes
                 + "\n"
-                + "\n速く自然に流したい時は `/flowing_fluids settings tick_delays__aka__flow_speeds preset natural_fast` が基準です。"
-                + "\n重さ優先で抑えたい時だけ spatial_deferral や queue_pressure_delay を ON にします。");
+                + "\nおすすめ基準は preset responsive です。短時間だけ全力で流すなら surge_fast、重い時は smooth / stability / emergency に切り替えます。"
+                + "\nwater_placement_limit は active wake の反映量を絞る安全ノブです。0 は無制限なので、重いワールドでは避けます。");
     }
 
     private static String formatUnlimited(int value) {
@@ -293,6 +296,23 @@ public class FFCommands {
 
     private static int applyFlowSpeedPreset(CommandContext<CommandSourceStack> context, String preset) {
         switch (preset) {
+            case "surge_fast" -> {
+                FlowingFluids.config.waterTickDelay = 1.0f;
+                FlowingFluids.config.lavaTickDelay = 10.0f;
+                FlowingFluids.config.lavaNetherTickDelay = 5.0f;
+                FlowingFluids.config.enableAutoTickDelay = false;
+                FlowingFluids.config.autoTickDelayWaterMaxExtraDelay = 0;
+                FlowingFluids.config.enableFluidWorkloadGovernor = true;
+                FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral = false;
+                FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay = false;
+                FlowingFluids.config.activeWakeFlushBudgetPerTick = 65_536;
+                FlowingFluids.config.activeWakeMaxDelayTicks = 1;
+                applyFastFlowShape();
+                resetFlowRuntime();
+                return messageAndSaveConfig(context, "Applied surge_fast flow preset."
+                        + "\nVery high wake placement budget for short tests: 65536/tick, max delay 1."
+                        + "\nIf the world stutters, switch to responsive or smooth.");
+            }
             case "natural_fast" -> {
                 FlowingFluids.config.waterTickDelay = 1.0f;
                 FlowingFluids.config.lavaTickDelay = 10.0f;
@@ -302,19 +322,29 @@ public class FFCommands {
                 FlowingFluids.config.enableFluidWorkloadGovernor = true;
                 FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral = false;
                 FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay = false;
-                FlowingFluids.config.activeWakeFlushBudgetPerTick = 0;
+                FlowingFluids.config.activeWakeFlushBudgetPerTick = 32_768;
                 FlowingFluids.config.activeWakeMaxDelayTicks = 1;
-                FlowingFluids.config.enableFlowSpeedControl = true;
-                FlowingFluids.config.flowSpeedStrength = Math.max(FlowingFluids.config.flowSpeedStrength, 0.55f);
-                FlowingFluids.config.connectedFlowDelayMultiplier = Math.min(FlowingFluids.config.connectedFlowDelayMultiplier, 0.45f);
-                FlowingFluids.config.channelBoostDelayMultiplier = Math.min(FlowingFluids.config.channelBoostDelayMultiplier, 0.40f);
-                FlowingFluids.config.downwardTickDelayMultiplier = Math.min(FlowingFluids.config.downwardTickDelayMultiplier, 0.35f);
-                FlowingFluids.config.hydraulicTickAcceleration = Math.max(FlowingFluids.config.hydraulicTickAcceleration, 0.70f);
-                FluidAutoTickDelay.resetRuntime();
-                FluidTickWorkloadGovernor.clearAll();
+                applyFastFlowShape();
+                resetFlowRuntime();
                 return messageAndSaveConfig(context, "Applied natural_fast flow preset."
-                        + "\nWater tick delay is 1.0, active wakes flush without a per-tick cap, and auto extra delay is off."
-                        + "\nWater should respond much faster while still using coalescing and parallel wake planning.");
+                        + "\nWater tick delay is 1.0, active wake placement is capped at 32768/tick, max delay 1."
+                        + "\nThis keeps fast visible flow without the previous unlimited wake burst.");
+            }
+            case "responsive" -> {
+                FlowingFluids.config.waterTickDelay = 1.0f;
+                FlowingFluids.config.lavaTickDelay = 10.0f;
+                FlowingFluids.config.lavaNetherTickDelay = 5.0f;
+                FlowingFluids.config.enableAutoTickDelay = true;
+                FlowingFluids.config.autoTickDelayWaterMaxExtraDelay = 2;
+                FlowingFluids.config.enableFluidWorkloadGovernor = true;
+                FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral = false;
+                FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay = false;
+                FlowingFluids.config.activeWakeFlushBudgetPerTick = 16_384;
+                FlowingFluids.config.activeWakeMaxDelayTicks = 2;
+                applyFastFlowShape();
+                resetFlowRuntime();
+                return messageAndSaveConfig(context, "Applied responsive flow preset."
+                        + "\nRecommended default: fast water, 16384 wake placements/tick, max delay 2.");
             }
             case "balanced" -> {
                 FlowingFluids.config.waterTickDelay = 2.0f;
@@ -323,12 +353,24 @@ public class FFCommands {
                 FlowingFluids.config.enableFluidWorkloadGovernor = true;
                 FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral = false;
                 FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay = false;
-                FlowingFluids.config.activeWakeFlushBudgetPerTick = 0;
-                FlowingFluids.config.activeWakeMaxDelayTicks = 1;
-                FluidAutoTickDelay.resetRuntime();
-                FluidTickWorkloadGovernor.clearAll();
+                FlowingFluids.config.activeWakeFlushBudgetPerTick = 8192;
+                FlowingFluids.config.activeWakeMaxDelayTicks = 2;
+                resetFlowRuntime();
                 return messageAndSaveConfig(context, "Applied balanced flow preset."
-                        + "\nWater stays responsive, while auto delay may add a small cushion if the server struggles.");
+                        + "\nModerate wake placement: 8192/tick, max delay 2.");
+            }
+            case "smooth" -> {
+                FlowingFluids.config.waterTickDelay = 2.0f;
+                FlowingFluids.config.enableAutoTickDelay = true;
+                FlowingFluids.config.autoTickDelayWaterMaxExtraDelay = Math.max(FlowingFluids.config.autoTickDelayWaterMaxExtraDelay, 6);
+                FlowingFluids.config.enableFluidWorkloadGovernor = true;
+                FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral = false;
+                FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay = true;
+                FlowingFluids.config.activeWakeFlushBudgetPerTick = 4096;
+                FlowingFluids.config.activeWakeMaxDelayTicks = 3;
+                resetFlowRuntime();
+                return messageAndSaveConfig(context, "Applied smooth flow preset."
+                        + "\nSmoother heavy-flow mode: 4096 wake placements/tick, pressure delay on, max delay 3.");
             }
             case "stability" -> {
                 FlowingFluids.config.waterTickDelay = Math.max(2.0f, FlowingFluids.config.waterTickDelay);
@@ -337,17 +379,43 @@ public class FFCommands {
                 FlowingFluids.config.enableFluidWorkloadGovernor = true;
                 FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral = true;
                 FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay = true;
-                FlowingFluids.config.activeWakeFlushBudgetPerTick = 8192;
-                FlowingFluids.config.activeWakeMaxDelayTicks = 3;
-                FluidAutoTickDelay.resetRuntime();
-                FluidTickWorkloadGovernor.clearAll();
+                FlowingFluids.config.activeWakeFlushBudgetPerTick = 2048;
+                FlowingFluids.config.activeWakeMaxDelayTicks = 4;
+                resetFlowRuntime();
                 return messageAndSaveConfig(context, "Applied stability flow preset."
-                        + "\nThis intentionally trades visible speed for server protection.");
+                        + "\nProtective mode: 2048 wake placements/tick, spatial deferral on, max delay 4.");
+            }
+            case "emergency" -> {
+                FlowingFluids.config.waterTickDelay = Math.max(4.0f, FlowingFluids.config.waterTickDelay);
+                FlowingFluids.config.enableAutoTickDelay = true;
+                FlowingFluids.config.autoTickDelayWaterMaxExtraDelay = Math.max(FlowingFluids.config.autoTickDelayWaterMaxExtraDelay, 12);
+                FlowingFluids.config.enableFluidWorkloadGovernor = true;
+                FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral = true;
+                FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay = true;
+                FlowingFluids.config.activeWakeFlushBudgetPerTick = 512;
+                FlowingFluids.config.activeWakeMaxDelayTicks = 6;
+                resetFlowRuntime();
+                return messageAndSaveConfig(context, "Applied emergency flow preset."
+                        + "\nHeavy safety mode: 512 wake placements/tick, water delay at least 4, max delay 6.");
             }
             default -> {
                 return message(context, "Unknown flow preset: " + preset);
             }
         }
+    }
+
+    private static void applyFastFlowShape() {
+        FlowingFluids.config.enableFlowSpeedControl = true;
+        FlowingFluids.config.flowSpeedStrength = Math.max(FlowingFluids.config.flowSpeedStrength, 0.55f);
+        FlowingFluids.config.connectedFlowDelayMultiplier = Math.min(FlowingFluids.config.connectedFlowDelayMultiplier, 0.45f);
+        FlowingFluids.config.channelBoostDelayMultiplier = Math.min(FlowingFluids.config.channelBoostDelayMultiplier, 0.40f);
+        FlowingFluids.config.downwardTickDelayMultiplier = Math.min(FlowingFluids.config.downwardTickDelayMultiplier, 0.35f);
+        FlowingFluids.config.hydraulicTickAcceleration = Math.max(FlowingFluids.config.hydraulicTickAcceleration, 0.70f);
+    }
+
+    private static void resetFlowRuntime() {
+        FluidAutoTickDelay.resetRuntime();
+        FluidTickWorkloadGovernor.clearAll();
     }
 
     private static String describeSeaLevelOverrideStatus(Level level) {
@@ -2315,13 +2383,21 @@ public class FFCommands {
                                 ).then(Commands.literal("tick_delays__aka__flow_speeds")
                                         .executes(cont -> message(cont, "Modifies the tick delay fluids will have between spreading updates.\nValues may be fractional: 0.5 means up to two flow substeps per server tick, while 1.5 alternates 1 and 2 tick scheduling for a 1.5 tick average.\nThe vanilla value is always 5 for water but lava will vary between 10 and 30 depending on if it is in the Nether."))
                                         .then(Commands.literal("preset")
-                                                .executes(cont -> message(cont, "Flow speed presets: natural_fast, balanced, stability"))
+                                                .executes(cont -> message(cont, "Flow speed presets: surge_fast, natural_fast, responsive, balanced, smooth, stability, emergency"))
+                                                .then(Commands.literal("surge_fast")
+                                                        .executes(cont -> applyFlowSpeedPreset(cont, "surge_fast")))
                                                 .then(Commands.literal("natural_fast")
                                                         .executes(cont -> applyFlowSpeedPreset(cont, "natural_fast")))
+                                                .then(Commands.literal("responsive")
+                                                        .executes(cont -> applyFlowSpeedPreset(cont, "responsive")))
                                                 .then(Commands.literal("balanced")
                                                         .executes(cont -> applyFlowSpeedPreset(cont, "balanced")))
+                                                .then(Commands.literal("smooth")
+                                                        .executes(cont -> applyFlowSpeedPreset(cont, "smooth")))
                                                 .then(Commands.literal("stability")
-                                                        .executes(cont -> applyFlowSpeedPreset(cont, "stability"))))
+                                                        .executes(cont -> applyFlowSpeedPreset(cont, "stability")))
+                                                .then(Commands.literal("emergency")
+                                                        .executes(cont -> applyFlowSpeedPreset(cont, "emergency"))))
                                         .then(Commands.literal("water")
                                                 .executes(cont -> message(cont, "Modifies the base tick delay water will have between spreading updates.\nThe vanilla value is always 5 for water.\nWater base tick delay is currently set to " + FlowingFluids.config.waterTickDelay
                                                         + "\n\n" + FluidAutoTickDelay.describeStatus()))
@@ -2408,8 +2484,18 @@ public class FFCommands {
                                                         "positions", 0, 1_000_000,
                                                         a -> FlowingFluids.config.activeWakeFlushBudgetPerTick = a,
                                                         () -> FlowingFluids.config.activeWakeFlushBudgetPerTick))
+                                                .then(intCommand("water_placement_limit",
+                                                        "Alias for active_wake_flush_budget. It limits how many newly active water wake positions are released into scheduled ticks per level tick. 0 is unlimited.",
+                                                        "positions", 0, 1_000_000,
+                                                        a -> FlowingFluids.config.activeWakeFlushBudgetPerTick = a,
+                                                        () -> FlowingFluids.config.activeWakeFlushBudgetPerTick))
                                                 .then(intCommand("active_wake_max_delay",
                                                         "Maximum randomized delay used when flushing active wake positions. 1 is fastest.",
+                                                        "ticks", 1, 40,
+                                                        a -> FlowingFluids.config.activeWakeMaxDelayTicks = a,
+                                                        () -> FlowingFluids.config.activeWakeMaxDelayTicks))
+                                                .then(intCommand("water_placement_spread_delay",
+                                                        "Alias for active_wake_max_delay. Higher values spread large water wake bursts across a few ticks.",
                                                         "ticks", 1, 40,
                                                         a -> FlowingFluids.config.activeWakeMaxDelayTicks = a,
                                                         () -> FlowingFluids.config.activeWakeMaxDelayTicks))

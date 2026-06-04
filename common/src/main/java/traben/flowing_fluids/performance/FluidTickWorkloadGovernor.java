@@ -174,15 +174,18 @@ public final class FluidTickWorkloadGovernor {
 
     static int computeBulkWakeFlushBudgetForMspt(double mspt) {
         if (mspt >= 250.0) {
-            return 512;
-        }
-        if (mspt >= 120.0) {
             return 1024;
         }
-        if (mspt >= 70.0) {
+        if (mspt >= 120.0) {
             return 2048;
         }
-        return 8192;
+        if (mspt >= 70.0) {
+            return 8192;
+        }
+        if (mspt >= 45.0) {
+            return 16_384;
+        }
+        return 32_768;
     }
 
     private static int getBaseDeferredDelay(Level level, int flowDistance) {
