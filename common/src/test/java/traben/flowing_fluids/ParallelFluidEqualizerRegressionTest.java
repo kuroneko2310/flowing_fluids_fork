@@ -94,4 +94,13 @@ class ParallelFluidEqualizerRegressionTest {
         assertTrue(ParallelFluidEqualizer.shouldRequeueDeferredNow(10L, 11L, false, 0.0f));
         assertTrue(ParallelFluidEqualizer.shouldRequeueDeferredNow(10L, 14L, true, 0.0f));
     }
+
+    @Test
+    void completedResultApplyBudgetGrowsWithBacklog() {
+        int quietBudget = ParallelFluidEqualizer.getCompletedResultApplyBudget(0);
+        int busyBudget = ParallelFluidEqualizer.getCompletedResultApplyBudget(48);
+
+        assertTrue(quietBudget >= 2);
+        assertTrue(busyBudget >= quietBudget);
+    }
 }

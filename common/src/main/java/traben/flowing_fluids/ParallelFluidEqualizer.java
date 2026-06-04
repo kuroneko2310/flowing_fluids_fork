@@ -21,17 +21,21 @@ import net.minecraft.world.level.material.Fluids;
 import org.jetbrains.annotations.Nullable;
 import traben.flowing_fluids.util.DimensionKey;
 import traben.flowing_fluids.optimization.WaterFlowProfile;
+import traben.flowing_fluids.performance.FluidPerformanceMonitor;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.RejectedExecutionException;
 
@@ -42,6 +46,7 @@ public final class ParallelFluidEqualizer {
     private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<Long, Long>> DEFER_COOLDOWNS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<Long>>> QUEUED_BY_CHUNK = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<Long>>> COOLDOWNS_BY_CHUNK = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<DimensionKey, Queue<CompletableFuture<Result>>> PENDING_RESULTS = new ConcurrentHashMap<>();
     private static final Set<Long> ACTIVE = ConcurrentHashMap.newKeySet();
     private static final ConcurrentHashMap<ChunkPos, Set<Long>> ACTIVE_BY_CHUNK = new ConcurrentHashMap<>();
 
@@ -62,11 +67,15 @@ public final class ParallelFluidEqualizer {
     private static final int MIN_SELECTION_BUCKET_SIZE = 6;
     private static final int MAX_SELECTION_BUCKET_SIZE = 12;
     private static final int MAX_BUCKET_REPRESENTATIVES = 3;
-    private static final int SYNC_REQUEST_THRESHOLD = 2;
     private static final int CALM_SURFACE_MAX_NODES = 384;
     private static final int DEFER_COOLDOWN_TICKS = 4;
     private static final int FOCUSED_SNAPSHOT_CORE_RADIUS = 3;
     private static final int FOCUSED_SNAPSHOT_RIBBON_RADIUS = 1;
+    private static final int QUEUED_SELECTION_BUDGET_PER_TICK = 512;
+    private static final int MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION = 64;
+    private static final int MIN_COMPLETED_RESULT_APPLY_BUDGET = 2;
+    private static final int BASE_COMPLETED_RESULT_APPLY_BUDGET = 8;
+    private static final int MAX_COMPLETED_RESULT_APPLY_BUDGET = 32;
 
     private static final ThreadLocal<Map<Vec3i, Direction[]>> DIRECTION_CACHE = ThreadLocal.withInitial(() ->
         new LinkedHashMap<Vec3i, Direction[]>(128, 0.75f, true) {
@@ -98,23 +107,31 @@ public final class ParallelFluidEqualizer {
         if (level == null) {
             return false;
         }
-        Set<Long> queued = QUEUED.get(DimensionKey.of(level));
-        return queued != null && !queued.isEmpty();
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        Set<Long> queued = QUEUED.get(dimensionKey);
+        Queue<CompletableFuture<Result>> pending = PENDING_RESULTS.get(dimensionKey);
+        return queued != null && !queued.isEmpty()
+            || pending != null && !pending.isEmpty();
     }
 
     public static int flush(ServerLevel level) {
         DimensionKey dimensionKey = DimensionKey.of(level);
-        Set<Long> queued = QUEUED.remove(dimensionKey);
-        QUEUED_BY_CHUNK.remove(dimensionKey);
+        int applied = applyCompletedResults(level, dimensionKey);
+        Queue<CompletableFuture<Result>> pendingResults = PENDING_RESULTS.get(dimensionKey);
+        if (pendingResults != null && pendingResults.size() >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION) {
+            return applied;
+        }
+
+        LongOpenHashSet queued = drainQueuedCandidates(dimensionKey, QUEUED_SELECTION_BUDGET_PER_TICK);
         if (queued == null || queued.isEmpty()) {
-            return 0;
+            return applied;
         }
 
         SelectionResult selection = selectRepresentativeSources(level, queued);
         requeueDeferred(level, selection.deferred());
         List<ScanCandidate> representativeSources = selection.selected();
         if (representativeSources.isEmpty()) {
-            return 0;
+            return applied;
         }
 
         FluidSectionDataCache captureCache = new FluidSectionDataCache(level, Math.max(32, representativeSources.size() * 8));
@@ -134,49 +151,142 @@ public final class ParallelFluidEqualizer {
             }
         }
         if (requests.isEmpty()) {
+            return applied;
+        }
+
+        Queue<CompletableFuture<Result>> results =
+            PENDING_RESULTS.computeIfAbsent(dimensionKey, ignored -> new ConcurrentLinkedQueue<>());
+        int availableSlots = Math.max(0, MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION - results.size());
+        for (int i = 0; i < requests.size() && i < availableSlots; i++) {
+            CompletableFuture<Result> future = submitAsync(requests.get(i));
+            if (future != null) {
+                results.add(future);
+            } else {
+                requeue(level, requests.get(i).startPos().asLong());
+            }
+        }
+        for (int i = availableSlots; i < requests.size(); i++) {
+            requeue(level, requests.get(i).startPos().asLong());
+            ACTIVE.remove(requests.get(i).startPos().asLong());
+            untrackActive(requests.get(i).startPos().asLong());
+        }
+        return applied;
+    }
+
+    private static LongOpenHashSet drainQueuedCandidates(DimensionKey dimensionKey, int maxCandidates) {
+        Set<Long> queued = QUEUED.get(dimensionKey);
+        if (queued == null || queued.isEmpty() || maxCandidates <= 0) {
+            return new LongOpenHashSet();
+        }
+
+        LongOpenHashSet drained = new LongOpenHashSet(Math.min(queued.size(), maxCandidates));
+        Iterator<Long> iterator = queued.iterator();
+        while (iterator.hasNext() && drained.size() < maxCandidates) {
+            long posKey = iterator.next();
+            drained.add(posKey);
+        }
+        for (long posKey : drained) {
+            queued.remove(posKey);
+            untrackChunkIndex(QUEUED_BY_CHUNK, dimensionKey, posKey);
+        }
+        if (queued.isEmpty()) {
+            QUEUED.remove(dimensionKey, queued);
+        }
+        return drained;
+    }
+
+    private static void requeue(LevelAccessor level, long posKey) {
+        if (level == null) {
+            return;
+        }
+        DimensionKey dimensionKey = DimensionKey.of(level);
+        if (QUEUED.computeIfAbsent(dimensionKey, ignored -> ConcurrentHashMap.newKeySet()).add(posKey)) {
+            trackChunkIndex(QUEUED_BY_CHUNK, dimensionKey, posKey);
+        }
+    }
+
+    private static int applyCompletedResults(ServerLevel level, DimensionKey dimensionKey) {
+        Queue<CompletableFuture<Result>> pending = PENDING_RESULTS.get(dimensionKey);
+        if (pending == null || pending.isEmpty()) {
             return 0;
         }
 
+        int processed = 0;
         Map<Fluid, LongOpenHashSet> mergedByFluid = new LinkedHashMap<>();
-        if (requests.size() <= SYNC_REQUEST_THRESHOLD) {
-            for (Request request : requests) {
-                Result result = computeResult(request);
-                cacheComponentMembership(level, result.componentPositions());
-                if (!result.targets().isEmpty()) {
-                    mergedByFluid.computeIfAbsent(result.fluidType(), ignored -> new LongOpenHashSet()).addAll(result.targets());
-                }
+        int applyBudget = getCompletedResultApplyBudget(pending.size());
+        Iterator<CompletableFuture<Result>> iterator = pending.iterator();
+        while (iterator.hasNext() && processed < applyBudget) {
+            CompletableFuture<Result> future = iterator.next();
+            if (!future.isDone()) {
+                continue;
             }
-        } else {
-            List<CompletableFuture<Result>> futures = new ArrayList<>(requests.size());
-            for (Request request : requests) {
-                futures.add(submitAsync(request));
-            }
+            iterator.remove();
+            processed++;
 
-            for (int i = 0; i < futures.size(); i++) {
-                Result result;
-                try {
-                    result = futures.get(i).join();
-                } catch (CompletionException exception) {
-                    Throwable cause = exception.getCause() != null ? exception.getCause() : exception;
-                    FlowingFluids.error("Parallel equalization failed: " + cause.getMessage());
-                    result = computeResult(requests.get(i));
-                }
-                cacheComponentMembership(level, result.componentPositions());
-                if (!result.targets().isEmpty()) {
-                    mergedByFluid.computeIfAbsent(result.fluidType(), ignored -> new LongOpenHashSet()).addAll(result.targets());
-                }
+            Result result;
+            try {
+                result = future.join();
+            } catch (CompletionException exception) {
+                Throwable cause = exception.getCause() != null ? exception.getCause() : exception;
+                FlowingFluids.error("Async equalization failed: " + cause.getMessage());
+                continue;
+            } catch (RuntimeException exception) {
+                FlowingFluids.error("Async equalization failed: " + exception.getMessage());
+                continue;
+            }
+            if (result == null) {
+                continue;
+            }
+            cacheComponentMembership(level, result.componentPositions());
+            if (!result.targets().isEmpty()) {
+                mergedByFluid.computeIfAbsent(result.fluidType(), ignored -> new LongOpenHashSet()).addAll(result.targets());
             }
         }
 
+        if (pending.isEmpty()) {
+            PENDING_RESULTS.remove(dimensionKey, pending);
+        }
+
         int total = 0;
+        FluidSectionDataCache applyCache = null;
         for (Map.Entry<Fluid, LongOpenHashSet> entry : mergedByFluid.entrySet()) {
             if (entry.getValue().isEmpty()) {
                 continue;
             }
-            EnhancedFluidBFS.equalizePositionKeys(level, entry.getValue(), entry.getKey(), captureCache);
+            if (applyCache == null) {
+                applyCache = new FluidSectionDataCache(level, Math.max(16, entry.getValue().size() / 8));
+            }
+            EnhancedFluidBFS.equalizePositionKeys(level, entry.getValue(), entry.getKey(), applyCache);
             total += entry.getValue().size();
         }
         return total;
+    }
+
+    static int getCompletedResultApplyBudget(int pendingResults) {
+        int backlogBoost = pendingResults >= 48 ? 24
+            : pendingResults >= 24 ? 12
+            : pendingResults >= 12 ? 6
+            : 0;
+        int budget = BASE_COMPLETED_RESULT_APPLY_BUDGET + backlogBoost;
+
+        double mspt = FluidPerformanceMonitor.getInstance().getAverageServerMspt20();
+        if (mspt <= 0.0) {
+            mspt = FluidPerformanceMonitor.getInstance().getLastServerMspt();
+        }
+        if (mspt > 0.0) {
+            if (mspt >= 60.0) {
+                budget = Math.min(budget, MIN_COMPLETED_RESULT_APPLY_BUDGET);
+            } else if (mspt >= 50.0) {
+                budget = Math.min(budget, 4);
+            } else if (mspt >= 42.0) {
+                budget = Math.min(budget, BASE_COMPLETED_RESULT_APPLY_BUDGET);
+            } else if (mspt <= 28.0 && pendingResults >= 12) {
+                budget += 8;
+            }
+        }
+
+        return Math.max(MIN_COMPLETED_RESULT_APPLY_BUDGET,
+            Math.min(MAX_COMPLETED_RESULT_APPLY_BUDGET, budget));
     }
 
     public static void clearDimension(LevelAccessor level) {
@@ -186,6 +296,12 @@ public final class ParallelFluidEqualizer {
             DEFER_COOLDOWNS.remove(dimensionKey);
             QUEUED_BY_CHUNK.remove(dimensionKey);
             COOLDOWNS_BY_CHUNK.remove(dimensionKey);
+            Queue<CompletableFuture<Result>> pending = PENDING_RESULTS.remove(dimensionKey);
+            if (pending != null) {
+                for (CompletableFuture<Result> future : pending) {
+                    future.cancel(false);
+                }
+            }
         }
     }
 
@@ -283,6 +399,8 @@ public final class ParallelFluidEqualizer {
         DEFER_COOLDOWNS.clear();
         QUEUED_BY_CHUNK.clear();
         COOLDOWNS_BY_CHUNK.clear();
+        PENDING_RESULTS.values().forEach(queue -> queue.forEach(future -> future.cancel(false)));
+        PENDING_RESULTS.clear();
         ACTIVE.clear();
         ACTIVE_BY_CHUNK.clear();
     }
@@ -312,9 +430,10 @@ public final class ParallelFluidEqualizer {
         }
     }
 
-    private static CompletableFuture<Result> submitAsync(Request request) {
+    private static @Nullable CompletableFuture<Result> submitAsync(Request request) {
         try {
-            return CompletableFuture.supplyAsync(() -> computeResult(request), getPool());
+            return CompletableFuture.supplyAsync(() -> computeResult(request), getPool())
+                .whenComplete((ignored, error) -> releaseActive(request.startPos().asLong()));
         } catch (RejectedExecutionException exception) {
             FlowingFluids.warn("Equalizer worker pool rejected a task; recreating pool and retrying.");
             synchronized (ParallelFluidEqualizer.class) {
@@ -323,12 +442,19 @@ public final class ParallelFluidEqualizer {
                 }
             }
             try {
-                return CompletableFuture.supplyAsync(() -> computeResult(request), getPool());
+                return CompletableFuture.supplyAsync(() -> computeResult(request), getPool())
+                    .whenComplete((ignored, error) -> releaseActive(request.startPos().asLong()));
             } catch (RejectedExecutionException retryFailure) {
-                FlowingFluids.warn("Equalizer worker pool still unavailable; falling back to synchronous compute.");
-                return CompletableFuture.completedFuture(computeResult(request));
+                FlowingFluids.warn("Equalizer worker pool still unavailable; deferring equalization retry.");
+                releaseActive(request.startPos().asLong());
+                return null;
             }
         }
+    }
+
+    private static void releaseActive(long posKey) {
+        ACTIVE.remove(posKey);
+        untrackActive(posKey);
     }
 
     private static void shutdownPool() {
@@ -751,8 +877,7 @@ public final class ParallelFluidEqualizer {
         try {
             return computeInternal(request);
         } finally {
-            ACTIVE.remove(request.startPos().asLong());
-            untrackActive(request.startPos().asLong());
+            releaseActive(request.startPos().asLong());
         }
     }
 

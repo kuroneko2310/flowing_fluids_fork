@@ -1,5 +1,6 @@
 package traben.flowing_fluids;
 
+import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -28,6 +29,7 @@ import java.util.stream.Collectors;
  */
 public class ParallelFluidTickManager {
     private static final long RANDOM_DELAY_SALT = 0x9E3779B97F4A7C15L;
+    private static final int STABLE_TICK_FLUSH_BUDGET_PER_LEVEL = 2048;
 
     private static volatile ForkJoinPool fluidWorkerPool = createWorkerPool();
     private static final ConcurrentHashMap<DimensionKey, EnumMap<DelayBucket, LongOpenHashSet>> queuedStableTicks =
@@ -84,16 +86,20 @@ public class ParallelFluidTickManager {
         }
 
         int scheduled = 0;
+        int remainingBudget = STABLE_TICK_FLUSH_BUDGET_PER_LEVEL;
         for (DelayBucket bucket : DelayBucket.values()) {
+            if (remainingBudget <= 0) {
+                break;
+            }
             LongOpenHashSet positions;
             synchronized (dimensionQueues) {
                 LongOpenHashSet queued = dimensionQueues.get(bucket);
                 if (queued == null || queued.isEmpty()) {
                     continue;
                 }
-                positions = new LongOpenHashSet(queued);
-                queued.clear();
+                positions = drainQueuedStableTicks(queued, remainingBudget);
             }
+            remainingBudget -= positions.size();
 
             List<BlockPos> blockPositions = new ArrayList<>(positions.size());
             for (long posKey : positions) {
@@ -117,6 +123,16 @@ public class ParallelFluidTickManager {
             queuedStableTicks.remove(DimensionKey.of(level), dimensionQueues);
         }
         return scheduled;
+    }
+
+    private static LongOpenHashSet drainQueuedStableTicks(LongOpenHashSet queued, int maxPositions) {
+        LongOpenHashSet drained = new LongOpenHashSet(Math.min(queued.size(), maxPositions));
+        LongIterator iterator = queued.iterator();
+        while (iterator.hasNext() && drained.size() < maxPositions) {
+            drained.add(iterator.nextLong());
+            iterator.remove();
+        }
+        return drained;
     }
 
     public static void clearDimension(LevelAccessor level) {

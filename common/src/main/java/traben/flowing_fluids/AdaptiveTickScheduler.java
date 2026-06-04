@@ -59,6 +59,9 @@ public class AdaptiveTickScheduler {
     private static final long SCHEDULED_FLUID_TICK_CLEANUP_INTERVAL_TICKS = 40L;
     private static final int SCHEDULED_FLUID_TICK_CLEANUP_BUDGET = 4096;
     private static final int SCHEDULED_FLUID_TICK_SOFT_LIMIT = 262_144;
+    private static final int SCHEDULE_SMOOTHING_MIN_DELAY_TICKS = 3;
+    private static final int SCHEDULE_SMOOTHING_MAX_OFFSET_TICKS = 2;
+    private static final long SCHEDULE_SMOOTHING_SALT = 0x4d595f464c4f57L;
 
     // Equilibrium thresholds
     private static final float EQUILIBRIUM_STABLE_THRESHOLD = 0.04f; // E < 0.04 → no tick
@@ -827,7 +830,7 @@ public class AdaptiveTickScheduler {
         maybeCleanupScheduledFluidTicks(dimensionData, now);
 
         ScheduledFluidTickKey key = new ScheduledFluidTickKey(scheduledPos.asLong(), fluid);
-        int requestedDelayTicks = Math.max(1, delay);
+        int requestedDelayTicks = computeLoadSmoothedDelay(scheduledPos, fluid, now, Math.max(1, delay));
         long requestedDueTick = now + requestedDelayTicks;
         int trackedFluidTicks = getTrackedScheduledFluidTickCount(dimensionData);
         boolean trackedAlreadyHasTick = trackedFluidTicks >= SCHEDULED_FLUID_TICK_SOFT_LIMIT
@@ -855,6 +858,33 @@ public class AdaptiveTickScheduler {
 
     static boolean shouldAcceptScheduledFluidTick(Long existingDueTick, long requestedDueTick, long currentGameTick) {
         return shouldAcceptScheduledFluidTick(existingDueTick, requestedDueTick, currentGameTick, false, 0);
+    }
+
+    static int computeLoadSmoothedDelay(BlockPos pos, Fluid fluid, long currentGameTick, int requestedDelayTicks) {
+        if (pos == null || fluid == null || requestedDelayTicks < SCHEDULE_SMOOTHING_MIN_DELAY_TICKS) {
+            return Math.max(1, requestedDelayTicks);
+        }
+
+        int offsetRadius = Math.min(SCHEDULE_SMOOTHING_MAX_OFFSET_TICKS, requestedDelayTicks / 2);
+        if (offsetRadius <= 0) {
+            return requestedDelayTicks;
+        }
+
+        int slots = offsetRadius * 2 + 1;
+        long phaseTick = Math.floorDiv(currentGameTick, requestedDelayTicks);
+        long mixed = mixScheduleSmoothing(pos.asLong(), fluid, phaseTick);
+        int offset = (int) Long.remainderUnsigned(mixed, slots) - offsetRadius;
+        return Mth.clamp(requestedDelayTicks + offset, 1, 255);
+    }
+
+    private static long mixScheduleSmoothing(long posKey, Fluid fluid, long phaseTick) {
+        long fluidHash = System.identityHashCode(fluid);
+        long z = posKey
+            ^ Long.rotateLeft(phaseTick * 0x9E3779B97F4A7C15L, 21)
+            ^ ((long) fluidHash * SCHEDULE_SMOOTHING_SALT);
+        z = (z ^ (z >>> 30)) * 0xbf58476d1ce4e5b9L;
+        z = (z ^ (z >>> 27)) * 0x94d049bb133111ebL;
+        return z ^ (z >>> 31);
     }
 
     static boolean shouldAcceptScheduledFluidTick(Long existingDueTick, long requestedDueTick, long currentGameTick,
