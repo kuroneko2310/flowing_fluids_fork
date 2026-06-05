@@ -78,6 +78,35 @@ class FluidRegressionLogicTest {
     }
 
     @Test
+    void nearbyStepDownKeepsSlopeSearchWideEnoughForShortLedges() {
+        assertEquals(2, FluidRegressionLogic.keepSlopeSearchResponsiveForConnectedFlow(
+            2, 3, 4, 8, false, false, false, false, 0.0f, 8, false
+        ));
+        assertEquals(3, FluidRegressionLogic.keepSlopeSearchResponsiveForConnectedFlow(
+            2, 3, 4, 8, true, false, false, false, 0.0f, 8, false
+        ));
+        assertEquals(4, FluidRegressionLogic.keepSlopeSearchResponsiveForConnectedFlow(
+            4, 3, 4, 8, true, false, false, false, 0.0f, 8, false
+        ));
+    }
+
+    @Test
+    void connectedFlowSignalsKeepFlowDistanceResponsiveWithoutIgnoringMax() {
+        assertEquals(6, FluidRegressionLogic.keepSlopeSearchResponsiveForConnectedFlow(
+            2, 3, 4, 8, false, true, false, false, 0.0f, 8, false
+        ));
+        assertEquals(5, FluidRegressionLogic.keepSlopeSearchResponsiveForConnectedFlow(
+            2, 3, 4, 8, false, false, false, true, 0.0f, 8, false
+        ));
+        assertEquals(4, FluidRegressionLogic.keepSlopeSearchResponsiveForConnectedFlow(
+            2, 3, 4, 4, false, true, false, false, 0.0f, 8, false
+        ));
+        assertEquals(5, FluidRegressionLogic.keepSlopeSearchResponsiveForConnectedFlow(
+            2, 3, 4, 8, false, false, false, false, 0.0f, 5, true
+        ));
+    }
+
+    @Test
     void infiniteBiomeOutletSkipsTransientHorizontalSearchOnlyForRetainedSourceCaps() {
         assertTrue(FluidRegressionLogic.shouldSkipInfiniteBiomeOutletHorizontalSearch(true, true, true));
         assertFalse(FluidRegressionLogic.shouldSkipInfiniteBiomeOutletHorizontalSearch(false, true, true));

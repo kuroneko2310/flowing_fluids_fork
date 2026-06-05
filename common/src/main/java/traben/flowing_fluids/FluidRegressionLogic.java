@@ -210,6 +210,40 @@ public final class FluidRegressionLogic {
         return stillReservoirInterior;
     }
 
+    public static int keepSlopeSearchResponsiveForConnectedFlow(int currentDistance,
+                                                                int configuredStepDownDistance,
+                                                                int configuredFlowDistance,
+                                                                int configuredMaxFlowDistance,
+                                                                boolean nearbyStepDownOutlet,
+                                                                boolean pressureDriven,
+                                                                boolean inletZone,
+                                                                boolean flowActive,
+                                                                float flowMomentum,
+                                                                int sourceAmount,
+                                                                boolean broadSurface) {
+        int safeCurrentDistance = Math.max(1, currentDistance);
+        int safeMaxDistance = Math.max(safeCurrentDistance, Math.max(1, configuredMaxFlowDistance));
+        int targetDistance = safeCurrentDistance;
+        if (nearbyStepDownOutlet) {
+            // The nearby outlet probe is deliberately capped at three blocks. When it
+            // finds a short ledge behind a lateral step, keep the main slope search at
+            // least that wide so broad-surface clamps do not strand visible water tails.
+            targetDistance = Math.max(targetDistance, Math.max(1, Math.min(3, configuredStepDownDistance)));
+        }
+
+        boolean connectedFlowSignal = pressureDriven
+                || inletZone
+                || flowActive
+                || flowMomentum > 0.18f
+                || (broadSurface && sourceAmount > 0 && sourceAmount < 8);
+        if (connectedFlowSignal) {
+            int responsiveDistance = Math.max(4, Math.max(1, configuredFlowDistance) + (pressureDriven || inletZone ? 2 : 1));
+            targetDistance = Math.max(targetDistance, Math.min(safeMaxDistance, responsiveDistance));
+        }
+
+        return Math.min(safeMaxDistance, targetDistance);
+    }
+
     public static boolean shouldPreserveBroadSurfaceThinSource(boolean broadSurface,
                                                                boolean inletZone,
                                                                boolean immediateSurfaceEdge,

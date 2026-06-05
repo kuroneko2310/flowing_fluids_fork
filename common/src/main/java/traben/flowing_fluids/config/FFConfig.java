@@ -154,7 +154,7 @@ public class FFConfig {
     public int flowActivationTicks = 1; // Force ticks briefly after flow updates; profile-based breach handling keeps fronts responsive
     public boolean forceTickWhenAdjacentAir = false; // Always tick when adjacent to air/replaceable blocks
     public int forceFlowLevelDifference = 2; // Force flow when level difference exceeds this
-    public int stepDownSearchDistance = 1; // How many blocks horizontally to search for step-down outlets (1-3)
+    public int stepDownSearchDistance = 3; // How many blocks horizontally to search for step-down outlets (1-3)
     public float pressureFlowBonusStrength = 0.1f; // Extra lateral transfer based on height difference
     public float downwardPressureStrength = 0.4f; // Reduces retention when falling (pressure effect)
     public int downwardPressureMaxColumn = 4; // Max column height to sample for pressure

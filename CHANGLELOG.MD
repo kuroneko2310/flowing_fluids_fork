@@ -1,4 +1,8 @@
 
+1.0.6
+- improved connected water slope-search responsiveness so active fronts, pressure-fed water, inlet zones, partial broad surfaces, and nearby short outlets keep enough flow distance to move instead of leaving water stranded behind terrain steps
+- widened the lightweight step-down outlet probe default from 1 to 3 blocks while keeping the main slope search capped by existing flow-distance and workload limits
+
 1.0.5
 - added fractional fluid tick delays for water and lava, including 0.5 tick style substeps and 1.5 tick average scheduling
 - updated `/flowing_fluids settings behaviour tick_delays__aka__flow_speeds` commands to accept decimal delay values

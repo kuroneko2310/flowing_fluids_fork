@@ -1800,6 +1800,8 @@ public abstract class MixinFlowingFluid extends Fluid {
         WaterFlowProfile waterProfile = fluidState.is(FluidTags.WATER)
                 ? flowing_fluids$getWaterFlowProfile(level, blockPos, fluidState, amount)
                 : null;
+        boolean nearbyStepDownOutlet = fluidState.is(FluidTags.WATER)
+                && flowing_fluids$hasNearbyStepDownOutlet(level, blockPos, fluidState.getType(), amount);
         if (requiresSlope && flowing_fluids$shouldSuppressExploratorySpread(level, blockPos, fluidState, amount, waterProfile)) {
             return null;
         }
@@ -1850,6 +1852,18 @@ public abstract class MixinFlowingFluid extends Fluid {
             int maxDistance = Math.max(1, FlowingFluids.config.maxWaterFlowDistance);
             int maxScaled = Math.max(1, Math.round(maxDistance * multiplier));
             adaptiveSlopeFindDistance = Math.max(1, Math.min(maxScaled, scaled));
+            adaptiveSlopeFindDistance = FluidRegressionLogic.keepSlopeSearchResponsiveForConnectedFlow(
+                    adaptiveSlopeFindDistance,
+                    FlowingFluids.config.stepDownSearchDistance,
+                    FlowingFluids.config.waterFlowDistance,
+                    FlowingFluids.config.maxWaterFlowDistance,
+                    nearbyStepDownOutlet,
+                    waterProfile != null && waterProfile.isPressureDriven(),
+                    waterProfile != null && waterProfile.isInletZone(),
+                    waterProfile != null && waterProfile.isFlowActive(),
+                    waterProfile != null ? waterProfile.flowMomentum() : 0.0f,
+                    amount,
+                    waterProfile != null && waterProfile.isBroadSurface());
 
         }
         adaptiveSlopeFindDistance = FluidActivityTracker.getAdaptiveSlopeFindDistance(level, blockPos, adaptiveSlopeFindDistance);
