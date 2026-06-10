@@ -178,9 +178,7 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (int y = springPos.getY() + 1; y <= mouthPos.getY(); y++) {
             cursor.set(springPos.getX(), y, springPos.getZ());
-            if (!SpringCavityCarver.carveFluidCell(level, cursor, fluid)) {
-                break;
-            }
+            SpringCavityCarver.forceCarveFluidCell(level, cursor, fluid);
         }
 
         if (fluid.isSame(Fluids.WATER)) {
@@ -221,14 +219,8 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
     }
 
     private boolean prepareVentMouth(WorldGenLevel level, BlockPos mouthPos) {
-        BlockState mouthState = level.getBlockState(mouthPos);
-        if (!canShapeVentBlock(mouthState)) {
-            return false;
-        }
-
-        // Let worldgen replace the mouth with fluid directly instead of leaving an air step behind.
-        return level.canSeeSky(mouthPos)
-                || (!mouthState.isAir() && level.canSeeSky(mouthPos.above()));
+        SpringCavityCarver.forceOpenAirCell(level, mouthPos);
+        return level.canSeeSky(mouthPos) || level.canSeeSky(mouthPos.above());
     }
 
     private boolean prepareVentSupport(WorldGenLevel level, BlockPos supportPos, BlockState supportState, BlockState shellState) {
@@ -260,8 +252,7 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (int y = springPos.getY() + 1; y <= surfacePos.getY(); y++) {
             cursor.set(springPos.getX(), y, springPos.getZ());
-            BlockState state = level.getBlockState(cursor);
-            if (!SpringCavityCarver.canCarveForFluid(state, fluid)) {
+            if (cursor.getY() <= level.getMinBuildHeight() || cursor.getY() >= level.getMaxBuildHeight()) {
                 return false;
             }
         }

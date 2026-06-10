@@ -49,6 +49,10 @@ public class FluidSpatialGrid {
         return DIMENSION_STORES.computeIfAbsent(key, k -> new DimensionStorage());
     }
 
+    private static DimensionStorage getExistingStorage(LevelAccessor level) {
+        return level == null ? null : DIMENSION_STORES.get(DimensionKey.of(level));
+    }
+
     private static void cleanupStorageIfEmpty(LevelAccessor level, DimensionStorage storage) {
         if (storage.chunkGrids.isEmpty()
                 && storage.dirtyFrontierChunks.isEmpty()
@@ -63,7 +67,10 @@ public class FluidSpatialGrid {
      * This is an O(1) operation.
      */
     public static boolean hasFluidAt(LevelAccessor level, BlockPos pos) {
-        DimensionStorage storage = getStorage(level);
+        DimensionStorage storage = getExistingStorage(level);
+        if (storage == null) {
+            return false;
+        }
         ChunkPos chunkPos = new ChunkPos(pos);
         ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
@@ -85,10 +92,20 @@ public class FluidSpatialGrid {
      * @param amount Internal precision amount, converted from BlockState amount (0-8)
      */
     public static void setFluidAt(LevelAccessor level, BlockPos pos, boolean hasFluid, int amount) {
-        DimensionStorage storage = getStorage(level);
+        DimensionStorage storage = hasFluid ? getStorage(level) : getExistingStorage(level);
+        if (storage == null) {
+            return;
+        }
         ChunkPos chunkPos = new ChunkPos(pos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
+        if (grid == null) {
+            if (!hasFluid) {
+                return;
+            }
+            grid = new ChunkFluidGrid();
+            storage.chunkGrids.put(chunkPos, grid);
+        }
         storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
-        ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
         boolean changed = grid.setFluidAt(pos, hasFluid, amount);
         if (changed) {
             invalidateLocalComponents(level, pos);
@@ -132,10 +149,20 @@ public class FluidSpatialGrid {
     }
 
     static void setFluidAtFromBuffer(LevelAccessor level, BlockPos pos, boolean hasFluid, int amount) {
-        DimensionStorage storage = getStorage(level);
+        DimensionStorage storage = hasFluid ? getStorage(level) : getExistingStorage(level);
+        if (storage == null) {
+            return;
+        }
         ChunkPos chunkPos = new ChunkPos(pos);
+        ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
+        if (grid == null) {
+            if (!hasFluid) {
+                return;
+            }
+            grid = new ChunkFluidGrid();
+            storage.chunkGrids.put(chunkPos, grid);
+        }
         storage.chunkAccessTimes.put(chunkPos, System.currentTimeMillis());
-        ChunkFluidGrid grid = storage.chunkGrids.computeIfAbsent(chunkPos, k -> new ChunkFluidGrid());
         grid.setFluidAt(pos, hasFluid, amount);
 
         if (grid.isEmpty()) {
@@ -169,7 +196,10 @@ public class FluidSpatialGrid {
      * Returns 0 if no fluid exists.
      */
     public static int getFluidAmount(LevelAccessor level, BlockPos pos) {
-        DimensionStorage storage = getStorage(level);
+        DimensionStorage storage = getExistingStorage(level);
+        if (storage == null) {
+            return 0;
+        }
         ChunkPos chunkPos = new ChunkPos(pos);
         ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
@@ -183,7 +213,10 @@ public class FluidSpatialGrid {
      * Returns 0 if no fluid or no component assigned.
      */
     public static int getComponentId(LevelAccessor level, BlockPos pos) {
-        DimensionStorage storage = getStorage(level);
+        DimensionStorage storage = getExistingStorage(level);
+        if (storage == null) {
+            return 0;
+        }
         ChunkPos chunkPos = new ChunkPos(pos);
         ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
@@ -217,7 +250,10 @@ public class FluidSpatialGrid {
      * Returns null if no gradient information available.
      */
     public static Direction getGradientDirection(LevelAccessor level, BlockPos pos) {
-        DimensionStorage storage = getStorage(level);
+        DimensionStorage storage = getExistingStorage(level);
+        if (storage == null) {
+            return null;
+        }
         ChunkPos chunkPos = new ChunkPos(pos);
         ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
@@ -240,7 +276,10 @@ public class FluidSpatialGrid {
      * Gets the average fluid level in the macro cell containing this position.
      */
     public static float getMacroAverageLevel(LevelAccessor level, BlockPos pos) {
-        DimensionStorage storage = getStorage(level);
+        DimensionStorage storage = getExistingStorage(level);
+        if (storage == null) {
+            return 0.0f;
+        }
         ChunkPos chunkPos = new ChunkPos(pos);
         ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
@@ -250,7 +289,10 @@ public class FluidSpatialGrid {
     }
 
     public static MacroFluidHint getMacroFluidHint(LevelAccessor level, BlockPos pos) {
-        DimensionStorage storage = getStorage(level);
+        DimensionStorage storage = getExistingStorage(level);
+        if (storage == null) {
+            return EMPTY_MACRO_FLUID_HINT;
+        }
         ChunkPos chunkPos = new ChunkPos(pos);
         ChunkFluidGrid grid = storage.chunkGrids.get(chunkPos);
         if (grid == null) {
@@ -362,6 +404,14 @@ public class FluidSpatialGrid {
         }
         DimensionStorage storage = DIMENSION_STORES.get(DimensionKey.of(level));
         return storage != null && !storage.pendingChunkInitializations.isEmpty();
+    }
+
+    public static int getPendingChunkInitializationCount(LevelAccessor level) {
+        if (level == null) {
+            return 0;
+        }
+        DimensionStorage storage = DIMENSION_STORES.get(DimensionKey.of(level));
+        return storage == null ? 0 : storage.pendingChunkInitializations.size();
     }
 
     private static void initializeChunkNow(Level level, ChunkPos chunkPos, DimensionStorage storage) {
@@ -605,6 +655,7 @@ public class FluidSpatialGrid {
         private static final int MIN_HEIGHT = -64;
         private static final int TOTAL_HEIGHT = MAX_HEIGHT - MIN_HEIGHT; // 384
         private static final int GRID_SIZE = CHUNK_SIZE * TOTAL_HEIGHT * CHUNK_SIZE; // 16 * 384 * 16 = 98304
+        private static final int SECTION_GRID_SIZE = CHUNK_SIZE * CHUNK_SIZE * 16; // 4096
 
         // Macro cell dimensions (16x16x16 blocks per macro cell)
         private static final int MACRO_CELL_SIZE = 16;
@@ -623,7 +674,7 @@ public class FluidSpatialGrid {
         // Layer 2: Fine-grained fluid presence and active internal amounts (0-63)
         private final BitSet fluidPresence = new BitSet(GRID_SIZE);
         private final BitSet frontierPresence = new BitSet(GRID_SIZE);
-        private final byte[] fluidAmounts = new byte[GRID_SIZE]; // 0-63, stored as a byte
+        private final byte[][] fluidAmountSections = new byte[MACRO_CELLS_Y][]; // 0-63, stored only for active 16-block sections
         private final int[] macroFrontierCounts = new int[MACRO_GRID_SIZE];
         private volatile boolean frontierDirty = false;
 
@@ -644,6 +695,33 @@ public class FluidSpatialGrid {
             if (y >= TOTAL_HEIGHT) y = TOTAL_HEIGHT - 1;
 
             return (y * CHUNK_SIZE * CHUNK_SIZE) + (z * CHUNK_SIZE) + x;
+        }
+
+        private int amountSectionIndex(int fineIndex) {
+            return fineIndex / SECTION_GRID_SIZE;
+        }
+
+        private int amountSectionOffset(int fineIndex) {
+            return fineIndex & (SECTION_GRID_SIZE - 1);
+        }
+
+        private int getStoredAmount(int fineIndex) {
+            byte[] section = fluidAmountSections[amountSectionIndex(fineIndex)];
+            return section == null ? 0 : section[amountSectionOffset(fineIndex)] & 0xFF;
+        }
+
+        private void setStoredAmount(int fineIndex, int amount) {
+            int sectionIndex = amountSectionIndex(fineIndex);
+            byte[] section = fluidAmountSections[sectionIndex];
+            if (amount > 0) {
+                if (section == null) {
+                    section = new byte[SECTION_GRID_SIZE];
+                    fluidAmountSections[sectionIndex] = section;
+                }
+                section[amountSectionOffset(fineIndex)] = (byte) amount;
+            } else if (section != null) {
+                section[amountSectionOffset(fineIndex)] = 0;
+            }
         }
 
         /**
@@ -669,16 +747,16 @@ public class FluidSpatialGrid {
         public boolean setFluidAt(BlockPos pos, boolean hasFluid, int amount) {
             int index = posToIndex(pos);
             boolean wasFluid = fluidPresence.get(index);
-            int oldAmount = wasFluid ? (fluidAmounts[index] & 0xFF) : 0;
+            int oldAmount = wasFluid ? getStoredAmount(index) : 0;
 
             fluidPresence.set(index, hasFluid);
 
             int newAmount = 0;
             if (hasFluid) {
                 newAmount = FluidAmountConverter.clamp(amount);
-                fluidAmounts[index] = (byte) newAmount;
+                setStoredAmount(index, newAmount);
             } else {
-                fluidAmounts[index] = 0;
+                setStoredAmount(index, 0);
             }
 
             // Update macro cell data when fluid changes (optimized differential update)
@@ -695,7 +773,7 @@ public class FluidSpatialGrid {
                 return 0;
             }
             // Convert signed byte to unsigned int in the active internal range.
-            return fluidAmounts[index] & 0xFF;
+            return getStoredAmount(index);
         }
 
         public int getComponentId(BlockPos pos) {
@@ -804,6 +882,9 @@ public class FluidSpatialGrid {
             macroFluidTotals[macroIndex] = total;
             macroFluidPresence.set(macroIndex, count > 0);
             macroAverageLevels[macroIndex] = count > 0 ? (float) total / count : 0.0f;
+            if (count == 0) {
+                fluidAmountSections[macroIndex] = null;
+            }
         }
 
         /**
@@ -834,7 +915,7 @@ public class FluidSpatialGrid {
                         int idx = yOffset + zOffset + x;
                         if (fluidPresence.get(idx)) {
                             fluidCount++;
-                            totalAmount += (fluidAmounts[idx] & 0xFF);
+                            totalAmount += getStoredAmount(idx);
                         }
                     }
                 }
@@ -982,6 +1063,14 @@ public class FluidSpatialGrid {
             return false;
         }
         return !storage.dirtyFrontierChunks.isEmpty();
+    }
+
+    public static int getPendingFrontierRebuildCount(LevelAccessor level) {
+        if (level == null) {
+            return 0;
+        }
+        DimensionStorage storage = DIMENSION_STORES.get(DimensionKey.of(level));
+        return storage == null ? 0 : storage.dirtyFrontierChunks.size();
     }
 
     private static void markChunkFrontierDirty(DimensionStorage storage, ChunkPos chunkPos, ChunkFluidGrid grid) {

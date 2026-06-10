@@ -148,6 +148,26 @@ public class ParallelFluidTickManager {
         return queue == null ? 0 : queue.queued.size();
     }
 
+    public static int getQueuedDistantStableTickCount(LevelAccessor level) {
+        if (level == null) {
+            return 0;
+        }
+        EnumMap<DelayBucket, LongOpenHashSet> dimensionQueues = queuedStableTicks.get(DimensionKey.of(level));
+        if (dimensionQueues == null) {
+            return 0;
+        }
+        synchronized (dimensionQueues) {
+            int total = 0;
+            for (DelayBucket bucket : DelayBucket.values()) {
+                LongOpenHashSet queued = dimensionQueues.get(bucket);
+                if (queued != null) {
+                    total += queued.size();
+                }
+            }
+            return total;
+        }
+    }
+
     public static int flushQueuedDistantStableTicks(ServerLevel level) {
         EnumMap<DelayBucket, LongOpenHashSet> dimensionQueues = queuedStableTicks.get(DimensionKey.of(level));
         if (dimensionQueues == null) {
@@ -217,7 +237,7 @@ public class ParallelFluidTickManager {
             return null;
         }
 
-        Set<BlockPos> uniquePositions = new HashSet<>();
+        LongOpenHashSet uniquePositions = new LongOpenHashSet(positions.size());
         List<FluidEntry> fluids = new ArrayList<>();
 
         for (BlockPos pos : positions) {
@@ -225,10 +245,11 @@ public class ParallelFluidTickManager {
                 continue;
             }
 
-            BlockPos immutablePos = pos.immutable();
-            if (!uniquePositions.add(immutablePos)) {
+            long posKey = pos.asLong();
+            if (!uniquePositions.add(posKey)) {
                 continue;
             }
+            BlockPos immutablePos = BlockPos.of(posKey);
 
             FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, immutablePos);
             if (fluidState.isEmpty()) {

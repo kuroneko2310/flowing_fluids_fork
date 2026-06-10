@@ -107,7 +107,7 @@ public class CaveFloorSpringFeature extends Feature<NoneFeatureConfiguration> {
         Direction facing = Direction.Plane.HORIZONTAL.getRandomDirection(random);
         if (!level.setBlock(pos, springBlock.defaultBlockState()
                 .setValue(FloorSpringBlock.FACING, facing)
-                .setValue(FloorSpringBlock.WATERLOGGED, true), 2)) {
+                .setValue(FloorSpringBlock.WATERLOGGED, false), 2)) {
             return false;
         }
         if (!fillOpenWaterColumn(level, pos)) {

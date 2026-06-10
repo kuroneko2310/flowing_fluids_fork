@@ -57,6 +57,17 @@ final class SpringCavityCarver {
         return true;
     }
 
+    static boolean forceCarveFluidCell(WorldGenLevel level, BlockPos pos, FlowingFluid fluid) {
+        level.setBlock(pos, fluid.defaultFluidState().createLegacyBlock(), 2);
+        AdaptiveTickScheduler.scheduleFluidTick(level, pos, fluid, fluid.getTickDelay(level));
+        return true;
+    }
+
+    static boolean forceOpenAirCell(WorldGenLevel level, BlockPos pos) {
+        level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+        return true;
+    }
+
     static int carveFluidLine(WorldGenLevel level, BlockPos origin, Direction direction, FlowingFluid fluid, int length) {
         int carved = 0;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();

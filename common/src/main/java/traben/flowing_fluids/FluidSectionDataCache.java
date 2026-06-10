@@ -220,9 +220,12 @@ public final class FluidSectionDataCache {
                         fluids[index] = fluidState.getType();
                     }
 
-                    int amount = FluidSpatialGrid.getFluidAmount(level, scratch);
-                    if (amount <= 0 && !fluidState.isEmpty()) {
-                        amount = FluidAmountConverter.toInternal(fluidState.getAmount());
+                    int amount = 0;
+                    if (!fluidState.isEmpty()) {
+                        amount = FluidSpatialGrid.getFluidAmount(level, scratch);
+                        if (amount <= 0) {
+                            amount = FluidAmountConverter.toInternal(fluidState.getAmount());
+                        }
                     }
 
                     flags[index] = cellFlags;

@@ -21,6 +21,8 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
 
     private static final FluidPerformanceMonitor INSTANCE = new FluidPerformanceMonitor();
     private static final int MSPT_WINDOW = 20;
+    private static final long PAUSE_RECOVERY_GAP_NANOS = 1_000_000_000L;
+    private static final int PAUSE_RECOVERY_SAMPLE_TICKS = 20;
     private static final long ALLOCATION_UNAVAILABLE = Long.MIN_VALUE;
 
     private final AtomicLong totalFluidTicks = new AtomicLong();
@@ -42,6 +44,11 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
     private final AtomicLong cacheMisses = new AtomicLong();
     private final AtomicLong fluidTickSchedulesAccepted = new AtomicLong();
     private final AtomicLong fluidTickSchedulesCoalesced = new AtomicLong();
+    private final AtomicInteger lastPendingChunkInitializations = new AtomicInteger();
+    private final AtomicInteger lastPendingFrontierRebuilds = new AtomicInteger();
+    private final AtomicInteger lastQueuedActiveWakeTicks = new AtomicInteger();
+    private final AtomicInteger lastQueuedDistantStableTicks = new AtomicInteger();
+    private final AtomicInteger lastBufferedFluidChanges = new AtomicInteger();
 
     private final double[] msptSamples = new double[MSPT_WINDOW];
     private final Object msptLock = new Object();
@@ -51,6 +58,9 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
     private volatile int msptSampleCount;
     private volatile double msptSampleTotal;
     private volatile double lastServerMspt;
+    private volatile long lastServerTickWallNanos;
+    private volatile int lastServerTickCount = Integer.MIN_VALUE;
+    private volatile int pauseRecoverySamplesRemaining;
 
     private final com.sun.management.ThreadMXBean allocationBean;
     private final boolean allocationTrackingEnabled;
@@ -138,11 +148,24 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         fluidTickSchedulesCoalesced.incrementAndGet();
     }
 
+    public void recordTickBacklog(int pendingChunkInitializations, int pendingFrontierRebuilds,
+                                  int queuedActiveWakeTicks, int queuedDistantStableTicks,
+                                  int bufferedFluidChanges) {
+        lastPendingChunkInitializations.set(Math.max(0, pendingChunkInitializations));
+        lastPendingFrontierRebuilds.set(Math.max(0, pendingFrontierRebuilds));
+        lastQueuedActiveWakeTicks.set(Math.max(0, queuedActiveWakeTicks));
+        lastQueuedDistantStableTicks.set(Math.max(0, queuedDistantStableTicks));
+        lastBufferedFluidChanges.set(Math.max(0, bufferedFluidChanges));
+    }
+
     public void onServerTick(MinecraftServer server, boolean enabled, int interval) {
-        if (server == null || !enabled) {
+        if (server == null) {
             return;
         }
-        recordServerMspt(getCurrentMspt(server));
+        recordServerMspt(getCurrentMspt(server), server.getTickCount());
+        if (!enabled) {
+            return;
+        }
         tick(true, interval);
     }
 
@@ -187,12 +210,20 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         cacheMisses.set(0L);
         fluidTickSchedulesAccepted.set(0L);
         fluidTickSchedulesCoalesced.set(0L);
+        lastPendingChunkInitializations.set(0);
+        lastPendingFrontierRebuilds.set(0);
+        lastQueuedActiveWakeTicks.set(0);
+        lastQueuedDistantStableTicks.set(0);
+        lastBufferedFluidChanges.set(0);
         tickCounter = 0;
         synchronized (msptLock) {
             msptSampleIndex = 0;
             msptSampleCount = 0;
             msptSampleTotal = 0.0;
             lastServerMspt = 0.0;
+            lastServerTickWallNanos = 0L;
+            lastServerTickCount = Integer.MIN_VALUE;
+            pauseRecoverySamplesRemaining = 0;
             for (int i = 0; i < msptSamples.length; i++) {
                 msptSamples[i] = 0.0;
             }
@@ -210,6 +241,12 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         report.append(String.format("Fluid ticks: %,d%n", ticks));
         report.append(String.format("Fluid tick schedules: accepted %,d, coalesced %,d%n",
                 getFluidTickSchedulesAccepted(), getFluidTickSchedulesCoalesced()));
+        report.append(String.format("Tick backlog: chunk init %,d, frontier rebuild %,d, active wake %,d, stable wake %,d, buffered changes %,d%n",
+                getLastPendingChunkInitializations(),
+                getLastPendingFrontierRebuilds(),
+                getLastQueuedActiveWakeTicks(),
+                getLastQueuedDistantStableTicks(),
+                getLastBufferedFluidChanges()));
         if (ticks == 0L) {
             report.append("No fluid tick samples recorded yet.");
             return report.toString();
@@ -295,6 +332,21 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         }
     }
 
+    public boolean isPauseRecoveryActive() {
+        return pauseRecoverySamplesRemaining > 0;
+    }
+
+    public double getLoadControlMspt(double pauseRecoveryFallbackMspt) {
+        double mspt = getAverageServerMspt20();
+        if (mspt > 0.0) {
+            return mspt;
+        }
+        if (isPauseRecoveryActive()) {
+            return Math.max(0.0, pauseRecoveryFallbackMspt);
+        }
+        return Math.max(0.0, getLastServerMspt());
+    }
+
     @Override
     public int getMaxFlowDistanceUsed() {
         return maxFlowDistanceUsed.get();
@@ -340,6 +392,31 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         return fluidTickSchedulesCoalesced.get();
     }
 
+    @Override
+    public int getLastPendingChunkInitializations() {
+        return lastPendingChunkInitializations.get();
+    }
+
+    @Override
+    public int getLastPendingFrontierRebuilds() {
+        return lastPendingFrontierRebuilds.get();
+    }
+
+    @Override
+    public int getLastQueuedActiveWakeTicks() {
+        return lastQueuedActiveWakeTicks.get();
+    }
+
+    @Override
+    public int getLastQueuedDistantStableTicks() {
+        return lastQueuedDistantStableTicks.get();
+    }
+
+    @Override
+    public int getLastBufferedFluidChanges() {
+        return lastBufferedFluidChanges.get();
+    }
+
     private void appendDistanceBreakdown(StringBuilder report, long ticks) {
         if (ticksByDistance.isEmpty()) {
             return;
@@ -358,7 +435,10 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
                 });
     }
 
-    private void recordServerMspt(double mspt) {
+    private void recordServerMspt(double mspt, int serverTickCount) {
+        if (shouldIgnoreCurrentMsptSample(serverTickCount)) {
+            return;
+        }
         synchronized (msptLock) {
             lastServerMspt = mspt;
             if (msptSampleCount < msptSamples.length) {
@@ -372,6 +452,37 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
             }
             msptSampleIndex = (msptSampleIndex + 1) % msptSamples.length;
         }
+    }
+
+    private boolean shouldIgnoreCurrentMsptSample(int currentTickCount) {
+        long nowNanos = System.nanoTime();
+        long previousNanos = lastServerTickWallNanos;
+        int previousTickCount = lastServerTickCount;
+
+        lastServerTickWallNanos = nowNanos;
+        lastServerTickCount = currentTickCount;
+
+        if (previousNanos <= 0L || previousTickCount == Integer.MIN_VALUE || currentTickCount == Integer.MIN_VALUE) {
+            return false;
+        }
+
+        long elapsedNanos = nowNanos - previousNanos;
+        int tickDelta = currentTickCount - previousTickCount;
+        if (isPauseLikeWallClockGap(elapsedNanos, tickDelta)) {
+            pauseRecoverySamplesRemaining = PAUSE_RECOVERY_SAMPLE_TICKS;
+            return true;
+        }
+
+        if (pauseRecoverySamplesRemaining > 0) {
+            pauseRecoverySamplesRemaining--;
+            return true;
+        }
+
+        return false;
+    }
+
+    static boolean isPauseLikeWallClockGap(long elapsedNanos, int tickDelta) {
+        return elapsedNanos >= PAUSE_RECOVERY_GAP_NANOS && tickDelta <= 1;
     }
 
     private double getCurrentMspt(MinecraftServer server) {

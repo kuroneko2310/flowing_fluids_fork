@@ -624,7 +624,7 @@ public final class RainWaterSystem {
 
     private static float computeRainLoadMultiplier(ServerLevel level) {
         float multiplier = 1.0f;
-        double avgMspt = FluidPerformanceMonitor.getInstance().getAverageServerMspt20();
+        double avgMspt = FluidPerformanceMonitor.getInstance().getLoadControlMspt(0.0);
         if (avgMspt > RAIN_LOAD_SHED_SOFT_MSPT) {
             double range = Math.max(1.0, RAIN_LOAD_SHED_HARD_MSPT - RAIN_LOAD_SHED_SOFT_MSPT);
             double overload = Mth.clamp((avgMspt - RAIN_LOAD_SHED_SOFT_MSPT) / range, 0.0, 1.0);

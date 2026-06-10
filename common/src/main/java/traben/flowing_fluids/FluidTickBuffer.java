@@ -6,13 +6,14 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.material.Fluid;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import traben.flowing_fluids.util.DimensionKey;
 
 import java.lang.ref.WeakReference;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 /**
  * Batches fluid state updates to apply at tick end.
@@ -172,10 +173,11 @@ public class FluidTickBuffer {
         // 1. Apply fluid changes to spatial grid
         if (!allFluidChanges.isEmpty()) {
             List<BlockPos> changedPositions = new ArrayList<>(allFluidChanges.size());
-            Set<ChunkPos> touchedChunks = new HashSet<>();
+            LongOpenHashSet touchedChunkKeys = new LongOpenHashSet(Math.max(1, allFluidChanges.size() / 4));
             for (BlockPos pos : allFluidChanges.keySet()) {
-                touchedChunks.add(new ChunkPos(pos));
+                touchedChunkKeys.add(ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4));
             }
+            List<ChunkPos> touchedChunks = toChunkPositions(touchedChunkKeys);
             FluidSpatialGrid.markChunksDirtyForBulkFluidChanges(level, touchedChunks);
             for (Map.Entry<BlockPos, FluidChange> entry : allFluidChanges.entrySet()) {
                 BlockPos pos = entry.getKey();
@@ -201,9 +203,11 @@ public class FluidTickBuffer {
         }
 
         // 3. Apply slope cache invalidations (deduplicated by chunk)
-        Set<ChunkPos> chunksToInvalidate = allSlopeCacheInvalidations.stream()
-            .map(ChunkPos::new)
-            .collect(Collectors.toSet());
+        LongOpenHashSet chunkKeysToInvalidate = new LongOpenHashSet(Math.max(1, allSlopeCacheInvalidations.size() / 4));
+        for (BlockPos pos : allSlopeCacheInvalidations) {
+            chunkKeysToInvalidate.add(ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4));
+        }
+        List<ChunkPos> chunksToInvalidate = toChunkPositions(chunkKeysToInvalidate);
 
         for (ChunkPos chunkPos : chunksToInvalidate) {
             ChunkLocalSlopeCache.clearChunk(level, chunkPos);
@@ -233,6 +237,19 @@ public class FluidTickBuffer {
             return;
         }
         pendingSignals.computeIfAbsent(DimensionKey.of(level), ignored -> new AtomicInteger()).incrementAndGet();
+    }
+
+    private static List<ChunkPos> toChunkPositions(LongOpenHashSet chunkKeys) {
+        if (chunkKeys == null || chunkKeys.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<ChunkPos> chunks = new ArrayList<>(chunkKeys.size());
+        LongIterator iterator = chunkKeys.iterator();
+        while (iterator.hasNext()) {
+            long chunkKey = iterator.nextLong();
+            chunks.add(new ChunkPos(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey)));
+        }
+        return chunks;
     }
 
     /**

@@ -100,7 +100,7 @@ public class PondFloorSpringFeature extends Feature<NoneFeatureConfiguration> {
         Direction facing = Direction.Plane.HORIZONTAL.getRandomDirection(random);
         level.setBlock(pos, springBlock.defaultBlockState()
                 .setValue(FloorSpringBlock.FACING, facing)
-                .setValue(FloorSpringBlock.WATERLOGGED, fluidAtPos.getType().isSame(Fluids.WATER)), 2);
+                .setValue(FloorSpringBlock.WATERLOGGED, false), 2);
         level.scheduleTick(pos, springBlock, springBlock.nextTickDelay(random));
         return true;
     }

@@ -5,6 +5,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelAccessor;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.optimization.HierarchicalDistanceManager;
+import traben.flowing_fluids.performance.FluidPerformanceMonitor;
 import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
 import traben.flowing_fluids.snow.SnowmeltWaterSystem;
 import traben.flowing_fluids.util.DimensionKey;
@@ -14,6 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class FlowingFluidsTick {
     private static final int CHUNK_INITIALIZATION_BUDGET_PER_TICK = 1;
     private static final int FRONTIER_REBUILD_BUDGET_PER_TICK = 1;
+    private static final int MAX_CHUNK_INITIALIZATION_BUDGET_PER_TICK = 4;
+    private static final int MAX_FRONTIER_REBUILD_BUDGET_PER_TICK = 6;
     private static final long MAINTENANCE_INTERVAL_TICKS = 200L;
     private static final ConcurrentHashMap<DimensionKey, Long> lastMaintenanceTick = new ConcurrentHashMap<>();
 
@@ -35,8 +38,14 @@ public final class FlowingFluidsTick {
         }
         DryingEventSystem.onLevelTick(level);
         SnowmeltWaterSystem.onLevelTick(level);
-        if (FluidSpatialGrid.hasPendingChunkInitializations(level)) {
-            FluidSpatialGrid.processPendingChunkInitializations(level, CHUNK_INITIALIZATION_BUDGET_PER_TICK);
+
+        FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
+        double mspt = monitor.getLoadControlMspt(level.getServer().getAverageTickTime());
+        int pendingChunkInitializations = FluidSpatialGrid.getPendingChunkInitializationCount(level);
+        if (pendingChunkInitializations > 0) {
+            FluidSpatialGrid.processPendingChunkInitializations(level,
+                computeBacklogDrainBudget(pendingChunkInitializations, mspt,
+                    CHUNK_INITIALIZATION_BUDGET_PER_TICK, MAX_CHUNK_INITIALIZATION_BUDGET_PER_TICK));
         }
         ParallelFluidTickManager.flushQueuedActiveWakeTicks(level);
         ParallelFluidTickManager.flushQueuedDistantStableTicks(level);
@@ -48,9 +57,19 @@ public final class FlowingFluidsTick {
             FluidTickBuffer.applyAll(level);
         }
         FluidComponentGraph.processPending(level);
-        if (FluidSpatialGrid.hasPendingFrontierRebuilds(level)) {
-            FluidSpatialGrid.processPendingFrontierRebuilds(level, FRONTIER_REBUILD_BUDGET_PER_TICK);
+        int pendingFrontierRebuilds = FluidSpatialGrid.getPendingFrontierRebuildCount(level);
+        if (pendingFrontierRebuilds > 0) {
+            FluidSpatialGrid.processPendingFrontierRebuilds(level,
+                computeBacklogDrainBudget(pendingFrontierRebuilds, mspt,
+                    FRONTIER_REBUILD_BUDGET_PER_TICK, MAX_FRONTIER_REBUILD_BUDGET_PER_TICK));
         }
+        monitor.recordTickBacklog(
+            FluidSpatialGrid.getPendingChunkInitializationCount(level),
+            FluidSpatialGrid.getPendingFrontierRebuildCount(level),
+            ParallelFluidTickManager.getQueuedActiveWakeTickCount(level),
+            ParallelFluidTickManager.getQueuedDistantStableTickCount(level),
+            FluidTickBuffer.getBufferedChangeCount()
+        );
 
         long now = level.getGameTime();
         DimensionKey key = DimensionKey.of(level);
@@ -70,6 +89,30 @@ public final class FlowingFluidsTick {
                 lastMaintenanceTick.remove(key);
             }
         }
+    }
+
+    static int computeBacklogDrainBudget(int pending, double mspt, int baseBudget, int maxBudget) {
+        if (pending <= 0 || maxBudget <= 0) {
+            return 0;
+        }
+        int budget = Math.max(1, baseBudget);
+        if (pending >= 256) {
+            budget = Math.max(budget, maxBudget);
+        } else if (pending >= 96) {
+            budget = Math.max(budget, Math.min(maxBudget, baseBudget + 3));
+        } else if (pending >= 32) {
+            budget = Math.max(budget, Math.min(maxBudget, baseBudget + 2));
+        } else if (pending >= 8) {
+            budget = Math.max(budget, Math.min(maxBudget, baseBudget + 1));
+        }
+
+        if (mspt >= 80.0) {
+            budget = Math.min(budget, Math.max(1, baseBudget + 1));
+        } else if (mspt >= 50.0) {
+            budget = Math.min(budget, Math.max(1, baseBudget + 2));
+        }
+
+        return Math.min(Math.min(maxBudget, pending), budget);
     }
 
     public static void onChunkLoad(ServerLevel level, ChunkPos chunkPos) {

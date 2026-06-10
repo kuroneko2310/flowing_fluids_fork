@@ -101,7 +101,7 @@ public class CaveCeilingSpringFeature extends Feature<NoneFeatureConfiguration> 
         CeilingSpringBlock springBlock = ForgeSpringRegistry.pickGeneratedCeilingBlock(random, pos.getY(), seaLevel, damp);
         if (!level.setBlock(pos, springBlock.defaultBlockState()
                 .setValue(CeilingSpringBlock.FACING, Direction.Plane.HORIZONTAL.getRandomDirection(random))
-                .setValue(CeilingSpringBlock.WATERLOGGED, true), 2)) {
+                .setValue(CeilingSpringBlock.WATERLOGGED, false), 2)) {
             return false;
         }
         if (!fillOpenDrop(level, pos)) {

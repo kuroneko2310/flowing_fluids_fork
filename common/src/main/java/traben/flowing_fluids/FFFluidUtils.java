@@ -2,9 +2,12 @@ package traben.flowing_fluids;
 
 import it.unimi.dsi.fastutil.Pair;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntComparator;
+import it.unimi.dsi.fastutil.ints.IntList;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -290,12 +293,13 @@ public class FFFluidUtils {
         }
 
         List<BlockPos> changedPositions = new ArrayList<>(context.queuedChanges.size());
-        Set<ChunkPos> touchedChunks = new HashSet<>();
+        LongOpenHashSet touchedChunkKeys = new LongOpenHashSet(Math.max(1, context.queuedChanges.size() / 4));
         Level serverLevel = levelAccessor instanceof Level level && !level.isClientSide() ? level : null;
 
         for (QueuedBulkFluidChange change : context.queuedChanges.values()) {
-            touchedChunks.add(new ChunkPos(change.pos()));
+            touchedChunkKeys.add(ChunkPos.asLong(change.pos().getX() >> 4, change.pos().getZ() >> 4));
         }
+        List<ChunkPos> touchedChunks = toChunkPositions(touchedChunkKeys);
         FluidSpatialGrid.markChunksDirtyForBulkFluidChanges(levelAccessor, touchedChunks);
 
         for (QueuedBulkFluidChange change : context.queuedChanges.values()) {
@@ -324,6 +328,19 @@ public class FFFluidUtils {
         for (BlockPos center : context.componentInvalidations.values()) {
             invalidateConnectedFluidComponents(levelAccessor, center);
         }
+    }
+
+    private static List<ChunkPos> toChunkPositions(LongOpenHashSet chunkKeys) {
+        if (chunkKeys == null || chunkKeys.isEmpty()) {
+            return List.of();
+        }
+        List<ChunkPos> chunks = new ArrayList<>(chunkKeys.size());
+        LongIterator iterator = chunkKeys.iterator();
+        while (iterator.hasNext()) {
+            long chunkKey = iterator.nextLong();
+            chunks.add(new ChunkPos(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey)));
+        }
+        return chunks;
     }
 
     private static boolean shouldWakeBulkPlacedFluid(LevelAccessor levelAccessor, QueuedBulkFluidChange change) {
@@ -1948,8 +1965,8 @@ public class FFFluidUtils {
             int count = currentLevels.length;
 
             int[] finalLevels = Arrays.copyOf(currentLevels, count);
-            List<Integer> wetOrder = new ArrayList<>(count);
-            List<Integer> dryOrder = new ArrayList<>(count);
+            IntArrayList wetOrder = new IntArrayList(count);
+            IntArrayList dryOrder = new IntArrayList(count);
             int[] yLevels = new int[count];
             int[] supportScores = new int[count];
             int[] containmentScores = new int[count];
@@ -1981,7 +1998,7 @@ public class FFFluidUtils {
                 }
             }
 
-            Comparator<Integer> wetComparator = (a, b) -> {
+            IntComparator wetComparator = (a, b) -> {
                 int cmp = Integer.compare(finalLevels[a], finalLevels[b]);
                 if (cmp != 0) {
                     return cmp;
@@ -2032,7 +2049,7 @@ public class FFFluidUtils {
                             pressureBias
                     );
                 }
-                List<Integer> drySelection = dryOrder.subList(0, selectedDryCount);
+                IntList drySelection = dryOrder.subList(0, selectedDryCount);
                 remaining = distributeAcrossCandidates(finalLevels, drySelection, remaining, 8);
             }
 
@@ -2173,17 +2190,17 @@ public class FFFluidUtils {
         return neighbors;
     }
 
-    private static int distributeAcrossCandidates(int[] levels, List<Integer> orderedIndices, int amount, int maxLevel) {
+    private static int distributeAcrossCandidates(int[] levels, IntList orderedIndices, int amount, int maxLevel) {
         if (amount <= 0 || orderedIndices.isEmpty()) {
             return amount;
         }
 
         int remaining = amount;
         for (int tier = 0; tier < orderedIndices.size() && remaining > 0; tier++) {
-            int currentLevel = levels[orderedIndices.get(tier)];
+            int currentLevel = levels[orderedIndices.getInt(tier)];
             int nextLevel = tier == orderedIndices.size() - 1
                     ? maxLevel
-                    : levels[orderedIndices.get(tier + 1)];
+                    : levels[orderedIndices.getInt(tier + 1)];
             int span = Math.max(0, nextLevel - currentLevel);
             if (span == 0) {
                 continue;
@@ -2192,14 +2209,14 @@ public class FFFluidUtils {
             int needed = span * (tier + 1);
             if (remaining >= needed) {
                 for (int i = 0; i <= tier; i++) {
-                    levels[orderedIndices.get(i)] += span;
+                    levels[orderedIndices.getInt(i)] += span;
                 }
                 remaining -= needed;
             } else {
                 int share = remaining / (tier + 1);
                 int extra = remaining % (tier + 1);
                 for (int i = 0; i <= tier; i++) {
-                    levels[orderedIndices.get(i)] += share + (i < extra ? 1 : 0);
+                    levels[orderedIndices.getInt(i)] += share + (i < extra ? 1 : 0);
                 }
                 remaining = 0;
             }

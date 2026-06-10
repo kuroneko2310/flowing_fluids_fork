@@ -127,7 +127,8 @@ public final class FluidAutoTickDelay {
     }
 
     private static float ff$getCurrentMspt(MinecraftServer server) {
-        double monitorMspt = FluidPerformanceMonitor.getInstance().getAverageServerMspt20();
+        FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
+        double monitorMspt = monitor.getLoadControlMspt(ff$getTargetMspt(server));
         if (monitorMspt > 0.0) {
             return (float) monitorMspt;
         }

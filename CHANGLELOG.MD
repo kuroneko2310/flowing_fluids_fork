@@ -1,5 +1,6 @@
 
 1.0.6
+- added adaptive draining and reporting for fluid tick backlogs so chunk initialization, frontier rebuilds, wake queues, and buffered changes clear faster when the server has room instead of piling into delayed lag
 - improved connected water slope-search responsiveness so active fronts, pressure-fed water, inlet zones, partial broad surfaces, and nearby short outlets keep enough flow distance to move instead of leaving water stranded behind terrain steps
 - widened the lightweight step-down outlet probe default from 1 to 3 blocks while keeping the main slope search capped by existing flow-distance and workload limits
 

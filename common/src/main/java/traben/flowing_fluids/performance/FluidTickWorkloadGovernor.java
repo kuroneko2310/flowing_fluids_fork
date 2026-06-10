@@ -140,9 +140,8 @@ public final class FluidTickWorkloadGovernor {
         if (stride <= 1) {
             return false;
         }
-        long phaseTick = Math.floorDiv(gameTime, Math.max(1, stride));
-        long mixed = mix(pos.asLong(), fluid, phaseTick);
-        return Long.remainderUnsigned(mixed, stride) != 0L;
+        long admissionPhase = Long.remainderUnsigned(mix(pos.asLong(), fluid, 0L), stride);
+        return Math.floorMod(gameTime, stride) != admissionPhase;
     }
 
     static int computeSpatialStrideForMspt(double mspt, int flowDistance) {
@@ -207,10 +206,8 @@ public final class FluidTickWorkloadGovernor {
     }
 
     private static double getMspt(Level level) {
-        double mspt = FluidPerformanceMonitor.getInstance().getAverageServerMspt20();
-        if (mspt <= 0.0) {
-            mspt = FluidPerformanceMonitor.getInstance().getLastServerMspt();
-        }
+        FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
+        double mspt = monitor.getLoadControlMspt(50.0);
         if (mspt <= 0.0 && level instanceof ServerLevel serverLevel) {
             mspt = serverLevel.getServer().getAverageTickTime();
         }

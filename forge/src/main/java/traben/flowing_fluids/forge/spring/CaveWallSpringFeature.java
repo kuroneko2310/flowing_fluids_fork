@@ -111,7 +111,7 @@ public class CaveWallSpringFeature extends Feature<NoneFeatureConfiguration> {
             WallSpringBlock springBlock = ForgeSpringRegistry.pickGeneratedBlock(random, pos.getY(), seaLevel, damp);
             BlockState placedState = springBlock.defaultBlockState()
                     .setValue(WallSpringBlock.FACING, supportDirection)
-                    .setValue(WallSpringBlock.WATERLOGGED, true);
+                    .setValue(WallSpringBlock.WATERLOGGED, false);
             if (!level.setBlock(pos, placedState, 2)) {
                 continue;
             }

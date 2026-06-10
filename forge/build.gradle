@@ -63,6 +63,11 @@ dependencies {
     compileOnly(annotationProcessor("io.github.llamalad7:mixinextras-common:0.4.1"))
     implementation(include("io.github.llamalad7:mixinextras-forge:0.4.1"))
 
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.11.0")
+    testRuntimeOnly files(project(':common').sourceSets.main.output)
+
     def embeddiumJar = rootProject.fileTree(rootProject.file("../../../mods")) {
         include "embeddium-*.jar"
     }.files.find()
@@ -98,4 +103,8 @@ shadowJar {
 remapJar {
     input.set shadowJar.archiveFile
     injectAccessWidener = true
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
 }

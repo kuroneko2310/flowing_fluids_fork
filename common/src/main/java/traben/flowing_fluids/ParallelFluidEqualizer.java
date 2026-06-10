@@ -269,10 +269,7 @@ public final class ParallelFluidEqualizer {
             : 0;
         int budget = BASE_COMPLETED_RESULT_APPLY_BUDGET + backlogBoost;
 
-        double mspt = FluidPerformanceMonitor.getInstance().getAverageServerMspt20();
-        if (mspt <= 0.0) {
-            mspt = FluidPerformanceMonitor.getInstance().getLastServerMspt();
-        }
+        double mspt = FluidPerformanceMonitor.getInstance().getLoadControlMspt(0.0);
         if (mspt > 0.0) {
             if (mspt >= 60.0) {
                 budget = Math.min(budget, MIN_COMPLETED_RESULT_APPLY_BUDGET);

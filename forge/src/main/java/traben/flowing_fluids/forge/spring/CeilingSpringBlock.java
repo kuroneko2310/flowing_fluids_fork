@@ -28,7 +28,6 @@ import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.Nullable;
-import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FlowingFluids;
 
 public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock {
@@ -81,20 +80,16 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
             return null;
         }
 
-        boolean waterlogged = sourceFluid.isSame(Fluids.WATER)
-                && context.getLevel().getFluidState(context.getClickedPos()).getType() == Fluids.WATER;
         BlockState state = defaultBlockState()
                 .setValue(FACING, context.getHorizontalDirection().getOpposite())
-                .setValue(WATERLOGGED, waterlogged);
+                .setValue(WATERLOGGED, false);
         return state.canSurvive(context.getLevel(), context.getClickedPos()) ? state : null;
     }
 
     @Override
     public BlockState updateShape(BlockState state, Direction direction, BlockState neighborState,
                                   LevelAccessor level, BlockPos pos, BlockPos neighborPos) {
-        if (state.getValue(WATERLOGGED)) {
-            AdaptiveTickScheduler.scheduleFluidTick(level, pos, Fluids.WATER, Fluids.WATER.getTickDelay(level));
-        }
+        state = sanitizeSourceWaterlogging(state);
         SpringTickScheduler.scheduleWakeup(level, pos, this, strength.minimumDelay());
         return state;
     }
@@ -103,6 +98,7 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
     public void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
         super.onPlace(state, level, pos, oldState, movedByPiston);
         if (!level.isClientSide && !oldState.is(state.getBlock())) {
+            normalizeSourceWaterlogging(level, pos, state);
             SpringTickScheduler.scheduleWakeup(level, pos, this, strength.minimumDelay());
         }
     }
@@ -117,6 +113,7 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
 
     @Override
     public void tick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
+        state = normalizeSourceWaterlogging(level, pos, state);
         if (!FlowingFluids.config.enableMod
                 || FlowingFluids.config.isDimensionExcluded(level)
                 || !FlowingFluids.config.isFluidAllowed(sourceFluid)) {
@@ -174,7 +171,7 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
 
     @Override
     public FluidState getFluidState(BlockState state) {
-        return state.getValue(WATERLOGGED) ? Fluids.WATER.getSource(false) : super.getFluidState(state);
+        return super.getFluidState(state);
     }
 
     @Override
@@ -190,5 +187,17 @@ public class CeilingSpringBlock extends Block implements SimpleWaterloggedBlock 
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
         builder.add(FACING, WATERLOGGED);
+    }
+
+    private BlockState sanitizeSourceWaterlogging(BlockState state) {
+        return state.getValue(WATERLOGGED) ? state.setValue(WATERLOGGED, false) : state;
+    }
+
+    private BlockState normalizeSourceWaterlogging(Level level, BlockPos pos, BlockState state) {
+        BlockState sanitized = sanitizeSourceWaterlogging(state);
+        if (sanitized != state && !level.isClientSide) {
+            level.setBlock(pos, sanitized, 3);
+        }
+        return sanitized;
     }
 }

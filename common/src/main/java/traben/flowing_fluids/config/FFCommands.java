@@ -31,6 +31,7 @@ import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.AdaptiveTickScheduler;
+import traben.flowing_fluids.ExtendedWaterlogStore;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FluidComponentGraph;
 import traben.flowing_fluids.FluidAmountConverter;
@@ -100,6 +101,7 @@ public class FFCommands {
                 + "\n- /flowing_fluids settings drying status : 蒸発・熱波・乾季"
                 + "\n- /flowing_fluids settings flood status : 洪水イベント"
                 + "\n- /flowing_fluids settings springs status : 湧き水/溶岩泉"
+                + "\n- /flowing_fluids settings waterlogging status : 水没ブロック/仮想waterlogの扱い"
                 + "\n- /flowing_fluids settings water_pressure status : ドア/柵などへの水圧破壊"
                 + "\n- /flowing_fluids settings component_graph status : 平衡化・経路ソルバー・局所グラフ"
                 + "\n"
@@ -181,6 +183,176 @@ public class FFCommands {
 
     private static int commandAudit(CommandContext<CommandSourceStack> context) {
         return message(context, describeCommandAudit());
+    }
+
+    private static String describeWaterlogFlowMode(FFConfig.WaterLogFlowMode mode) {
+        return switch (mode) {
+            case ONLY_IN -> "ONLY_IN: 水没ブロックへ入るだけ。水は中に残りやすく、装飾ブロックが小さな水源のように振る舞いやすい。";
+            case ONLY_OUT -> "ONLY_OUT: 水没ブロックから出るだけ。水を閉じ込めず、周囲へ逃がしたい時向け。";
+            case IN_FROM_TOP_ELSE_OUT -> "IN_FROM_TOP_ELSE_OUT: 上からだけ入り、横と下へ抜ける。格子や足場の上から染み込む感じを作りやすい既定値。";
+            case OUT_DOWN_ELSE_IN -> "OUT_DOWN_ELSE_IN: 横/上から入り、下へ抜ける。排水口っぽく下向きの流れを強めたい時向け。";
+            case IGNORE -> "IGNORE: 既存の水没ブロックを流体計算からほぼ無視する。ちらつきや干渉を止めたい時の退避用。";
+        };
+    }
+
+    private static String describeWaterloggingSpec() {
+        return "Waterlogging settings"
+                + "\n用途: 水没できるブロックと、通常は水を持てない柵/壁/格子/隙間つきブロックに、Flowing Fluids の水量をどう重ねるかを決めます。"
+                + "\n"
+                + "\n2つの層があります:"
+                + "\n- vanilla waterlogging: WATERLOGGED プロパティを持つブロック。水の出入り方向は flow_mode で制御します。"
+                + "\n- extended waterlogging: WATERLOGGED がないブロックにも、見た目を壊さず内部ストアへ 1..8 の水量を保存します。柵や壁、薄い形状のブロックが対象です。"
+                + "\n"
+                + "\n現在:"
+                + "\n- flow_mode: " + FlowingFluids.config.waterLogFlowMode
+                + "\n  " + describeWaterlogFlowMode(FlowingFluids.config.waterLogFlowMode)
+                + "\n- extended: " + onOff(FlowingFluids.config.enableExtendedWaterlogging)
+                + "\n- fence_like_blocks: " + onOff(FlowingFluids.config.extendedWaterloggingAllowFences)
+                + "\n"
+                + "\n調整コマンド:"
+                + "\n- /flowing_fluids settings waterlogging status"
+                + "\n- /flowing_fluids settings waterlogging flow_mode <mode>"
+                + "\n- /flowing_fluids settings waterlogging extended on|off"
+                + "\n- /flowing_fluids settings waterlogging fence_like_blocks on|off"
+                + "\n- /flowing_fluids settings waterlogging preset balanced|porous|contained|compat"
+                + "\n"
+                + "\nflow_mode の候補:"
+                + "\n- in_from_top_else_out: 上から入って横/下へ抜ける。自然で扱いやすい既定値。"
+                + "\n- out_down_else_in: 横/上から入って下へ抜ける。排水感が強い。"
+                + "\n- only_in: 入るだけ。水没ブロックに水を残したい時。"
+                + "\n- only_out: 出るだけ。水没ブロックへ吸い込ませたくない時。"
+                + "\n- ignore: 干渉がある時の退避用。"
+                + "\n"
+                + "\n注意:"
+                + "\n- vanilla waterlog 同士を完全に双方向で流すと、見た目と量がちらつきやすいので、方向を絞っています。"
+                + "\n- seagrass/kelp 系は水が消えると壊れるバニラ寄りの扱いで、この設定の主対象ではありません。"
+                + "\n- extended を OFF にすると、新しい仮想waterlogは使われません。残っている実行時ストアを消したい時は clear_runtime を使ってください。";
+    }
+
+    private static int waterloggingStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, describeWaterloggingSpec());
+    }
+
+    private static int applyWaterloggingPreset(CommandContext<CommandSourceStack> context, String presetName) {
+        switch (presetName) {
+            case "balanced" -> {
+                FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.IN_FROM_TOP_ELSE_OUT;
+                FlowingFluids.config.enableExtendedWaterlogging = true;
+                FlowingFluids.config.extendedWaterloggingAllowFences = true;
+            }
+            case "porous" -> {
+                FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.OUT_DOWN_ELSE_IN;
+                FlowingFluids.config.enableExtendedWaterlogging = true;
+                FlowingFluids.config.extendedWaterloggingAllowFences = true;
+            }
+            case "contained" -> {
+                FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.ONLY_IN;
+                FlowingFluids.config.enableExtendedWaterlogging = true;
+                FlowingFluids.config.extendedWaterloggingAllowFences = true;
+            }
+            case "compat" -> {
+                FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.IGNORE;
+                FlowingFluids.config.enableExtendedWaterlogging = false;
+                FlowingFluids.config.extendedWaterloggingAllowFences = false;
+            }
+            default -> {
+                return message(context, "Unknown waterlogging preset: " + presetName);
+            }
+        }
+        return messageAndSaveConfig(context, "Applied waterlogging preset: " + presetName + "\n\n" + describeWaterloggingSpec());
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> waterlogFlowModeCommand(String name) {
+        return enumCommand(name,
+                describeWaterloggingSpec(),
+                a -> FlowingFluids.config.waterLogFlowMode = a,
+                () -> FlowingFluids.config.waterLogFlowMode,
+                Pair.of(FFConfig.WaterLogFlowMode.IN_FROM_TOP_ELSE_OUT,
+                        "Waterlog flow mode set to IN_FROM_TOP_ELSE_OUT.\nWater can enter from above, then leave sideways or downward."),
+                Pair.of(FFConfig.WaterLogFlowMode.OUT_DOWN_ELSE_IN,
+                        "Waterlog flow mode set to OUT_DOWN_ELSE_IN.\nWater can enter from sides or above, then drain downward."),
+                Pair.of(FFConfig.WaterLogFlowMode.ONLY_IN,
+                        "Waterlog flow mode set to ONLY_IN.\nWater may enter vanilla waterlogged blocks but will not flow out of them."),
+                Pair.of(FFConfig.WaterLogFlowMode.ONLY_OUT,
+                        "Waterlog flow mode set to ONLY_OUT.\nWater may leave vanilla waterlogged blocks but will not flow into them."),
+                Pair.of(FFConfig.WaterLogFlowMode.IGNORE,
+                        "Waterlog flow mode set to IGNORE.\nVanilla waterlogged blocks are skipped by the special flow bridge."));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> waterloggingCommand() {
+        return Commands.literal("waterlogging")
+                .executes(FFCommands::waterloggingStatus)
+                .then(Commands.literal("guide")
+                        .executes(FFCommands::waterloggingStatus))
+                .then(Commands.literal("status")
+                        .executes(FFCommands::waterloggingStatus))
+                .then(waterlogFlowModeCommand("flow_mode"))
+                .then(booleanCommand("extended",
+                        "Stores partial fluid amounts inside supported non-fluid blocks without replacing the block. This is the core switch for virtual waterlogging.",
+                        "Extended waterlogging enabled. Supported partial-shape blocks can hold Flowing Fluids water amounts.",
+                        "Extended waterlogging disabled. New virtual waterlogged cells will not be used.",
+                        a -> FlowingFluids.config.enableExtendedWaterlogging = a,
+                        () -> FlowingFluids.config.enableExtendedWaterlogging))
+                .then(booleanCommand("fence_like_blocks",
+                        "Allows fence, wall, bar, and similar narrow blocks to participate in extended waterlogging when extended mode is enabled.",
+                        a -> FlowingFluids.config.extendedWaterloggingAllowFences = a,
+                        () -> FlowingFluids.config.extendedWaterloggingAllowFences))
+                .then(Commands.literal("preset")
+                        .executes(cont -> message(cont,
+                                "Waterlogging presets"
+                                        + "\n- balanced: default-feeling waterlogging, extended support enabled."
+                                        + "\n- porous: blocks feel more drain-like; water can escape downward."
+                                        + "\n- contained: waterlogged blocks hold water more strongly."
+                                        + "\n- compat: avoids most special waterlog interaction for mod compatibility."))
+                        .then(Commands.literal("balanced")
+                                .executes(cont -> applyWaterloggingPreset(cont, "balanced")))
+                        .then(Commands.literal("porous")
+                                .executes(cont -> applyWaterloggingPreset(cont, "porous")))
+                        .then(Commands.literal("contained")
+                                .executes(cont -> applyWaterloggingPreset(cont, "contained")))
+                        .then(Commands.literal("compat")
+                                .executes(cont -> applyWaterloggingPreset(cont, "compat"))))
+                .then(Commands.literal("clear_runtime")
+                        .executes(cont -> {
+                            ExtendedWaterlogStore.clearDimension(cont.getSource().getLevel());
+                            return message(cont, "Extended waterlogging runtime store cleared for this dimension. Saved config was not changed.");
+                        }));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> waterloggedBlocksFlowModeCommand() {
+        return Commands.literal("waterlogged_blocks_flow_mode")
+                .executes(FFCommands::waterloggingStatus)
+                .then(waterlogFlowModeCommand("set"))
+                .then(Commands.literal("only_in")
+                        .executes(cont -> {
+                            FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.ONLY_IN;
+                            return messageAndSaveConfig(cont, "Water will only flow into water loggable blocks, and never out of them.");
+                        }))
+                .then(Commands.literal("only_out")
+                        .executes(cont -> {
+                            FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.ONLY_OUT;
+                            return messageAndSaveConfig(cont, "Water will only flow out of water loggable blocks, and never into them.");
+                        }))
+                .then(Commands.literal("in_from_top_else_out")
+                        .executes(cont -> {
+                            FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.IN_FROM_TOP_ELSE_OUT;
+                            return messageAndSaveConfig(cont, "Water will flow into water loggable blocks from above, then out sideways or downward.");
+                        }))
+                .then(Commands.literal("in_from_sides_or_top_out_down")
+                        .executes(cont -> {
+                            FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.OUT_DOWN_ELSE_IN;
+                            return messageAndSaveConfig(cont, "Water will flow into water loggable blocks from the sides or top, and out of them from the bottom, if possible.");
+                        }))
+                .then(Commands.literal("out_down_else_in")
+                        .executes(cont -> {
+                            FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.OUT_DOWN_ELSE_IN;
+                            return messageAndSaveConfig(cont, "Water will flow into water loggable blocks from the sides or top, and out of them from the bottom, if possible.");
+                        }))
+                .then(Commands.literal("ignore")
+                        .executes(cont -> {
+                            FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.IGNORE;
+                            return messageAndSaveConfig(cont, "Water flowing will ignore water loggable blocks entirely.");
+                        }));
     }
 
     private static int componentGraphStatus(CommandContext<CommandSourceStack> context) {
@@ -2513,29 +2685,8 @@ public class FFCommands {
                                         "Placed blocks displacing fluids is now enabled.\nLiquids will now be displaced by blocks placed inside them.",
                                         "Placed blocks displacing fluids is now disabled.\nLiquids will no longer be displaced by blocks placed inside them.",
                                         a -> FlowingFluids.config.enableDisplacement = a, () -> FlowingFluids.config.enableDisplacement)
-                                ).then(Commands.literal("waterlogged_blocks_flow_mode")
-                                        .executes(cont -> message(cont, "Controls how water flows into or out fo water loggable blocks, due to limitations you cannot have two side by side waterloggable blocks flow into each other as they would flicker endlessly, Sea grass and kelp are excluded from this setting and will always break in waters absence, current setting: " + FlowingFluids.config.waterLogFlowMode))
-                                        .then(Commands.literal("only_in")
-                                                .executes(cont -> {
-                                                    FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.ONLY_IN;
-                                                    return messageAndSaveConfig(cont, "Water will only flow into water loggable blocks, and never out of them.");
-                                                })
-                                        ).then(Commands.literal("only_out")
-                                                .executes(cont -> {
-                                                    FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.ONLY_OUT;
-                                                    return messageAndSaveConfig(cont, "Water will only flow out of water loggable blocks, and never into them.");
-                                                })
-                                        ).then(Commands.literal("in_from_sides_or_top_out_down")
-                                                .executes(cont -> {
-                                                    FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.OUT_DOWN_ELSE_IN;
-                                                    return messageAndSaveConfig(cont, "Water will flow into water loggable blocks from the sides or top, and out of them from the bottom, if possible.");
-                                                })
-                                        ).then(Commands.literal("ignore")
-                                                .executes(cont -> {
-                                                    FlowingFluids.config.waterLogFlowMode = FFConfig.WaterLogFlowMode.IGNORE;
-                                                    return messageAndSaveConfig(cont, "Water flowing will ignore water loggable blocks entirely.");
-                                                })
-                                        )
+                                ).then(waterloggingCommand()
+                                ).then(waterloggedBlocksFlowModeCommand()
                                 ).then(booleanCommand("flow_over_edges",
                                         "Controls if liquids flow over nearby edges, or will stay at the ledge.",
                                         "Liquids at their minimum height will now flow to and over nearby edges, up to 4 blocks away.",

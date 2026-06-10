@@ -39,6 +39,16 @@ public interface FluidPerformanceMonitorMBean {
 
     long getFluidTickSchedulesCoalesced();
 
+    int getLastPendingChunkInitializations();
+
+    int getLastPendingFrontierRebuilds();
+
+    int getLastQueuedActiveWakeTicks();
+
+    int getLastQueuedDistantStableTicks();
+
+    int getLastBufferedFluidChanges();
+
     String getPerformanceReport();
 
     void reset();

@@ -102,6 +102,11 @@ public final class InfiniteBiomeRefillFallbackController {
     }
 
     private static float ff$getCurrentMspt(MinecraftServer server) {
+        FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
+        double monitorMspt = monitor.getLoadControlMspt(ff$getTargetMspt(server));
+        if (monitorMspt > 0.0) {
+            return (float) monitorMspt;
+        }
 #if MC > MC_21
         return server.getCurrentSmoothedTickTime();
 #else
