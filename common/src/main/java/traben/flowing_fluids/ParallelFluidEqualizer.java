@@ -47,8 +47,8 @@ public final class ParallelFluidEqualizer {
     private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<Long>>> QUEUED_BY_CHUNK = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<Long>>> COOLDOWNS_BY_CHUNK = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<DimensionKey, Queue<CompletableFuture<Result>>> PENDING_RESULTS = new ConcurrentHashMap<>();
-    private static final Set<Long> ACTIVE = ConcurrentHashMap.newKeySet();
-    private static final ConcurrentHashMap<ChunkPos, Set<Long>> ACTIVE_BY_CHUNK = new ConcurrentHashMap<>();
+    private static final Set<ActiveKey> ACTIVE = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentHashMap<DimensionKey, ConcurrentHashMap<ChunkPos, Set<ActiveKey>>> ACTIVE_BY_CHUNK = new ConcurrentHashMap<>();
 
     private static final byte LOADED = 1;
     private static final byte AIR = 1 << 1;
@@ -122,7 +122,8 @@ public final class ParallelFluidEqualizer {
             return applied;
         }
 
-        LongOpenHashSet queued = drainQueuedCandidates(dimensionKey, QUEUED_SELECTION_BUDGET_PER_TICK);
+        int pendingAsyncCount = pendingResults == null ? 0 : pendingResults.size();
+        LongOpenHashSet queued = drainQueuedCandidates(dimensionKey, getQueuedSelectionBudget(pendingAsyncCount));
         if (queued == null || queued.isEmpty()) {
             return applied;
         }
@@ -138,16 +139,16 @@ public final class ParallelFluidEqualizer {
         List<Request> requests = new ArrayList<>(representativeSources.size());
         for (ScanCandidate candidate : representativeSources) {
             long posKey = candidate.pos().asLong();
-            if (!ACTIVE.add(posKey)) {
+            ActiveKey activeKey = new ActiveKey(dimensionKey, posKey);
+            if (!ACTIVE.add(activeKey)) {
                 continue;
             }
-            trackActive(posKey);
+            trackActive(activeKey);
             Request request = prepare(level, candidate, captureCache);
             if (request != null) {
                 requests.add(request);
             } else {
-                ACTIVE.remove(posKey);
-                untrackActive(posKey);
+                releaseActive(activeKey);
             }
         }
         if (requests.isEmpty()) {
@@ -167,8 +168,7 @@ public final class ParallelFluidEqualizer {
         }
         for (int i = availableSlots; i < requests.size(); i++) {
             requeue(level, requests.get(i).startPos().asLong());
-            ACTIVE.remove(requests.get(i).startPos().asLong());
-            untrackActive(requests.get(i).startPos().asLong());
+            releaseActive(requests.get(i).activeKey());
         }
         return applied;
     }
@@ -286,6 +286,29 @@ public final class ParallelFluidEqualizer {
             Math.min(MAX_COMPLETED_RESULT_APPLY_BUDGET, budget));
     }
 
+    static int getQueuedSelectionBudget(int pendingAsyncResults) {
+        int budget = QUEUED_SELECTION_BUDGET_PER_TICK;
+        double mspt = FluidPerformanceMonitor.getInstance().getLoadControlMspt(0.0);
+
+        if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION * 3 / 4) {
+            budget /= 4;
+        } else if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION / 2) {
+            budget /= 2;
+        } else if (pendingAsyncResults <= 4 && mspt > 0.0 && mspt <= 28.0) {
+            budget += QUEUED_SELECTION_BUDGET_PER_TICK / 2;
+        }
+
+        if (mspt >= 70.0) {
+            budget = Math.min(budget, QUEUED_SELECTION_BUDGET_PER_TICK / 4);
+        } else if (mspt >= 55.0) {
+            budget = Math.min(budget, QUEUED_SELECTION_BUDGET_PER_TICK / 2);
+        } else if (mspt >= 45.0) {
+            budget = Math.min(budget, QUEUED_SELECTION_BUDGET_PER_TICK * 3 / 4);
+        }
+
+        return Math.max(32, Math.min(QUEUED_SELECTION_BUDGET_PER_TICK * 2, budget));
+    }
+
     public static void clearDimension(LevelAccessor level) {
         if (level != null) {
             DimensionKey dimensionKey = DimensionKey.of(level);
@@ -297,6 +320,12 @@ public final class ParallelFluidEqualizer {
             if (pending != null) {
                 for (CompletableFuture<Result> future : pending) {
                     future.cancel(false);
+                }
+            }
+            ConcurrentHashMap<ChunkPos, Set<ActiveKey>> activeByChunk = ACTIVE_BY_CHUNK.remove(dimensionKey);
+            if (activeByChunk != null) {
+                for (Set<ActiveKey> activeKeys : activeByChunk.values()) {
+                    ACTIVE.removeAll(activeKeys);
                 }
             }
         }
@@ -321,10 +350,14 @@ public final class ParallelFluidEqualizer {
                 DEFER_COOLDOWNS.remove(dimensionKey, cooldowns);
             }
         }
-        Set<Long> active = ACTIVE_BY_CHUNK.remove(chunkPos);
+        ConcurrentHashMap<ChunkPos, Set<ActiveKey>> activeByChunk = ACTIVE_BY_CHUNK.get(dimensionKey);
+        Set<ActiveKey> active = activeByChunk == null ? null : activeByChunk.remove(chunkPos);
         if (active != null) {
-            for (long posKey : active) {
-                ACTIVE.remove(posKey);
+            for (ActiveKey activeKey : active) {
+                ACTIVE.remove(activeKey);
+            }
+            if (activeByChunk != null && activeByChunk.isEmpty()) {
+                ACTIVE_BY_CHUNK.remove(dimensionKey, activeByChunk);
             }
         }
     }
@@ -371,19 +404,28 @@ public final class ParallelFluidEqualizer {
         }
     }
 
-    private static void trackActive(long posKey) {
-        ACTIVE_BY_CHUNK.computeIfAbsent(chunkPos(posKey), ignored -> ConcurrentHashMap.newKeySet()).add(posKey);
+    private static void trackActive(ActiveKey activeKey) {
+        ACTIVE_BY_CHUNK.computeIfAbsent(activeKey.dimensionKey(), ignored -> new ConcurrentHashMap<>())
+            .computeIfAbsent(chunkPos(activeKey.posKey()), ignored -> ConcurrentHashMap.newKeySet())
+            .add(activeKey);
     }
 
-    private static void untrackActive(long posKey) {
-        ChunkPos chunkPos = chunkPos(posKey);
-        Set<Long> active = ACTIVE_BY_CHUNK.get(chunkPos);
+    private static void untrackActive(ActiveKey activeKey) {
+        ConcurrentHashMap<ChunkPos, Set<ActiveKey>> byChunk = ACTIVE_BY_CHUNK.get(activeKey.dimensionKey());
+        if (byChunk == null) {
+            return;
+        }
+        ChunkPos chunkPos = chunkPos(activeKey.posKey());
+        Set<ActiveKey> active = byChunk.get(chunkPos);
         if (active == null) {
             return;
         }
-        active.remove(posKey);
+        active.remove(activeKey);
         if (active.isEmpty()) {
-            ACTIVE_BY_CHUNK.remove(chunkPos, active);
+            byChunk.remove(chunkPos, active);
+            if (byChunk.isEmpty()) {
+                ACTIVE_BY_CHUNK.remove(activeKey.dimensionKey(), byChunk);
+            }
         }
     }
 
@@ -430,7 +472,7 @@ public final class ParallelFluidEqualizer {
     private static @Nullable CompletableFuture<Result> submitAsync(Request request) {
         try {
             return CompletableFuture.supplyAsync(() -> computeResult(request), getPool())
-                .whenComplete((ignored, error) -> releaseActive(request.startPos().asLong()));
+                .whenComplete((ignored, error) -> releaseActive(request.activeKey()));
         } catch (RejectedExecutionException exception) {
             FlowingFluids.warn("Equalizer worker pool rejected a task; recreating pool and retrying.");
             synchronized (ParallelFluidEqualizer.class) {
@@ -440,18 +482,18 @@ public final class ParallelFluidEqualizer {
             }
             try {
                 return CompletableFuture.supplyAsync(() -> computeResult(request), getPool())
-                    .whenComplete((ignored, error) -> releaseActive(request.startPos().asLong()));
+                    .whenComplete((ignored, error) -> releaseActive(request.activeKey()));
             } catch (RejectedExecutionException retryFailure) {
                 FlowingFluids.warn("Equalizer worker pool still unavailable; deferring equalization retry.");
-                releaseActive(request.startPos().asLong());
+                releaseActive(request.activeKey());
                 return null;
             }
         }
     }
 
-    private static void releaseActive(long posKey) {
-        ACTIVE.remove(posKey);
-        untrackActive(posKey);
+    private static void releaseActive(ActiveKey activeKey) {
+        ACTIVE.remove(activeKey);
+        untrackActive(activeKey);
     }
 
     private static void shutdownPool() {
@@ -473,7 +515,7 @@ public final class ParallelFluidEqualizer {
             : 20;
 
         for (long posKey : queued) {
-            if (ACTIVE.contains(posKey)) {
+            if (ACTIVE.contains(new ActiveKey(DimensionKey.of(level), posKey))) {
                 continue;
             }
             BlockPos pos = BlockPos.of(posKey);
@@ -765,6 +807,7 @@ public final class ParallelFluidEqualizer {
             : Snapshot.capture(level, startPos, snapshotRadius, candidate.fluidType(), captureCache);
 
         return new Request(
+            new ActiveKey(DimensionKey.of(level), startPos.asLong()),
             startPos.immutable(),
             candidate.fluidType(),
             candidate.amount(),
@@ -874,7 +917,7 @@ public final class ParallelFluidEqualizer {
         try {
             return computeInternal(request);
         } finally {
-            releaseActive(request.startPos().asLong());
+            releaseActive(request.activeKey());
         }
     }
 
@@ -1109,7 +1152,10 @@ public final class ParallelFluidEqualizer {
         return Math.max(0.35f, Math.min(1.0f, 3.0f / distance));
     }
 
-    private record Request(BlockPos startPos, Fluid fluidType, int startAmount, int maxDepth, int maxNodes,
+    private record ActiveKey(DimensionKey dimensionKey, long posKey) {
+    }
+
+    private record Request(ActiveKey activeKey, BlockPos startPos, Fluid fluidType, int startAmount, int maxDepth, int maxNodes,
                            float distanceLoadFactor, Direction inletGradient, Vec3i gradientVector, Snapshot snapshot,
                            WaterFlowProfile flowProfile) {
     }

@@ -103,4 +103,14 @@ class ParallelFluidEqualizerRegressionTest {
         assertTrue(quietBudget >= 2);
         assertTrue(busyBudget >= quietBudget);
     }
+
+    @Test
+    void queuedSelectionBudgetShrinksWhenAsyncBacklogIsHigh() {
+        int quietBudget = ParallelFluidEqualizer.getQueuedSelectionBudget(0);
+        int backedUpBudget = ParallelFluidEqualizer.getQueuedSelectionBudget(48);
+
+        assertTrue(quietBudget >= 32);
+        assertTrue(backedUpBudget >= 32);
+        assertTrue(backedUpBudget < quietBudget);
+    }
 }
