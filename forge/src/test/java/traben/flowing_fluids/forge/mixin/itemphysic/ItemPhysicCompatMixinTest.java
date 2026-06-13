@@ -20,6 +20,12 @@ class ItemPhysicCompatMixinTest {
                 "ItemPhysic's buoyancy fluid probe should see partial and virtual Flowing Fluids water.");
         assertTrue(serverMixin.contains("FFFluidUtils.getEffectiveFluidState"),
                 "ItemPhysic's fluid-height and pushing scan should use the same effective water state.");
+        assertTrue(commonPhysicMixin.contains("m_6425_")
+                        && serverMixin.contains("m_6425_"),
+                "ItemPhysic production jars call the obfuscated Forge Level#getFluidState name.");
+        assertTrue(commonPhysicMixin.contains("require = 0")
+                        && serverMixin.contains("require = 0"),
+                "ItemPhysic compatibility redirects should never hard-crash mod loading if ItemPhysic changes.");
         assertTrue(forgeMixins.contains("itemphysic.MixinCommonPhysic")
                         && forgeMixins.contains("itemphysic.MixinItemPhysicServer"),
                 "The ItemPhysic compatibility mixins must be listed in the Forge mixin config.");

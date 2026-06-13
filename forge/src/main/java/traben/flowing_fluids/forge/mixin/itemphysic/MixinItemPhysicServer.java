@@ -16,8 +16,9 @@ public abstract class MixinItemPhysicServer {
     @Redirect(
             method = "updateFluidHeightAndDoFluidPushing",
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/world/level/Level;getFluidState(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/material/FluidState;"),
-            remap = false
+                    target = "Lnet/minecraft/world/level/Level;m_6425_(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/material/FluidState;"),
+            remap = false,
+            require = 0
     )
     private static FluidState ff$getEffectiveFluidHeightCell(final Level level, final BlockPos pos) {
         return FFFluidUtils.getEffectiveFluidState(level, pos, level.getBlockState(pos));
