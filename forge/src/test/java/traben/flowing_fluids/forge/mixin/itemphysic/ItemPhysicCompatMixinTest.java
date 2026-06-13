@@ -13,6 +13,7 @@ class ItemPhysicCompatMixinTest {
     void itemPhysicFluidReadsUseEffectiveFlowingFluidsState() throws IOException {
         String commonPhysicMixin = Files.readString(sourcePath("src/main/java/traben/flowing_fluids/forge/mixin/itemphysic/MixinCommonPhysic.java"));
         String serverMixin = Files.readString(sourcePath("src/main/java/traben/flowing_fluids/forge/mixin/itemphysic/MixinItemPhysicServer.java"));
+        String compatHelper = Files.readString(sourcePath("src/main/java/traben/flowing_fluids/forge/mixin/itemphysic/ItemPhysicFluidCompat.java"));
         String forgeMixins = Files.readString(sourcePath("src/main/resources/flowing_fluids_forge.mixins.json"));
         String plugin = Files.readString(sourcePath("src/main/java/traben/flowing_fluids/forge/mixin/FFPluginForge.java"));
 
@@ -20,6 +21,14 @@ class ItemPhysicCompatMixinTest {
                 "ItemPhysic's buoyancy fluid probe should see partial and virtual Flowing Fluids water.");
         assertTrue(serverMixin.contains("FFFluidUtils.getEffectiveFluidState"),
                 "ItemPhysic's fluid-height and pushing scan should use the same effective water state.");
+        assertTrue(commonPhysicMixin.contains("ItemPhysicFluidCompat.findEffectiveFluid"),
+                "ItemPhysic's primary buoyancy probe should scan the item bounds, not only the block position.");
+        assertTrue(serverMixin.contains("applyEffectiveBuoyancyIfMissing"),
+                "ItemPhysic updatePre should receive a fallback buoyancy pass when the original probe missed effective water.");
+        assertTrue(compatHelper.contains("getBoundingBox().inflate(WATER_SWIM_REACH)")
+                        && compatHelper.contains("ItemPhysicServer.fluid.set(fluid)")
+                        && compatHelper.contains("setDeltaMovement"),
+                "The ItemPhysic helper must detect nearby effective water and feed ItemPhysic's floating state.");
         assertTrue(commonPhysicMixin.contains("m_6425_")
                         && serverMixin.contains("m_6425_"),
                 "ItemPhysic production jars call the obfuscated Forge Level#getFluidState name.");
