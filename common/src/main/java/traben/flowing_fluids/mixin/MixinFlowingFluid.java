@@ -1493,6 +1493,10 @@ public abstract class MixinFlowingFluid extends Fluid {
     @Unique
     private void flowing_fluids$setOrRemoveWaterAmountAt(final Level level, final BlockPos blockPos, final int amount, final BlockState thisState, Direction direction) {
         if (amount > 0) {
+            if (FFFluidUtils.supportsVirtualFluidState(level, thisState)) {
+                FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, this, amount);
+                return;
+            }
             flowing_fluids$spreadTo2(level, blockPos, thisState, direction, amount);
         } else {
             FFFluidUtils.removeAllFluidAtPos(level, blockPos, this);
@@ -3013,6 +3017,13 @@ public abstract class MixinFlowingFluid extends Fluid {
 
     @Unique
     protected void flowing_fluids$spreadTo2(LevelAccessor levelAccessor, BlockPos blockPos, BlockState blockState, Direction direction, int amount) {
+        if (FFFluidUtils.supportsVirtualFluidState(levelAccessor, blockState)) {
+            FluidState before = FFFluidUtils.getEffectiveFluidState(levelAccessor, blockPos, blockState);
+            FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, blockPos, this, amount);
+            FluidState updated = FFFluidUtils.getEffectiveFluidState(levelAccessor, blockPos, levelAccessor.getBlockState(blockPos));
+            flowing_fluids$bufferFlowState(levelAccessor, blockPos, before, updated);
+            return;
+        }
         this.spreadTo(levelAccessor, blockPos, blockState, direction, getStateForFluidByAmount(this, amount));
         flowing_fluids$bufferFlowState(levelAccessor, blockPos, blockState);
     }
@@ -3021,6 +3032,11 @@ public abstract class MixinFlowingFluid extends Fluid {
     private void flowing_fluids$bufferFlowState(LevelAccessor levelAccessor, BlockPos blockPos, BlockState beforeState) {
         FluidState before = FFFluidUtils.getEffectiveFluidState(levelAccessor, blockPos, beforeState);
         FluidState updated = FFFluidUtils.getEffectiveFluidState(levelAccessor, blockPos, levelAccessor.getBlockState(blockPos));
+        flowing_fluids$bufferFlowState(levelAccessor, blockPos, before, updated);
+    }
+
+    @Unique
+    private void flowing_fluids$bufferFlowState(LevelAccessor levelAccessor, BlockPos blockPos, FluidState before, FluidState updated) {
         if (before.isEmpty() && updated.isEmpty()) {
             return;
         }

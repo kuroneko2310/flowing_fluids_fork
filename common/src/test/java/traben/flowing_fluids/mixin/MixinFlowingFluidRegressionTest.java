@@ -4,6 +4,10 @@ import org.junit.jupiter.api.Test;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FluidRegressionLogic;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -76,5 +80,50 @@ class MixinFlowingFluidRegressionTest {
     @Test
     void destinationWaterlogOnlyRequestsExactFillAmount() {
         assertEquals(2, FluidRegressionLogic.computeVanillaWaterlogTransferAmount(false, true, 8, 6));
+    }
+
+    @Test
+    void virtualFluidCellsAreWrittenThroughInternalStoreInsteadOfVanillaSpreadTo() throws IOException {
+        String source = Files.readString(sourcePath("common/src/main/java/traben/flowing_fluids/mixin/MixinFlowingFluid.java"));
+        String spreadTo = methodBody(source, "protected void flowing_fluids$spreadTo2");
+        String setOrRemove = methodBody(source, "private void flowing_fluids$setOrRemoveWaterAmountAt");
+
+        assertTrue(spreadTo.contains("supportsVirtualFluidState")
+                        && spreadTo.contains("setFluidStateAtPosToNewAmount"),
+                "Virtual waterlogged targets must update the internal fluid store instead of relying on vanilla spreadTo.");
+        assertTrue(setOrRemove.contains("supportsVirtualFluidState")
+                        && setOrRemove.contains("setFluidStateAtPosToNewAmount"),
+                "Virtual waterlogged sources must reduce their stored amount when they emit water.");
+    }
+
+    private static String methodBody(String source, String signature) {
+        int signatureStart = source.indexOf(signature);
+        assertTrue(signatureStart >= 0, "Missing method signature: " + signature);
+
+        int bodyStart = source.indexOf('{', signatureStart);
+        assertTrue(bodyStart >= 0, "Missing method body for: " + signature);
+
+        int depth = 0;
+        for (int i = bodyStart; i < source.length(); i++) {
+            char c = source.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return source.substring(bodyStart, i + 1);
+                }
+            }
+        }
+
+        throw new AssertionError("Unclosed method body for: " + signature);
+    }
+
+    private static Path sourcePath(String path) {
+        Path fromRoot = Path.of(path);
+        if (Files.exists(fromRoot)) {
+            return fromRoot;
+        }
+        return Path.of("..", path);
     }
 }
