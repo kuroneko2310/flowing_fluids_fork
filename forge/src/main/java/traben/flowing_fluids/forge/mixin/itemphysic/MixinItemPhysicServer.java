@@ -12,6 +12,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import team.creative.itemphysic.server.ItemPhysicServer;
+import traben.flowing_fluids.forge.compat.itemphysic.ItemPhysicFluidCompat;
 import traben.flowing_fluids.FFFluidUtils;
 
 @Pseudo

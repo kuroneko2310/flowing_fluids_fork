@@ -1,4 +1,4 @@
-package traben.flowing_fluids.forge.mixin.itemphysic;
+package traben.flowing_fluids.forge.compat.itemphysic;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.FluidTags;
@@ -13,14 +13,14 @@ import team.creative.itemphysic.server.ItemEntityExtender;
 import team.creative.itemphysic.server.ItemPhysicServer;
 import traben.flowing_fluids.FFFluidUtils;
 
-final class ItemPhysicFluidCompat {
+public final class ItemPhysicFluidCompat {
     private static final double WATER_SWIM_REACH = 0.3D;
     private static final double DEFAULT_FLUID_EPSILON = 0.001D;
 
     private ItemPhysicFluidCompat() {
     }
 
-    static Fluid findEffectiveFluid(final ItemEntity item, final boolean below) {
+    public static Fluid findEffectiveFluid(final ItemEntity item, final boolean below) {
         if (item == null || item.level() == null) {
             return null;
         }
@@ -70,7 +70,7 @@ final class ItemPhysicFluidCompat {
         return bestFluid;
     }
 
-    static void applyEffectiveBuoyancyIfMissing(final ItemEntity item) {
+    public static void applyEffectiveBuoyancyIfMissing(final ItemEntity item) {
         if (ItemPhysicServer.fluid.get() != null) {
             return;
         }

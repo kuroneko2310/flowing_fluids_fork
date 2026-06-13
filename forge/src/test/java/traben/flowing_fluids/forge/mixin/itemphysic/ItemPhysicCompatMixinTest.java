@@ -13,7 +13,7 @@ class ItemPhysicCompatMixinTest {
     void itemPhysicFluidReadsUseEffectiveFlowingFluidsState() throws IOException {
         String commonPhysicMixin = Files.readString(sourcePath("src/main/java/traben/flowing_fluids/forge/mixin/itemphysic/MixinCommonPhysic.java"));
         String serverMixin = Files.readString(sourcePath("src/main/java/traben/flowing_fluids/forge/mixin/itemphysic/MixinItemPhysicServer.java"));
-        String compatHelper = Files.readString(sourcePath("src/main/java/traben/flowing_fluids/forge/mixin/itemphysic/ItemPhysicFluidCompat.java"));
+        String compatHelper = Files.readString(sourcePath("src/main/java/traben/flowing_fluids/forge/compat/itemphysic/ItemPhysicFluidCompat.java"));
         String forgeMixins = Files.readString(sourcePath("src/main/resources/flowing_fluids_forge.mixins.json"));
         String plugin = Files.readString(sourcePath("src/main/java/traben/flowing_fluids/forge/mixin/FFPluginForge.java"));
 
@@ -29,6 +29,9 @@ class ItemPhysicCompatMixinTest {
                         && compatHelper.contains("ItemPhysicServer.fluid.set(fluid)")
                         && compatHelper.contains("setDeltaMovement"),
                 "The ItemPhysic helper must detect nearby effective water and feed ItemPhysic's floating state.");
+        assertTrue(commonPhysicMixin.contains("traben.flowing_fluids.forge.compat.itemphysic.ItemPhysicFluidCompat")
+                        && serverMixin.contains("traben.flowing_fluids.forge.compat.itemphysic.ItemPhysicFluidCompat"),
+                "ItemPhysic helper code must live outside the owned mixin package so world ticks can load it directly.");
         assertTrue(commonPhysicMixin.contains("m_6425_")
                         && serverMixin.contains("m_6425_"),
                 "ItemPhysic production jars call the obfuscated Forge Level#getFluidState name.");
