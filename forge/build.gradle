@@ -75,6 +75,19 @@ dependencies {
         compileOnly files(embeddiumJar)
     }
 
+    def itemPhysicJar = rootProject.fileTree(rootProject.file("../../../mods")) {
+        include "ItemPhysic_FORGE_*.jar"
+    }.files.find()
+    def creativeCoreJar = rootProject.fileTree(rootProject.file("../../../mods")) {
+        include "CreativeCore_FORGE_*.jar"
+    }.files.find()
+    if (itemPhysicJar != null) {
+        compileOnly files(itemPhysicJar)
+    }
+    if (creativeCoreJar != null) {
+        compileOnly files(creativeCoreJar)
+    }
+
     if (rootProject.mc_build as int == 3) {
         // Create and its dependencies
         modImplementation("com.simibubi.create:create-${minecraft_version}:${create_forge_version}:slim") { transitive = false }

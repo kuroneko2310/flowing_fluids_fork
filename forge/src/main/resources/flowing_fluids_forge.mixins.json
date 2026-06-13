@@ -9,6 +9,8 @@
   "mixins": [
     "MixinLevel",
     "MixinWaterPushing",
+    "itemphysic.MixinCommonPhysic",
+    "itemphysic.MixinItemPhysicServer",
     "create.MixinBasinBlockEntity",
     "create.MixinBasinRecipe",
     "create.MixinCombinedTankWrapper",

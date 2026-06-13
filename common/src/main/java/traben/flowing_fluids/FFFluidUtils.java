@@ -791,6 +791,9 @@ public class FFFluidUtils {
     }
 
     private static boolean shouldOverrideVanillaWaterlogging(BlockState state) {
+        if (isProtectedFlowingFluidsSpringSource(state)) {
+            return false;
+        }
         return hasRawVanillaWaterlogSupport(state)
                 && state.hasProperty(BlockStateProperties.WATERLOGGED)
                 && (usesShapeAwareVirtualFluidState(state) || hasAnyShapeOpening(state));
@@ -800,10 +803,23 @@ public class FFFluidUtils {
         if (!isVirtualFluidStorageEnabled()) {
             return false;
         }
+        if (isProtectedFlowingFluidsSpringSource(state)) {
+            return false;
+        }
         return isExtendedWaterloggable(level, state)
                 || shouldOverrideVanillaWaterlogging(state)
                 || isGenericNonFullVirtualFluidBlock(state)
                 || isDirectionalVirtualFluidPassableBlock(level, state, null);
+    }
+
+    private static boolean isProtectedFlowingFluidsSpringSource(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        return id != null
+                && FlowingFluids.MOD_ID.equals(id.getNamespace())
+                && id.getPath().contains("spring");
     }
 
     private static boolean isGenericNonFullVirtualFluidBlock(BlockState state) {
@@ -1374,6 +1390,10 @@ public class FFFluidUtils {
 
     public static boolean setFluidStateAtPosToNewAmount(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid, int newAmount) {
         BlockState blockState = levelAccessor.getBlockState(pos);
+        if (newAmount > 0 && isProtectedFlowingFluidsSpringSource(blockState)) {
+            clearStoredVirtualFluidState(levelAccessor, pos);
+            return false;
+        }
         int normalizedAmount = normalizeRequestedFluidAmount(levelAccessor, pos, blockState, fluid, newAmount);
         FluidState existingState = getEffectiveFluidState(levelAccessor, pos, blockState);
         boolean invalidateConnectedComponents = shouldInvalidateConnectedFluidComponents(existingState, fluid, normalizedAmount);

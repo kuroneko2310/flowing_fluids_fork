@@ -54,6 +54,20 @@ class SpringSourcePreservationTest {
                 "Pond springs should not inherit source-cell waterlogging from the replaced water cell.");
     }
 
+    @Test
+    void sharedFluidWritesCannotTreatSpringSourcesAsVirtualFluidCells() throws IOException {
+        String source = Files.readString(sharedSourcePath("common/src/main/java/traben/flowing_fluids/FFFluidUtils.java"));
+        String support = methodBody(source, "public static boolean supportsVirtualFluidState");
+        String writer = methodBody(source, "public static boolean setFluidStateAtPosToNewAmount");
+
+        assertTrue(source.contains("isProtectedFlowingFluidsSpringSource"),
+                "The common fluid layer should have an explicit spring-source guard.");
+        assertTrue(support.contains("isProtectedFlowingFluidsSpringSource"),
+                "Spring source blocks must not be exposed as virtual waterlog cells.");
+        assertTrue(writer.contains("newAmount > 0 && isProtectedFlowingFluidsSpringSource"),
+                "Direct fluid writes must not replace spring source blocks with raw fluid.");
+    }
+
     private static void assertUpdateShapePreserves(String fileName) throws IOException {
         String source = Files.readString(springSourcePath(fileName));
         String updateShape = methodBody(source, "public BlockState updateShape");
@@ -114,5 +128,13 @@ class SpringSourcePreservationTest {
             return fromRoot;
         }
         return Path.of("src/main/java/traben/flowing_fluids/forge/spring", fileName);
+    }
+
+    private static Path sharedSourcePath(String path) {
+        Path fromRoot = Path.of(path);
+        if (Files.exists(fromRoot)) {
+            return fromRoot;
+        }
+        return Path.of("..", path);
     }
 }
