@@ -7,6 +7,7 @@
 - removed nearby-water feedback from water spring emission so springs no longer amplify themselves by reading the surrounding pool as fuel
 - clarified water spring behavior as source-fed generation, retired the old nearby-water feedback helpers, and kept surface vent fountains strong with strength-based crests and partial side spray
 - protected water spring columns, crests, and nearby spray from infinite-biome thin surface draining so spring-fed water is no longer cleaned up as stray sea-level water
+- prevented spring-fed water from being replaced with air by zero-amount fluid writes or remove-all cleanup near water spring sources
 
 1.0.5
 - added fractional fluid tick delays for water and lava, including 0.5 tick style substeps and 1.5 tick average scheduling

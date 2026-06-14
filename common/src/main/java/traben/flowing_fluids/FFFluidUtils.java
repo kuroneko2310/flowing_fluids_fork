@@ -858,6 +858,15 @@ public class FFFluidUtils {
         return false;
     }
 
+    private static boolean shouldProtectSpringFedWaterFromRemoval(LevelAccessor level, BlockPos pos, Fluid fluid, FluidState existingState) {
+        return fluid != null
+                && fluid.isSame(Fluids.WATER)
+                && existingState != null
+                && existingState.getType().isSame(Fluids.WATER)
+                && existingState.getAmount() > 0
+                && isNearFlowingFluidsWaterSpringSource(level, pos);
+    }
+
     private static boolean isGenericNonFullVirtualFluidBlock(BlockState state) {
         if (state == null || state.isAir() || state.hasBlockEntity()) {
             return false;
@@ -1437,6 +1446,9 @@ public class FFFluidUtils {
             if (existingState.isEmpty()) {
                 return true;
             }
+            if (shouldProtectSpringFedWaterFromRemoval(levelAccessor, pos, fluid, existingState)) {
+                return false;
+            }
         } else if (existingState.getType().isSame(fluid) && existingState.getAmount() == normalizedAmount) {
             return true;
         }
@@ -1652,6 +1664,9 @@ public class FFFluidUtils {
     public static boolean removeAllFluidAtPos(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid) {
         var blockState = levelAccessor.getBlockState(pos);
         FluidState existingState = getEffectiveFluidState(levelAccessor, pos, blockState);
+        if (shouldProtectSpringFedWaterFromRemoval(levelAccessor, pos, fluid, existingState)) {
+            return false;
+        }
         boolean invalidateConnectedComponents = !existingState.isEmpty() && existingState.getAmount() > 0;
         if (clearAquaticPlantFluidCell(levelAccessor, pos, blockState, fluid, invalidateConnectedComponents)) {
             recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);

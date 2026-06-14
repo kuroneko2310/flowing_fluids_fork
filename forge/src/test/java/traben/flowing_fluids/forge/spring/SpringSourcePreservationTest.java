@@ -94,6 +94,7 @@ class SpringSourcePreservationTest {
         String source = Files.readString(sharedSourcePath("common/src/main/java/traben/flowing_fluids/FFFluidUtils.java"));
         String support = methodBody(source, "public static boolean supportsVirtualFluidState");
         String writer = methodBody(source, "public static boolean setFluidStateAtPosToNewAmount");
+        String remover = methodBody(source, "public static boolean removeAllFluidAtPos");
         String surfaceDrain = methodBody(source, "public static int getInfiniteBiomeSurfaceDrainAmount");
 
         assertTrue(source.contains("isProtectedFlowingFluidsSpringSource"),
@@ -106,6 +107,12 @@ class SpringSourcePreservationTest {
                 "The common fluid layer should detect water produced near spring sources.");
         assertTrue(surfaceDrain.contains("isNearFlowingFluidsWaterSpringSource"),
                 "Spring-fed water should be protected from infinite-biome thin-surface draining.");
+        assertTrue(source.contains("shouldProtectSpringFedWaterFromRemoval"),
+                "Spring-fed water should have a shared removal guard.");
+        assertTrue(writer.contains("shouldProtectSpringFedWaterFromRemoval"),
+                "Direct zero-amount writes must not replace spring-fed water with air.");
+        assertTrue(remover.contains("shouldProtectSpringFedWaterFromRemoval"),
+                "Fluid removal must not replace spring-fed water with air.");
     }
 
     private static void assertUpdateShapePreserves(String fileName) throws IOException {
