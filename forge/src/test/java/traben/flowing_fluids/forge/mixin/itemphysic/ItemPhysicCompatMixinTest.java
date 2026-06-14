@@ -29,6 +29,10 @@ class ItemPhysicCompatMixinTest {
                         && compatHelper.contains("ItemPhysicServer.fluid.set(fluid)")
                         && compatHelper.contains("setDeltaMovement"),
                 "The ItemPhysic helper must detect nearby effective water and feed ItemPhysic's floating state.");
+        assertTrue(compatHelper.contains("MIN_FLOATING_Y_SPEED")
+                        && compatHelper.contains("Mth.clamp")
+                        && compatHelper.contains("movement.x, targetY, movement.z"),
+                "The fallback buoyancy pass should cancel lingering downward velocity without stealing horizontal item drift.");
         assertTrue(commonPhysicMixin.contains("traben.flowing_fluids.forge.compat.itemphysic.ItemPhysicFluidCompat")
                         && serverMixin.contains("traben.flowing_fluids.forge.compat.itemphysic.ItemPhysicFluidCompat"),
                 "ItemPhysic helper code must live outside the owned mixin package so world ticks can load it directly.");

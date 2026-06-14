@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import team.creative.itemphysic.server.ItemEntityExtender;
 import team.creative.itemphysic.server.ItemPhysicServer;
 import traben.flowing_fluids.FFFluidUtils;
@@ -16,6 +17,9 @@ import traben.flowing_fluids.FFFluidUtils;
 public final class ItemPhysicFluidCompat {
     private static final double WATER_SWIM_REACH = 0.3D;
     private static final double DEFAULT_FLUID_EPSILON = 0.001D;
+    private static final double MIN_FLOATING_Y_SPEED = 0.02D;
+    private static final double MAX_FLOATING_Y_SPEED = 0.1D;
+    private static final double FLOATING_Y_ACCELERATION = 0.04D;
 
     private ItemPhysicFluidCompat() {
     }
@@ -80,15 +84,19 @@ public final class ItemPhysicFluidCompat {
         }
         ItemPhysicServer.fluid.set(fluid);
         if (item instanceof ItemEntityExtender extender && extender.canSwim() && !fluid.is(FluidTags.LAVA)) {
-            double maxSpeed = 0.1D;
-            double force = item.isNoGravity() ? 0.0D : 0.04D;
-            double currentY = item.getDeltaMovement().y + force;
-            if (currentY < maxSpeed) {
-                force += Math.min(0.04D, maxSpeed - currentY);
-            }
-            if (force > 0.0D) {
-                item.setDeltaMovement(item.getDeltaMovement().add(0.0D, force, 0.0D));
-            }
+            applyStableWaterFloat(item);
+        }
+    }
+
+    private static void applyStableWaterFloat(final ItemEntity item) {
+        Vec3 movement = item.getDeltaMovement();
+        double targetY = movement.y + (item.isNoGravity() ? 0.0D : FLOATING_Y_ACCELERATION);
+        if (targetY < MAX_FLOATING_Y_SPEED) {
+            targetY += Math.min(FLOATING_Y_ACCELERATION, MAX_FLOATING_Y_SPEED - targetY);
+        }
+        targetY = Mth.clamp(Math.max(targetY, MIN_FLOATING_Y_SPEED), movement.y, MAX_FLOATING_Y_SPEED);
+        if (targetY > movement.y) {
+            item.setDeltaMovement(movement.x, targetY, movement.z);
         }
     }
 
