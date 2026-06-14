@@ -98,6 +98,8 @@ public class FFFluidUtils {
     private static final double SHAPE_FACE_SAMPLE_DEPTH = 1.0D / 32.0D;
     private static final double SHAPE_SAMPLE_EPSILON = 1.0E-5D;
     private static final double[] FACE_OPENING_SAMPLES = {0.125D, 0.375D, 0.625D, 0.875D};
+    private static final int WATER_SPRING_SURFACE_PROTECTION_HORIZONTAL_RADIUS = 1;
+    private static final int WATER_SPRING_SURFACE_PROTECTION_VERTICAL_REACH = 40;
 
     private static final Direction[] CARDINAL_DIRECTIONS = Direction.Plane.HORIZONTAL.stream().toArray(Direction[]::new);
     private static final Direction[] ALL_DIRECTIONS = Direction.values();
@@ -820,6 +822,40 @@ public class FFFluidUtils {
         return id != null
                 && FlowingFluids.MOD_ID.equals(id.getNamespace())
                 && id.getPath().contains("spring");
+    }
+
+    private static boolean isProtectedFlowingFluidsWaterSpringSource(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        if (id == null || !FlowingFluids.MOD_ID.equals(id.getNamespace())) {
+            return false;
+        }
+        String path = id.getPath();
+        return path.contains("spring") && !path.contains("lava");
+    }
+
+    public static boolean isNearFlowingFluidsWaterSpringSource(LevelAccessor level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int dx = -WATER_SPRING_SURFACE_PROTECTION_HORIZONTAL_RADIUS;
+             dx <= WATER_SPRING_SURFACE_PROTECTION_HORIZONTAL_RADIUS;
+             dx++) {
+            for (int dz = -WATER_SPRING_SURFACE_PROTECTION_HORIZONTAL_RADIUS;
+                 dz <= WATER_SPRING_SURFACE_PROTECTION_HORIZONTAL_RADIUS;
+                 dz++) {
+                for (int dy = 0; dy <= WATER_SPRING_SURFACE_PROTECTION_VERTICAL_REACH; dy++) {
+                    cursor.set(pos.getX() + dx, pos.getY() - dy, pos.getZ() + dz);
+                    if (isProtectedFlowingFluidsWaterSpringSource(level.getBlockState(cursor))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean isGenericNonFullVirtualFluidBlock(BlockState state) {
@@ -3118,6 +3154,9 @@ public class FFFluidUtils {
         }
         int seaLevel = seaLevel(world);
         if (amount <= 0 || amount >= 8 || amount > 4 || pos.getY() != seaLevel) {
+            return 0;
+        }
+        if (fluid.isSame(Fluids.WATER) && isNearFlowingFluidsWaterSpringSource(level, pos)) {
             return 0;
         }
         if (isProtectedInfiniteBiomeWater(level, pos, fluid, amount)) {

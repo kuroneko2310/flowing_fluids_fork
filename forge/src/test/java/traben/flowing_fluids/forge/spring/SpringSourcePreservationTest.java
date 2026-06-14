@@ -94,6 +94,7 @@ class SpringSourcePreservationTest {
         String source = Files.readString(sharedSourcePath("common/src/main/java/traben/flowing_fluids/FFFluidUtils.java"));
         String support = methodBody(source, "public static boolean supportsVirtualFluidState");
         String writer = methodBody(source, "public static boolean setFluidStateAtPosToNewAmount");
+        String surfaceDrain = methodBody(source, "public static int getInfiniteBiomeSurfaceDrainAmount");
 
         assertTrue(source.contains("isProtectedFlowingFluidsSpringSource"),
                 "The common fluid layer should have an explicit spring-source guard.");
@@ -101,6 +102,10 @@ class SpringSourcePreservationTest {
                 "Spring source blocks must not be exposed as virtual waterlog cells.");
         assertTrue(writer.contains("newAmount > 0 && isProtectedFlowingFluidsSpringSource"),
                 "Direct fluid writes must not replace spring source blocks with raw fluid.");
+        assertTrue(source.contains("isNearFlowingFluidsWaterSpringSource"),
+                "The common fluid layer should detect water produced near spring sources.");
+        assertTrue(surfaceDrain.contains("isNearFlowingFluidsWaterSpringSource"),
+                "Spring-fed water should be protected from infinite-biome thin-surface draining.");
     }
 
     private static void assertUpdateShapePreserves(String fileName) throws IOException {
