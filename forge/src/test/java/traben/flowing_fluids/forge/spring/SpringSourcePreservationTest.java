@@ -58,6 +58,35 @@ class SpringSourcePreservationTest {
     void waterSpringsDoNotUseNearbyWaterAsEmissionFeedback() throws IOException {
         assertWaterSpringEmissionIsBaseOnly("SpringColumnPulseController.java");
         assertWaterSpringEmissionIsBaseOnly("WallSpringBlock.java");
+        assertFalse(Files.exists(springSourcePath("WaterSpringActivity.java")),
+                "Retired nearby-water feedback helper should not remain in the spring package.");
+        assertFalse(Files.exists(springSourcePath("WaterSpringHydrology.java")),
+                "Retired nearby-water sampling helper should not remain in the spring package.");
+    }
+
+    @Test
+    void springEmitterOnlyAddsFluid() throws IOException {
+        String source = Files.readString(springSourcePath("SpringFluidEmitter.java"));
+
+        assertFalse(source.contains("collectConnectedFluidAmount"),
+                "Spring emission must not collect or consume connected water.");
+        assertFalse(source.contains("removeAmountFromFluidAtPos"),
+                "Spring emission must not remove water from the output pool.");
+        assertFalse(source.contains("removeAllFluidAtPos"),
+                "Spring emission must not delete existing water cells.");
+    }
+
+    @Test
+    void springCommandTextDoesNotMentionRetiredSeepBonuses() throws IOException {
+        String sharedCommands = Files.readString(sharedSourcePath("common/src/main/java/traben/flowing_fluids/config/FFCommands.java"));
+        String forgeCommands = Files.readString(springSourcePath("ForgeSpringCommands.java"));
+
+        assertFalse(sharedCommands.contains("seep bonuses"),
+                "Spring settings text should describe source-strength emission, not retired seep bonuses.");
+        assertTrue(sharedCommands.contains("never consume nearby connected water"),
+                "Spring status should state that water springs do not use nearby water as fuel.");
+        assertTrue(forgeCommands.contains("do not drain or consume nearby connected water"),
+                "Surface vent command notes should make the no-drain contract visible.");
     }
 
     @Test

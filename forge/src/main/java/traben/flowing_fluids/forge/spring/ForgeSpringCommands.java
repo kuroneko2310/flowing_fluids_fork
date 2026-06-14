@@ -71,7 +71,8 @@ public final class ForgeSpringCommands {
                         + "\n- Nether spring spawn multiplier: " + traben.flowing_fluids.FlowingFluids.config.netherSpringSpawnMultiplier
                         + "\n- Each successful feature then samples 3-12 local spots, leaning wetter biomes upward and deserts/badlands downward."
                         + "\n- The current vent style can start deeper underground, carve a slim shaft up to the surface, and keep that shaft braced with surrounding stone or dirt."
-                        + "\n- Water vents prefer nearby water, generate only LARGE or HEAVY floor springs, and now keep a 3-block crest with extra side spray so they read more like a little fountain."
+                        + "\n- Water vents prefer nearby water, generate only LARGE or HEAVY floor springs, and keep a strength-based raised crest with partial side spray so they read like lively little fountains."
+                        + "\n- Water vents do not drain or consume nearby connected water; the fountain is fed by the spring source itself."
                         + "\n- Use `/flowing_fluids settings springs overworld_spawn_multiplier <value>` or `nether_spawn_multiplier <value>` to retune generation live."
                         + "\n- Use `/flowing_fluids settings springs water_emission_multiplier <value>` or `lava_emission_multiplier <value>` to retune how hard spring columns push."
                         + "\n- Use `/flowing_fluids springs surface_vents find water [radius]` to list nearby loaded vents."

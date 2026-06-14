@@ -23,8 +23,12 @@ import java.util.List;
 public final class SurfaceVentLocator {
     private static final int MIN_SHAFT_DEPTH = 5;
     private static final int MAX_SHAFT_DEPTH = 24;
-    private static final int DEFAULT_CREST_HEIGHT = 3;
-    private static final int DEFAULT_SPRAY_BURSTS = 3;
+    private static final int LARGE_CREST_HEIGHT = 2;
+    private static final int HEAVY_CREST_HEIGHT = 3;
+    private static final int LARGE_SPRAY_BURSTS = 1;
+    private static final int HEAVY_SPRAY_BURSTS = 2;
+    private static final int UPPER_SPRAY_AMOUNT = 5;
+    private static final int LOWER_SPRAY_AMOUNT = 3;
 
     private SurfaceVentLocator() {
     }
@@ -88,8 +92,9 @@ public final class SurfaceVentLocator {
         }
 
         if (keepSpoutRaised) {
-            sustainRaisedCrest(level, mouthPos, fluid, DEFAULT_CREST_HEIGHT);
-            sprayFountain(level, mouthPos, fluid, DEFAULT_CREST_HEIGHT, DEFAULT_SPRAY_BURSTS);
+            int crestHeight = crestHeightFor(vent.strength());
+            sustainRaisedCrest(level, mouthPos, fluid, crestHeight);
+            sprayFountain(level, mouthPos, fluid, crestHeight, sprayBurstsFor(vent.strength()));
         }
     }
 
@@ -174,10 +179,10 @@ public final class SurfaceVentLocator {
         for (int i = 0; i < sprayBursts && i < directions.length; i++) {
             Direction direction = directions[i];
             BlockPos targetPos = sprayOrigin.relative(direction);
-            emitSprayCell(level, targetPos, fluid, 6);
+            emitSprayCell(level, targetPos, fluid, UPPER_SPRAY_AMOUNT);
 
             BlockPos lowerArcPos = mouthPos.above(Math.max(1, crestHeight - 1)).relative(direction);
-            emitSprayCell(level, lowerArcPos, fluid, 4);
+            emitSprayCell(level, lowerArcPos, fluid, LOWER_SPRAY_AMOUNT);
         }
     }
 
@@ -281,6 +286,22 @@ public final class SurfaceVentLocator {
         int dx = a.getX() - b.getX();
         int dz = a.getZ() - b.getZ();
         return dx * dx + dz * dz;
+    }
+
+    static int crestHeightFor(SpringStrength strength) {
+        return strength == SpringStrength.HEAVY ? HEAVY_CREST_HEIGHT : LARGE_CREST_HEIGHT;
+    }
+
+    static int sprayBurstsFor(SpringStrength strength) {
+        return strength == SpringStrength.HEAVY ? HEAVY_SPRAY_BURSTS : LARGE_SPRAY_BURSTS;
+    }
+
+    static int upperSprayAmount() {
+        return UPPER_SPRAY_AMOUNT;
+    }
+
+    static int lowerSprayAmount() {
+        return LOWER_SPRAY_AMOUNT;
     }
 
     public record LocatedVent(BlockPos springPos, BlockPos mouthPos, int distanceSq, SpringStrength strength) {

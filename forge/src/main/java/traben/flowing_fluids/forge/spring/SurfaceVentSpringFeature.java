@@ -144,7 +144,7 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
             return false;
         }
 
-        fillVentColumn(level, springPos, mouthPos);
+        fillVentColumn(level, springPos, mouthPos, springBlock.strength());
         level.scheduleTick(springPos, springBlock, springBlock.nextTickDelay(random));
         return true;
     }
@@ -174,7 +174,7 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
                 : ForgeSpringRegistry.FLOOR_SPRING_LARGE.get();
     }
 
-    private void fillVentColumn(WorldGenLevel level, BlockPos springPos, BlockPos mouthPos) {
+    private void fillVentColumn(WorldGenLevel level, BlockPos springPos, BlockPos mouthPos, SpringStrength strength) {
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (int y = springPos.getY() + 1; y <= mouthPos.getY(); y++) {
             cursor.set(springPos.getX(), y, springPos.getZ());
@@ -182,7 +182,7 @@ public class SurfaceVentSpringFeature extends Feature<NoneFeatureConfiguration> 
         }
 
         if (fluid.isSame(Fluids.WATER)) {
-            seedInitialRaisedCrest(level, mouthPos, 3);
+            seedInitialRaisedCrest(level, mouthPos, SurfaceVentLocator.crestHeightFor(strength));
         }
     }
 

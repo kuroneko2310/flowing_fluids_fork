@@ -733,6 +733,7 @@ public class FFCommands {
                 + "\n- Nether lava springs use their own multiplier, so you can tune them separately from the overworld"
                 + "\n- Large lava lakes now boost lava spring count and make stronger vents more likely"
                 + "\n- Capped pressure head keeps upward springs filled right under a stopper block so they can spill sideways instead of relaxing into a short pulse"
+                + "\n- Water springs create water from their own source strength and never consume nearby connected water as fuel"
                 + "\nUse `/flowing_fluids settings springs random_breakage on|off` or `random_breakage_chance <value>` to tune collapse mode."
                 + "\nUse `/flowing_fluids settings springs overworld_spawn_multiplier <value>` and `nether_spawn_multiplier <value>` to split overworld vs nether generation."
                 + "\nUse `/flowing_fluids settings springs deep_lava_spawn_multiplier <value>` to make lava springs rarer or more common."
@@ -2214,7 +2215,7 @@ public class FFCommands {
                         a -> FlowingFluids.config.enableCappedSpringPressureHead = a,
                         () -> FlowingFluids.config.enableCappedSpringPressureHead))
                 .then(floatCommand("water_emission_multiplier",
-                        "Scales how much water each spring pulse tries to push out after its normal strength and seep bonuses are calculated. Higher values spread harder.",
+                        "Scales how much water each spring pulse creates from its own source strength. Higher values spread harder without consuming nearby water.",
                         "multiplier", 0.25f, 4.0f,
                         a -> FlowingFluids.config.waterSpringEmissionMultiplier = a,
                         () -> FlowingFluids.config.waterSpringEmissionMultiplier))

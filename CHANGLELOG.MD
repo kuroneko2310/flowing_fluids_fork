@@ -5,6 +5,7 @@
 - widened the lightweight step-down outlet probe default from 1 to 3 blocks while keeping the main slope search capped by existing flow-distance and workload limits
 - stabilized ItemPhysic item buoyancy in effective Flowing Fluids water so floating items do not keep a lingering downward velocity and dip back under while rising
 - removed nearby-water feedback from water spring emission so springs no longer amplify themselves by reading the surrounding pool as fuel
+- clarified water spring behavior as source-fed generation, retired the old nearby-water feedback helpers, and kept surface vent fountains strong with strength-based crests and partial side spray
 
 1.0.5
 - added fractional fluid tick delays for water and lava, including 0.5 tick style substeps and 1.5 tick average scheduling
