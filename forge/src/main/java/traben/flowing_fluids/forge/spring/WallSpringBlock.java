@@ -150,10 +150,7 @@ public class WallSpringBlock extends Block implements SimpleWaterloggedBlock {
         }
 
         int emitted = strength.emissionAmount();
-        if (sourceFluid.isSame(Fluids.WATER)) {
-            emitted += WaterSpringActivity.additionalEmission(level, pos, outputPos, outputDirection, strength);
-            emitted += WaterSpringActivity.burstEmission(level, pos, outputPos, outputDirection, strength, random);
-        } else if (sourceFluid.isSame(Fluids.LAVA)) {
+        if (sourceFluid.isSame(Fluids.LAVA)) {
             emitted += LavaSpringActivity.additionalEmission(level, pos, outputPos, outputDirection, strength);
             emitted += LavaSpringActivity.burstEmission(level, pos, outputPos, outputDirection, strength, random);
             emitted += NetherLavaEventSystem.getSpringEmissionBonus(level, pos, outputDirection, sourceFluid);

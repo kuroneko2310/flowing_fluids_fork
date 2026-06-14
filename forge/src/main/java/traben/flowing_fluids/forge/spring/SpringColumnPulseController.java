@@ -56,10 +56,7 @@ final class SpringColumnPulseController {
         if (realizedHeight > 0) {
             BlockPos tipPos = springPos.relative(growthDirection, realizedHeight);
             int emitted = strength.emissionAmount();
-            if (fluid.isSame(Fluids.WATER)) {
-                emitted += WaterSpringActivity.additionalEmission(level, springPos, tipPos, growthDirection, strength);
-                emitted += WaterSpringActivity.burstEmission(level, springPos, tipPos, growthDirection, strength, level.random);
-            } else if (fluid.isSame(Fluids.LAVA)) {
+            if (fluid.isSame(Fluids.LAVA)) {
                 emitted += LavaSpringActivity.additionalEmission(level, springPos, tipPos, growthDirection, strength);
                 emitted += LavaSpringActivity.burstEmission(level, springPos, tipPos, growthDirection, strength, level.random);
                 emitted += NetherLavaEventSystem.getSpringEmissionBonus(level, springPos, growthDirection, fluid);
@@ -69,9 +66,6 @@ final class SpringColumnPulseController {
             int remainder = SpringFluidEmitter.emitFluid(level, tipPos, emitted, fluid, growthDirection);
             if (remainder < emitted) {
                 AdaptiveTickScheduler.scheduleFluidTick(level, tipPos, fluid, fluid.getTickDelay(level));
-                if (fluid.isSame(Fluids.WATER)) {
-                    WaterSpringActivity.applySurfaceSplash(level, springPos, tipPos, growthDirection, strength, level.random);
-                }
                 if (fluid.isSame(Fluids.LAVA)) {
                     LavaSpringActivity.applyHazards(level, springPos, tipPos, growthDirection, strength, level.random);
                 }

@@ -55,6 +55,12 @@ class SpringSourcePreservationTest {
     }
 
     @Test
+    void waterSpringsDoNotUseNearbyWaterAsEmissionFeedback() throws IOException {
+        assertWaterSpringEmissionIsBaseOnly("SpringColumnPulseController.java");
+        assertWaterSpringEmissionIsBaseOnly("WallSpringBlock.java");
+    }
+
+    @Test
     void sharedFluidWritesCannotTreatSpringSourcesAsVirtualFluidCells() throws IOException {
         String source = Files.readString(sharedSourcePath("common/src/main/java/traben/flowing_fluids/FFFluidUtils.java"));
         String support = methodBody(source, "public static boolean supportsVirtualFluidState");
@@ -99,6 +105,16 @@ class SpringSourcePreservationTest {
                 fileName + " should repair old waterlogged source states during spring ticks.");
         assertFalse(getFluidState.contains("WATERLOGGED") && getFluidState.contains("Fluids.WATER"),
                 fileName + " should not expose the source block itself as a water fluid cell.");
+    }
+
+    private static void assertWaterSpringEmissionIsBaseOnly(String fileName) throws IOException {
+        String source = Files.readString(springSourcePath(fileName));
+        assertFalse(source.contains("WaterSpringActivity.additionalEmission"),
+                fileName + " should not boost water spring output from nearby connected water.");
+        assertFalse(source.contains("WaterSpringActivity.burstEmission"),
+                fileName + " should not burst water spring output from nearby connected water.");
+        assertFalse(source.contains("WaterSpringActivity.applySurfaceSplash"),
+                fileName + " should not create extra splash water from nearby connected water.");
     }
 
     private static String methodBody(String source, String signature) {

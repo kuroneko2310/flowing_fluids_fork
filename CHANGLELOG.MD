@@ -4,6 +4,7 @@
 - improved connected water slope-search responsiveness so active fronts, pressure-fed water, inlet zones, partial broad surfaces, and nearby short outlets keep enough flow distance to move instead of leaving water stranded behind terrain steps
 - widened the lightweight step-down outlet probe default from 1 to 3 blocks while keeping the main slope search capped by existing flow-distance and workload limits
 - stabilized ItemPhysic item buoyancy in effective Flowing Fluids water so floating items do not keep a lingering downward velocity and dip back under while rising
+- removed nearby-water feedback from water spring emission so springs no longer amplify themselves by reading the surrounding pool as fuel
 
 1.0.5
 - added fractional fluid tick delays for water and lava, including 0.5 tick style substeps and 1.5 tick average scheduling
