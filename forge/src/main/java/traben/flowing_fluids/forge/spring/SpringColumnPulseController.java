@@ -33,7 +33,7 @@ final class SpringColumnPulseController {
             BlockPos currentPos = springPos.relative(growthDirection, offset);
             BlockState currentState = level.getBlockState(currentPos);
             FluidState currentFluid = FFFluidUtils.getEffectiveFluidState(level, currentPos, currentState);
-            boolean canOccupy = SpringFluidEmitter.canEmitInto(level, currentState, currentFluid, fluid);
+            boolean canOccupy = SpringFluidEmitter.canEmitInto(currentState, currentFluid, fluid);
 
             if (offset <= targetHeight && canOccupy) {
                 FFFluidUtils.setFluidStateAtPosToNewAmount(level, currentPos, fluid, 8);
@@ -165,7 +165,7 @@ final class SpringColumnPulseController {
             cursor.set(springPos.getX(), springPos.getY() + offset, springPos.getZ());
             BlockState state = level.getBlockState(cursor);
             FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
-            if (!SpringFluidEmitter.canEmitInto(level, state, fluidState, fluid)
+            if (!SpringFluidEmitter.canEmitInto(state, fluidState, fluid)
                     || !isEnclosedPressureShaftCell(level, cursor, fluid)) {
                 return offset == 1 ? 0 : offset - 1;
             }
@@ -186,7 +186,7 @@ final class SpringColumnPulseController {
             cursor.set(springPos.getX(), springPos.getY() + offset, springPos.getZ());
             BlockState state = level.getBlockState(cursor);
             FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
-            if (!SpringFluidEmitter.canEmitInto(level, state, fluidState, fluid)) {
+            if (!SpringFluidEmitter.canEmitInto(state, fluidState, fluid)) {
                 // Keep a capped shaft pressurized right up to the stopper block so springs
                 // can build a head and spill sideways instead of falling back to a tiny pulse.
                 return highestReachable;
@@ -218,7 +218,7 @@ final class SpringColumnPulseController {
             if (neighborFluid.getType().isSame(fluid) && neighborFluid.getAmount() > 0) {
                 continue;
             }
-            if (!SpringFluidEmitter.canEmitInto(level, neighborState, neighborFluid, fluid)) {
+            if (!SpringFluidEmitter.canEmitInto(neighborState, neighborFluid, fluid)) {
                 enclosedSides++;
             }
         }

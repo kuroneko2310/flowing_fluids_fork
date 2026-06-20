@@ -144,7 +144,7 @@ public class WallSpringBlock extends Block implements SimpleWaterloggedBlock {
         FluidState outputFluid = FFFluidUtils.getEffectiveFluidState(level, outputPos, outputState);
         int baseDelay = nextTickDelay(random);
 
-        if (!SpringFluidEmitter.canEmitInto(level, outputState, outputFluid, sourceFluid)) {
+        if (!SpringFluidEmitter.canEmitInto(outputState, outputFluid, sourceFluid)) {
             SpringTickScheduler.schedule(level, pos, this, Math.max(strength.minimumDelay() * 4, baseDelay * 2));
             return;
         }

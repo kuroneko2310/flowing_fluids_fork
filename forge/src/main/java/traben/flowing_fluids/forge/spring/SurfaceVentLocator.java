@@ -84,8 +84,8 @@ public final class SurfaceVentLocator {
             cursor.set(springPos.getX(), y, springPos.getZ());
             BlockState state = level.getBlockState(cursor);
             FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
-            if (!SpringFluidEmitter.canEmitInto(level, state, fluidState, fluid)) {
-                break;
+            if (!SpringFluidEmitter.canEmitInto(state, fluidState, fluid)) {
+                return;
             }
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, cursor, fluid, 8);
             AdaptiveTickScheduler.scheduleFluidTick(level, cursor, fluid, fluid.getTickDelay(level));
@@ -103,7 +103,7 @@ public final class SurfaceVentLocator {
             BlockPos crestPos = mouthPos.above(offset);
             BlockState crestState = level.getBlockState(crestPos);
             FluidState crestFluid = FFFluidUtils.getEffectiveFluidState(level, crestPos, crestState);
-            if (!SpringFluidEmitter.canEmitInto(level, crestState, crestFluid, fluid)) {
+            if (!SpringFluidEmitter.canEmitInto(crestState, crestFluid, fluid)) {
                 break;
             }
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, crestPos, fluid, 8);
@@ -189,7 +189,7 @@ public final class SurfaceVentLocator {
     private static void emitSprayCell(ServerLevel level, BlockPos targetPos, FlowingFluid fluid, int amount) {
         BlockState targetState = level.getBlockState(targetPos);
         FluidState targetFluid = FFFluidUtils.getEffectiveFluidState(level, targetPos, targetState);
-        if (!SpringFluidEmitter.canEmitInto(level, targetState, targetFluid, fluid)) {
+        if (!SpringFluidEmitter.canEmitInto(targetState, targetFluid, fluid)) {
             return;
         }
         int newAmount = targetFluid.getType().isSame(fluid)
@@ -239,13 +239,7 @@ public final class SurfaceVentLocator {
             cursor.set(springPos.getX(), springPos.getY() + offset, springPos.getZ());
             BlockState state = level.getBlockState(cursor);
             FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
-            if (!fluidState.isEmpty() && !fluidState.getType().isSame(fluid)) {
-                return false;
-            }
-            if (fluidState.getType().isSame(fluid)) {
-                continue;
-            }
-            if (!state.isAir() && !state.canBeReplaced(fluid)) {
+            if (!SpringFluidEmitter.canEmitInto(state, fluidState, fluid)) {
                 return false;
             }
         }
@@ -276,10 +270,7 @@ public final class SurfaceVentLocator {
     private static boolean isOpenMouth(LevelAccessor level, BlockPos mouthPos, FlowingFluid fluid) {
         BlockState mouthState = level.getBlockState(mouthPos);
         FluidState mouthFluid = FFFluidUtils.getEffectiveFluidState(level, mouthPos, mouthState);
-        if (!mouthFluid.isEmpty() && !mouthFluid.getType().isSame(fluid)) {
-            return false;
-        }
-        return mouthFluid.getType().isSame(fluid) || mouthState.isAir() || mouthState.canBeReplaced(fluid);
+        return SpringFluidEmitter.canEmitInto(mouthState, mouthFluid, fluid);
     }
 
     private static int squaredHorizontalDistance(BlockPos a, BlockPos b) {

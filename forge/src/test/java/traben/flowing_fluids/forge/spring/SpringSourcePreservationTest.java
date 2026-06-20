@@ -74,6 +74,26 @@ class SpringSourcePreservationTest {
                 "Spring emission must not remove water from the output pool.");
         assertFalse(source.contains("removeAllFluidAtPos"),
                 "Spring emission must not delete existing water cells.");
+        assertFalse(source.contains("supportsVirtualFluidState"),
+                "Virtual or waterloggable solid cells must block direct spring emission.");
+        assertTrue(source.contains("state.isAir() || state.liquid() || state.canBeReplaced(fluid)"),
+                "Spring emission should only cross genuinely open or fluid cells.");
+        assertTrue(source.contains("if (!canEmitInto(outputState, outputFluid, sourceFluid))"),
+                "Every direct emitter call must revalidate the output cell before writing fluid.");
+    }
+
+    @Test
+    void surfaceVentsStopCompletelyWhenTheirShaftIsBlocked() throws IOException {
+        String source = Files.readString(springSourcePath("SurfaceVentLocator.java"));
+        String sustain = methodBody(source, "public static void sustainSurfaceVent");
+        String shaft = methodBody(source, "private static boolean hasPassableShaft");
+
+        assertTrue(sustain.contains("if (!SpringFluidEmitter.canEmitInto"),
+                "Surface vents must revalidate every shaft cell while sustaining water.");
+        assertTrue(sustain.contains("return;"),
+                "A blocked shaft must stop before crest or spray generation above the blocker.");
+        assertTrue(shaft.contains("SpringFluidEmitter.canEmitInto"),
+                "Surface vent discovery must use the same strict spring obstruction rule.");
     }
 
     @Test

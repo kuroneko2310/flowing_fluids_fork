@@ -13,24 +13,26 @@ final class SpringFluidEmitter {
     private SpringFluidEmitter() {
     }
 
-    static boolean canEmitInto(ServerLevel level, BlockState outputState, FluidState outputFluid, FlowingFluid sourceFluid) {
-        if (outputFluid.getType().isSame(Fluids.WATER)) {
-            return sourceFluid.isSame(Fluids.WATER);
-        }
+    static boolean canEmitInto(BlockState outputState, FluidState outputFluid, FlowingFluid sourceFluid) {
         if (outputFluid.getType().isSame(sourceFluid)) {
-            return true;
+            return isOpenEmissionCell(outputState, sourceFluid);
         }
         if (!outputFluid.isEmpty()) {
             return false;
         }
-        return outputState.isAir()
-                || outputState.canBeReplaced(sourceFluid)
-                || (sourceFluid.isSame(Fluids.WATER) && FFFluidUtils.supportsVirtualFluidState(level, outputState));
+        return isOpenEmissionCell(outputState, sourceFluid);
+    }
+
+    private static boolean isOpenEmissionCell(BlockState state, FlowingFluid fluid) {
+        return state.isAir() || state.liquid() || state.canBeReplaced(fluid);
     }
 
     static int emitFluid(ServerLevel level, BlockPos outputPos, int emitted, FlowingFluid sourceFluid, Direction growthDirection) {
         BlockState outputState = level.getBlockState(outputPos);
         FluidState outputFluid = FFFluidUtils.getEffectiveFluidState(level, outputPos, outputState);
+        if (!canEmitInto(outputState, outputFluid, sourceFluid)) {
+            return emitted;
+        }
         // Upward springs should keep pushing through a filled shaft so the water head can
         // rise above the current top cell instead of stalling at the first full block.
         boolean allowUpwardSpread = growthDirection == Direction.UP
