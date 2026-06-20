@@ -3,8 +3,10 @@ package traben.flowing_fluids;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import org.jetbrains.annotations.Nullable;
 import traben.flowing_fluids.optimization.WaterFlowProfile;
 
@@ -12,6 +14,7 @@ public final class FFSectionSampleContext {
     private Level level;
     private FluidSectionDataCache cache;
     private final Long2ObjectOpenHashMap<CachedWaterProfile> waterProfiles = new Long2ObjectOpenHashMap<>();
+    private final Long2ObjectOpenHashMap<CellSnapshot> cells = new Long2ObjectOpenHashMap<>();
     private int sampleReads;
     private long gameTime = Long.MIN_VALUE;
     private long lastProfilePos = Long.MIN_VALUE;
@@ -24,6 +27,7 @@ public final class FFSectionSampleContext {
         this.cache = null;
         this.sampleReads = 0;
         this.waterProfiles.clear();
+        this.cells.clear();
         this.gameTime = level == null ? Long.MIN_VALUE : level.getGameTime();
         clearLastProfile();
     }
@@ -42,6 +46,7 @@ public final class FFSectionSampleContext {
             this.cache = null;
             this.sampleReads = 0;
             this.waterProfiles.clear();
+            this.cells.clear();
             this.gameTime = currentGameTime;
             clearLastProfile();
         }
@@ -58,6 +63,58 @@ public final class FFSectionSampleContext {
         }
         cache = new FluidSectionDataCache(level, 8);
         return cache;
+    }
+
+    public CellSnapshot cell(Level level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return CellSnapshot.EMPTY;
+        }
+        ensureFresh(level);
+        long key = pos.asLong();
+        CellSnapshot cached = cells.get(key);
+        if (cached != null) {
+            return cached;
+        }
+
+        BlockState blockState = level.getBlockState(pos);
+        FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, pos, blockState);
+        int internalAmount = 0;
+        if (!fluidState.isEmpty()) {
+            internalAmount = FluidSpatialGrid.getFluidAmount(level, pos);
+            if (internalAmount <= 0) {
+                internalAmount = FluidAmountConverter.toInternal(fluidState.getAmount());
+            }
+        }
+        CellSnapshot snapshot = new CellSnapshot(blockState, fluidState, internalAmount);
+        cells.put(key, snapshot);
+        return snapshot;
+    }
+
+    public boolean hasSectionCache(Level level) {
+        ensureFresh(level);
+        return cache != null;
+    }
+
+    public boolean hasCell(Level level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        ensureFresh(level);
+        return cells.containsKey(pos.asLong());
+    }
+
+    public int fluidAmountIfSame(Level level, BlockPos pos, Fluid fluid, int sampleThreshold) {
+        if (level == null || pos == null || fluid == null) {
+            return 0;
+        }
+        FluidSectionDataCache sectionCache = sampleCache(level, sampleThreshold);
+        if (sectionCache != null) {
+            return sectionCache.amountIfFluid(pos, fluid);
+        }
+        CellSnapshot snapshot = cell(level, pos);
+        return snapshot.fluidState().getType().isSame(fluid)
+                ? snapshot.fluidState().getAmount()
+                : 0;
     }
 
     public WaterFlowProfile waterProfile(Level level, BlockPos pos, FluidState fluidState, int amount) {
@@ -103,6 +160,11 @@ public final class FFSectionSampleContext {
                 }
             }
         }
+        for (BlockPos pos : positions) {
+            if (pos != null) {
+                cells.remove(pos.asLong());
+            }
+        }
         waterProfiles.clear();
         clearLastProfile();
     }
@@ -118,6 +180,10 @@ public final class FFSectionSampleContext {
         return shouldBuildSectionCache(sampleReads, sampleThreshold);
     }
 
+    public record CellSnapshot(BlockState blockState, FluidState fluidState, int internalAmount) {
+        private static final CellSnapshot EMPTY = new CellSnapshot(null, Fluids.EMPTY.defaultFluidState(), 0);
+    }
+
     private record CachedWaterProfile(Fluid fluid, int amount, WaterFlowProfile profile) {
     }
 
@@ -126,6 +192,7 @@ public final class FFSectionSampleContext {
         this.cache = null;
         this.sampleReads = 0;
         this.waterProfiles.clear();
+        this.cells.clear();
         this.gameTime = Long.MIN_VALUE;
         clearLastProfile();
     }

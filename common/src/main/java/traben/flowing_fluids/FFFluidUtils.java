@@ -251,7 +251,7 @@ public class FFFluidUtils {
         context.reset(null);
     }
 
-    private static void runWithBulkFluidChanges(LevelAccessor levelAccessor, Runnable action) {
+    static void runWithBulkFluidChanges(LevelAccessor levelAccessor, Runnable action) {
         boolean batching = beginBulkFluidChanges(levelAccessor);
         try {
             action.run();
@@ -2134,14 +2134,23 @@ public class FFFluidUtils {
                 return Pair.of(amountToPlace, null);
             }
 
-            return Pair.of(unplaced, () -> runWithBulkFluidChanges(levelAccessor, () -> {
-                BlockPos.MutableBlockPos applyPos = new BlockPos.MutableBlockPos();
+            return Pair.of(unplaced, () -> {
+                FluidMutationBatch mutationBatch = new FluidMutationBatch(levelAccessor);
                 for (int i = 0; i < count; i++) {
-                    long key = positions[i];
-                    applyPos.set(BlockPos.getX(key), BlockPos.getY(key), BlockPos.getZ(key));
-                    FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, applyPos, fluid, finalLevels[i]);
+                    mutationBatch.set(BlockPos.of(positions[i]), fluid, currentLevels[i], finalLevels[i]);
                 }
-            }));
+                FluidMutationBatch.ApplyResult result = mutationBatch.apply();
+                if (!result.applied() && !result.writesStarted()) {
+                    runWithBulkFluidChanges(levelAccessor, () -> {
+                        BlockPos.MutableBlockPos applyPos = new BlockPos.MutableBlockPos();
+                        for (int i = 0; i < count; i++) {
+                            long key = positions[i];
+                            applyPos.set(BlockPos.getX(key), BlockPos.getY(key), BlockPos.getZ(key));
+                            FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, applyPos, fluid, finalLevels[i]);
+                        }
+                    });
+                }
+            });
         }
         return Pair.of(amountToPlace, null);
     }

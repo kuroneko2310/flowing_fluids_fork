@@ -46,6 +46,7 @@ import traben.flowing_fluids.FFFlowDownResult;
 import traben.flowing_fluids.FFHorizontalFlowTarget;
 import traben.flowing_fluids.FFSectionSampleContext;
 import traben.flowing_fluids.FluidAmountConverter;
+import traben.flowing_fluids.FluidMutationBatch;
 import traben.flowing_fluids.FluidRegressionLogic;
 import traben.flowing_fluids.FluidSectionDataCache;
 import traben.flowing_fluids.FluidTickBuffer;
@@ -134,13 +135,6 @@ public abstract class MixinFlowingFluid extends Fluid {
     private static final ThreadLocal<int[]> ff$SPREAD_AMOUNT_BUFFER =
             ThreadLocal.withInitial(() -> new int[4]);
 
-    @Unique
-    private static final ThreadLocal<Long2IntOpenHashMap> ff$WATER_AMOUNT_CACHE =
-            ThreadLocal.withInitial(() -> {
-                Long2IntOpenHashMap cache = new Long2IntOpenHashMap();
-                cache.defaultReturnValue(Integer.MIN_VALUE);
-                return cache;
-            });
 
     @Unique
     private static final ThreadLocal<Long2IntOpenHashMap> ff$CONNECTED_HEAD_CACHE =
@@ -187,10 +181,6 @@ public abstract class MixinFlowingFluid extends Fluid {
         return cache;
     }
 
-    @Unique
-    private static Long2IntOpenHashMap ff$getWaterAmountCache() {
-        return ff$WATER_AMOUNT_CACHE.get();
-    }
 
     @Unique
     private static Long2IntOpenHashMap ff$getConnectedHeadCache() {
@@ -405,7 +395,6 @@ public abstract class MixinFlowingFluid extends Fluid {
             }
 
             FlowingFluids.setManeuveringFluids(true);
-            ff$getWaterAmountCache().clear();
             ff$getConnectedHeadCache().clear();
             ff$getSectionSampleContext().begin(level);
 
@@ -503,9 +492,10 @@ public abstract class MixinFlowingFluid extends Fluid {
                 }
 
                 BlockPos posDown = blockPos.below();
+                FFSectionSampleContext.CellSnapshot downCell = ff$getSectionSampleContext().cell(level, posDown);
                 // check if we can flow down and if so how much fluid remains out of the 8 total possible
-                FFFlowDownResult flowDownResult = flowing_fluids$checkAndFlowDown(level, blockPos, fluidState, thisState, posDown,
-                        level.getBlockState(posDown), fluidState.getAmount());
+                FFFlowDownResult flowDownResult = flowing_fluids$checkAndFlowDown(level, blockPos, fluidState, thisState,
+                        posDown, downCell.blockState(), downCell.fluidState(), fluidState.getAmount());
 
                 int remainingAmount = flowDownResult.remainingAmount();
 
@@ -521,8 +511,9 @@ public abstract class MixinFlowingFluid extends Fluid {
                 // This optimization detects common patterns and skips expensive slope calculations
                 if (fluidState.getAmount() == 8 && thisState.liquid()) {
                     BlockPos abovePos = blockPos.above();
-                    var above = level.getBlockState(abovePos);
-                    var aboveF = FFFluidUtils.getEffectiveFluidState(level, abovePos, above);
+                    FFSectionSampleContext.CellSnapshot aboveCell = ff$getSectionSampleContext().cell(level, abovePos);
+                    BlockState above = aboveCell.blockState();
+                    FluidState aboveF = aboveCell.fluidState();
                     if (aboveF.getType() instanceof FlowingFluid) {
                         int aboveAmount = aboveF.getAmount();
                         if (aboveAmount >= 8){
@@ -546,7 +537,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                     boolean hasFluidAbove = false;
                     BlockPos abovePos = blockPos.above();
                     for (int i = 0; i < 3; i++) { // Check up to 3 blocks above
-                        var aboveState = FFFluidUtils.getEffectiveFluidState(level, abovePos);
+                        FluidState aboveState = ff$getSectionSampleContext().cell(level, abovePos).fluidState();
                         if (aboveState.getType().isSame(this) && aboveState.getAmount() == 8) {
                             hasFluidAbove = true;
                             break;
@@ -558,8 +549,8 @@ public abstract class MixinFlowingFluid extends Fluid {
                         // We're in a vertical column - check if all horizontal neighbors are also full
                         boolean allNeighborsFull = true;
                         for (Direction dir : Direction.Plane.HORIZONTAL) {
-                            var neighborPos = blockPos.relative(dir);
-                            var neighborFluid = FFFluidUtils.getEffectiveFluidState(level, neighborPos);
+                            BlockPos neighborPos = blockPos.relative(dir);
+                            FluidState neighborFluid = ff$getSectionSampleContext().cell(level, neighborPos).fluidState();
                             if (!neighborFluid.getType().isSame(this) || neighborFluid.getAmount() < 8) {
                                 allNeighborsFull = false;
                                 break;
@@ -671,7 +662,6 @@ public abstract class MixinFlowingFluid extends Fluid {
                 }
 
                 ff$getSectionSampleContext().end();
-                ff$getWaterAmountCache().clear();
                 ff$getConnectedHeadCache().clear();
                 FlowingFluids.setManeuveringFluids(false);
                 FlowingFluids.pistonTick = false;
@@ -906,11 +896,13 @@ public abstract class MixinFlowingFluid extends Fluid {
         }
 
         BlockPos immediatePosDir = blockPos.relative(dir);
-        BlockState immediateStateDir = level.getBlockState(immediatePosDir);
-        FFHorizontalFlowTarget lateralTarget = flowing_fluids$resolveHorizontalFlowTarget(level, immediatePosDir, immediateStateDir, dir);
+        FFSectionSampleContext.CellSnapshot immediateCell = ff$getSectionSampleContext().cell(level, immediatePosDir);
+        BlockState immediateStateDir = immediateCell.blockState();
+        FFHorizontalFlowTarget lateralTarget = flowing_fluids$resolveHorizontalFlowTarget(
+                level, immediatePosDir, immediateStateDir, immediateCell.fluidState(), dir);
         BlockPos posDir = immediatePosDir;
         BlockState stateDir = immediateStateDir;
-        FluidState lateralFluid = FFFluidUtils.getEffectiveFluidState(level, posDir, stateDir);
+        FluidState lateralFluid = immediateCell.fluidState();
         if (lateralTarget.skippedPassThrough()
                 && flowing_fluids$canUseHorizontalPassThroughTarget(level, blockPos, thisState, dir,
                 fluidState.getType(), amount, immediatePosDir, immediateStateDir, lateralTarget)) {
@@ -1122,11 +1114,13 @@ public abstract class MixinFlowingFluid extends Fluid {
         }
 
         BlockPos immediatePosDir = blockPos.relative(dir);
-        BlockState immediateStateDir = level.getBlockState(immediatePosDir);
-        FFHorizontalFlowTarget lateralTarget = flowing_fluids$resolveHorizontalFlowTarget(level, immediatePosDir, immediateStateDir, dir);
+        FFSectionSampleContext.CellSnapshot immediateCell = ff$getSectionSampleContext().cell(level, immediatePosDir);
+        BlockState immediateStateDir = immediateCell.blockState();
+        FFHorizontalFlowTarget lateralTarget = flowing_fluids$resolveHorizontalFlowTarget(
+                level, immediatePosDir, immediateStateDir, immediateCell.fluidState(), dir);
         BlockPos posDir = immediatePosDir;
         BlockState stateDir = immediateStateDir;
-        FluidState lateralFluid = FFFluidUtils.getEffectiveFluidState(level, posDir, stateDir);
+        FluidState lateralFluid = immediateCell.fluidState();
         if (lateralTarget.skippedPassThrough()
                 && flowing_fluids$canUseHorizontalPassThroughTarget(level, blockPos, thisState, dir,
                 fluidState.getType(), amount, immediatePosDir, immediateStateDir, lateralTarget)) {
@@ -1236,9 +1230,14 @@ public abstract class MixinFlowingFluid extends Fluid {
         flowing_fluids$updateStablePoolTracking(level, blockPos, fluidState, fromAmount, !changed);
         flowing_fluids$updateStablePoolTracking(level, posDir, fluidState, toAmount, !changed);
 
-        FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, fluidState.getType(), fromAmount);
-        FFFluidUtils.setFluidStateAtPosToNewAmount(level, posDir, fluidState.getType(), toAmount);
+        FluidMutationBatch.ApplyResult mutationResult = new FluidMutationBatch(level)
+                .transfer(blockPos, amount, fromAmount, posDir, destFluidAmount, toAmount, fluidState.getType())
+                .apply();
         flowing_fluids$invalidateFluidSampleCaches(blockPos, immediatePosDir, posDir);
+        if (!mutationResult.applied()) {
+            AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, 1);
+            return;
+        }
         if (fluidState.is(FluidTags.WATER) && FlowingFluids.config.flowInertiaStrength > 0f) {
             if (changed) {
                 int moved = Math.max(0, amount - fromAmount);
@@ -1289,8 +1288,9 @@ public abstract class MixinFlowingFluid extends Fluid {
 
         for (Direction dir : FFFluidUtils.getCardinalsShuffle(level.random)) {
             sidePos.setWithOffset(origin, dir);
-            BlockState sideState = level.getBlockState(sidePos);
-            FluidState sideFluid = FFFluidUtils.getEffectiveFluidState(level, sidePos, sideState);
+            FFSectionSampleContext.CellSnapshot sideCell = ff$getSectionSampleContext().cell(level, sidePos);
+            BlockState sideState = sideCell.blockState();
+            FluidState sideFluid = sideCell.fluidState();
             if (!sideFluid.isEmpty()) {
                 continue;
             }
@@ -1300,8 +1300,9 @@ public abstract class MixinFlowingFluid extends Fluid {
             }
 
             belowPos.set(sidePos).move(Direction.DOWN);
-            BlockState belowState = level.getBlockState(belowPos);
-            FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
+            FFSectionSampleContext.CellSnapshot belowCell = ff$getSectionSampleContext().cell(level, belowPos);
+            BlockState belowState = belowCell.blockState();
+            FluidState belowFluid = belowCell.fluidState();
             if (!flowing_fluids$canSpreadToOptionallySameOrEmpty(sourceFluid, 8, level, sidePos, sideState,
                     Direction.DOWN, belowPos, belowState, belowFluid, true)) {
                 continue;
@@ -1323,8 +1324,9 @@ public abstract class MixinFlowingFluid extends Fluid {
 
 
     @Unique
-    private FFFlowDownResult flowing_fluids$checkAndFlowDown(final Level level, final BlockPos blockPos, final FluidState fluidState, final BlockState thisState, final BlockPos posDown, final BlockState stateDown, int amount) {
-        FFDownwardFlowTarget downwardTarget = flowing_fluids$resolveDownwardFlowTarget(level, posDown, stateDown, fluidState.getType());
+    private FFFlowDownResult flowing_fluids$checkAndFlowDown(final Level level, final BlockPos blockPos, final FluidState fluidState, final BlockState thisState, final BlockPos posDown, final BlockState stateDown, final FluidState fluidDownState, int amount) {
+        FFDownwardFlowTarget downwardTarget = flowing_fluids$resolveDownwardFlowTarget(
+                level, posDown, stateDown, fluidDownState, fluidState.getType());
         BlockPos actualPosDown = downwardTarget.targetPos();
         BlockState actualStateDown = downwardTarget.targetState();
         FluidState downFState = downwardTarget.targetFluidState();
@@ -1386,6 +1388,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                     // set both amounts
                     flowing_fluids$setOrRemoveWaterAmountAt(level, blockPos, sourceNewAmount, thisState, Direction.DOWN);
                     flowing_fluids$spreadTo2(level, actualPosDown, actualStateDown, Direction.DOWN, destNewAmount);
+                    flowing_fluids$invalidateFluidSampleCaches(blockPos, posDown, actualPosDown);
                     return new FFFlowDownResult(sourceNewAmount, retainedMinimum, skipHorizontalSpread);
                 }
             }
@@ -1397,6 +1400,12 @@ public abstract class MixinFlowingFluid extends Fluid {
     @Unique
     private FFDownwardFlowTarget flowing_fluids$resolveDownwardFlowTarget(Level level, BlockPos posDown, BlockState stateDown, Fluid sourceFluid) {
         FluidState initialFluid = FFFluidUtils.getEffectiveFluidState(level, posDown, stateDown);
+        return flowing_fluids$resolveDownwardFlowTarget(level, posDown, stateDown, initialFluid, sourceFluid);
+    }
+
+    @Unique
+    private FFDownwardFlowTarget flowing_fluids$resolveDownwardFlowTarget(Level level, BlockPos posDown, BlockState stateDown,
+                                                                          FluidState initialFluid, Fluid sourceFluid) {
         if (!FFFluidUtils.isPassThroughFluidBlock(level, stateDown, Direction.DOWN) || !initialFluid.isEmpty()) {
             return new FFDownwardFlowTarget(posDown, stateDown, initialFluid, posDown, stateDown, false);
         }
@@ -1444,6 +1453,12 @@ public abstract class MixinFlowingFluid extends Fluid {
     @Unique
     private FFHorizontalFlowTarget flowing_fluids$resolveHorizontalFlowTarget(Level level, BlockPos posSide, BlockState stateSide, Direction direction) {
         FluidState initialFluid = FFFluidUtils.getEffectiveFluidState(level, posSide, stateSide);
+        return flowing_fluids$resolveHorizontalFlowTarget(level, posSide, stateSide, initialFluid, direction);
+    }
+
+    @Unique
+    private FFHorizontalFlowTarget flowing_fluids$resolveHorizontalFlowTarget(Level level, BlockPos posSide, BlockState stateSide,
+                                                                               FluidState initialFluid, Direction direction) {
         if (!direction.getAxis().isHorizontal()
                 || !FFFluidUtils.isPassThroughFluidBlock(level, stateSide, direction)
                 || !initialFluid.isEmpty()) {
@@ -2882,15 +2897,7 @@ public abstract class MixinFlowingFluid extends Fluid {
 
     @Unique
     private void flowing_fluids$invalidateFluidSampleCaches(BlockPos... positions) {
-        Long2IntOpenHashMap waterCache = ff$getWaterAmountCache();
         ff$getSectionSampleContext().invalidate(positions);
-        for (BlockPos pos : positions) {
-            if (pos == null) {
-                continue;
-            }
-            long key = pos.asLong();
-            waterCache.remove(key);
-        }
     }
 
     @Unique
@@ -2984,36 +2991,22 @@ public abstract class MixinFlowingFluid extends Fluid {
 
     @Unique
     private int flowing_fluids$getWaterAmountAt(Level level, BlockPos pos, Fluid sourceFluid) {
-        FluidSectionDataCache sectionCache = ff$getSectionSampleContext().sampleCache(level, ff$SECTION_SAMPLE_THRESHOLD);
-        if (sectionCache != null) {
-            if (FlowingFluids.config.enablePerformanceMonitoring) {
-                FluidPerformanceMonitor.getInstance().recordSpatialGridHit();
-            }
-            return sectionCache.amountIfFluid(pos, sourceFluid);
-        }
-        Long2IntOpenHashMap cache = ff$getWaterAmountCache();
-        long key = pos.asLong();
-        int cached = cache.get(key);
-        if (cached != Integer.MIN_VALUE) {
-            if (FlowingFluids.config.enablePerformanceMonitoring) {
-                FluidPerformanceMonitor.getInstance().recordFastPath();
-            }
-            return cached;
-        }
+        FFSectionSampleContext sampleContext = ff$getSectionSampleContext();
+        boolean sectionCacheHit = sampleContext.hasSectionCache(level);
+        boolean cellCacheHit = !sectionCacheHit && sampleContext.hasCell(level, pos);
+        int amount = sampleContext.fluidAmountIfSame(
+                level, pos, sourceFluid, ff$SECTION_SAMPLE_THRESHOLD);
         if (FlowingFluids.config.enablePerformanceMonitoring) {
-            FluidPerformanceMonitor.getInstance().recordCacheMiss();
+            if (sectionCacheHit || sampleContext.hasSectionCache(level)) {
+                FluidPerformanceMonitor.getInstance().recordSpatialGridHit();
+            } else if (cellCacheHit) {
+                FluidPerformanceMonitor.getInstance().recordFastPath();
+            } else {
+                FluidPerformanceMonitor.getInstance().recordCacheMiss();
+            }
         }
-        BlockState state = level.getBlockState(pos);
-        FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, pos, state);
-        if (fluidState.getType().isSame(sourceFluid)) {
-            int amount = fluidState.getAmount();
-            cache.put(key, amount);
-            return amount;
-        }
-        cache.put(key, 0);
-        return 0;
+        return amount;
     }
-
 
     @Unique
     protected void flowing_fluids$spreadTo2(LevelAccessor levelAccessor, BlockPos blockPos, BlockState blockState, Direction direction, int amount) {
