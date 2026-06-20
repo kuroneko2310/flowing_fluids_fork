@@ -1,6 +1,7 @@
 package traben.flowing_fluids;
 
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -93,9 +94,12 @@ public final class FluidComponentGraph {
             }
         }
 
-        FluidSectionDataCache cache = new FluidSectionDataCache(level, Math.max(16, batch.size() / 4));
+        ComponentSampleCache cache = new ComponentSampleCache(level, Math.max(32, batch.size() * 4));
+        LongOpenHashSet rebuiltCells = new LongOpenHashSet();
         for (long seed : batch) {
-            rebuildLocalComponent(level, graph, seed, cache);
+            if (!rebuiltCells.contains(seed)) {
+                rebuildLocalComponent(level, graph, seed, cache, rebuiltCells);
+            }
         }
         graph.lastProcessedTick = level.getGameTime();
         return batch.size();
@@ -252,11 +256,14 @@ public final class FluidComponentGraph {
         }
     }
 
-    private static void rebuildLocalComponent(Level level, DimensionGraph graph, long seedKey, FluidSectionDataCache cache) {
+    private static void rebuildLocalComponent(Level level, DimensionGraph graph, long seedKey,
+                                              ComponentSampleCache cache, LongOpenHashSet rebuiltCells) {
         BlockPos seedPos = BlockPos.of(seedKey);
-        Fluid seedFluid = cache.fluidType(seedPos);
-        if (seedFluid == null) {
+        ComponentCellSample seed = cache.sample(seedKey);
+        Fluid seedFluid = seed.fluidType();
+        if (!seed.loaded() || seedFluid == null) {
             removeCell(graph, seedKey);
+            rebuiltCells.add(seedKey);
             return;
         }
         int componentId = NEXT_COMPONENT_ID.getAndIncrement();
@@ -276,6 +283,7 @@ public final class FluidComponentGraph {
 
         while (!queue.isEmpty()) {
             long currentKey = queue.dequeueLong();
+            rebuiltCells.add(currentKey);
             if (visited.size() > maxNodes) {
                 partial = true;
                 break;
@@ -283,7 +291,8 @@ public final class FluidComponentGraph {
             int x = BlockPos.getX(currentKey);
             int y = BlockPos.getY(currentKey);
             int z = BlockPos.getZ(currentKey);
-            int amount = cache.internalAmount(x, y, z);
+            ComponentCellSample current = cache.sample(currentKey);
+            int amount = current.internalAmount();
             totalMass += amount;
             minY = Math.min(minY, y);
             maxY = Math.max(maxY, y);
@@ -312,7 +321,7 @@ public final class FluidComponentGraph {
                 if (visited.contains(neighborKey)) {
                     continue;
                 }
-                Fluid neighborFluid = cache.fluidType(nx, ny, nz);
+                Fluid neighborFluid = cache.sample(neighborKey).fluidType();
                 if (neighborFluid != null && neighborFluid.isSame(seedFluid)) {
                     visited.add(neighborKey);
                     queue.enqueue(neighborKey);
@@ -324,35 +333,36 @@ public final class FluidComponentGraph {
             visited.size(), totalMass, frontierCells, outletCells, inletCells, minY, maxY, partial));
     }
 
-    private static CellShape classifyCell(Level level, FluidSectionDataCache cache, int x, int y, int z, Fluid fluid) {
+    private static CellShape classifyCell(Level level, ComponentSampleCache cache, int x, int y, int z, Fluid fluid) {
         boolean frontier = false;
         boolean outlet = false;
         boolean inlet = false;
-        int amount = cache.amount(x, y, z);
+        ComponentCellSample current = cache.sample(BlockPos.asLong(x, y, z));
+        int amount = current.blockAmount();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         BlockPos.MutableBlockPos neighbor = new BlockPos.MutableBlockPos();
         pos.set(x, y, z);
-        BlockState state = level.getBlockState(pos);
-        FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, pos, state);
+        BlockState state = current.blockState();
+        FluidState fluidState = current.fluidState();
 
         for (Direction direction : ALL_DIRECTIONS) {
             int nx = x + direction.getStepX();
             int ny = y + direction.getStepY();
             int nz = z + direction.getStepZ();
-            Fluid neighborFluid = cache.fluidType(nx, ny, nz);
-            int neighborAmount = cache.amount(nx, ny, nz);
+            ComponentCellSample neighborSample = cache.sample(BlockPos.asLong(nx, ny, nz));
+            Fluid neighborFluid = neighborSample.fluidType();
+            int neighborAmount = neighborSample.blockAmount();
             if (neighborFluid != null && neighborFluid.isSame(fluid)) {
                 if (neighborAmount < amount) {
                     frontier = true;
                 }
                 continue;
             }
-            byte flags = cache.flags(nx, ny, nz);
-            if ((flags & FluidSectionDataCache.LOADED) == 0) {
+            if (!neighborSample.loaded()) {
                 frontier = true;
                 continue;
             }
-            if ((flags & FluidSectionDataCache.AIR) != 0 || (flags & FluidSectionDataCache.REPLACEABLE) != 0) {
+            if (neighborSample.air() || neighborSample.replaceable()) {
                 frontier = true;
                 if (direction == Direction.DOWN) {
                     outlet = true;
@@ -364,8 +374,8 @@ public final class FluidComponentGraph {
             }
             if (direction == Direction.DOWN) {
                 neighbor.set(nx, ny, nz);
-                BlockState neighborState = level.getBlockState(neighbor);
-                FluidState neighborStateFluid = FFFluidUtils.getEffectiveFluidState(level, neighbor, neighborState);
+                BlockState neighborState = neighborSample.blockState();
+                FluidState neighborStateFluid = neighborSample.fluidState();
                 if (fluid instanceof net.minecraft.world.level.material.FlowingFluid flowingFluid
                         && FFFluidUtils.canFluidFlowFromPosToDirection(flowingFluid, Math.max(1, fluidState.getAmount()),
                         level, pos, state, direction, neighbor, neighborState, neighborStateFluid)) {
@@ -375,6 +385,61 @@ public final class FluidComponentGraph {
             }
         }
         return new CellShape(frontier, outlet, inlet);
+    }
+
+    private static final class ComponentSampleCache {
+        private static final ComponentCellSample UNLOADED = new ComponentCellSample(
+            false, null, null, null, 0, 0, false, false);
+
+        private final Level level;
+        private final Long2ObjectOpenHashMap<ComponentCellSample> samples;
+        private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+
+        private ComponentSampleCache(Level level, int expectedCells) {
+            this.level = level;
+            this.samples = new Long2ObjectOpenHashMap<>(Math.max(16, expectedCells));
+        }
+
+        private ComponentCellSample sample(long posKey) {
+            ComponentCellSample cached = samples.get(posKey);
+            if (cached != null) {
+                return cached;
+            }
+
+            cursor.set(BlockPos.getX(posKey), BlockPos.getY(posKey), BlockPos.getZ(posKey));
+            if (!level.isLoaded(cursor)) {
+                samples.put(posKey, UNLOADED);
+                return UNLOADED;
+            }
+
+            BlockState blockState = level.getBlockState(cursor);
+            FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, cursor, blockState);
+            Fluid fluidType = fluidState.isEmpty() ? null : fluidState.getType();
+            int blockAmount = fluidState.getAmount();
+            int internalAmount = 0;
+            if (fluidType != null) {
+                internalAmount = FluidSpatialGrid.getFluidAmount(level, cursor);
+                if (internalAmount <= 0) {
+                    internalAmount = FluidAmountConverter.toInternal(blockAmount);
+                }
+            }
+            ComponentCellSample sample = new ComponentCellSample(
+                true,
+                blockState,
+                fluidState,
+                fluidType,
+                blockAmount,
+                internalAmount,
+                blockState.isAir(),
+                blockState.canBeReplaced()
+            );
+            samples.put(posKey, sample);
+            return sample;
+        }
+    }
+
+    private record ComponentCellSample(boolean loaded, BlockState blockState, FluidState fluidState, Fluid fluidType,
+                                       int blockAmount, int internalAmount, boolean air, boolean replaceable) {
     }
 
     private record CellShape(boolean frontier, boolean outlet, boolean inlet) {

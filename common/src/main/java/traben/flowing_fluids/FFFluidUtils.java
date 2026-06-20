@@ -78,11 +78,13 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 
 public class FFFluidUtils {
@@ -100,6 +102,11 @@ public class FFFluidUtils {
     private static final double[] FACE_OPENING_SAMPLES = {0.125D, 0.375D, 0.625D, 0.875D};
     private static final int WATER_SPRING_SURFACE_PROTECTION_HORIZONTAL_RADIUS = 1;
     private static final int WATER_SPRING_SURFACE_PROTECTION_VERTICAL_REACH = 40;
+    private static final String[] OCEAN_BIOME_KEYWORDS = {"ocean", "sea", "gulf", "bay"};
+    private static final String[] RIVER_BIOME_KEYWORDS = {"river", "stream", "creek", "delta"};
+    private static final String[] BEACH_BIOME_KEYWORDS = {"beach", "shore", "coast"};
+    private static final Map<Collection<String>, ParsedBiomeMatcher> PARSED_BIOME_MATCHERS = new IdentityHashMap<>();
+    private static final ConcurrentHashMap<Block, Byte> SPRING_BLOCK_TYPES = new ConcurrentHashMap<>();
 
     private static final Direction[] CARDINAL_DIRECTIONS = Direction.Plane.HORIZONTAL.stream().toArray(Direction[]::new);
     private static final Direction[] ALL_DIRECTIONS = Direction.values();
@@ -818,22 +825,28 @@ public class FFFluidUtils {
         if (state == null) {
             return false;
         }
-        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-        return id != null
-                && FlowingFluids.MOD_ID.equals(id.getNamespace())
-                && id.getPath().contains("spring");
+        return springBlockType(state.getBlock()) != 0;
     }
 
     private static boolean isProtectedFlowingFluidsWaterSpringSource(BlockState state) {
         if (state == null) {
             return false;
         }
-        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-        if (id == null || !FlowingFluids.MOD_ID.equals(id.getNamespace())) {
-            return false;
+        return springBlockType(state.getBlock()) == 1;
+    }
+
+    private static byte springBlockType(Block block) {
+        Byte cached = SPRING_BLOCK_TYPES.get(block);
+        if (cached != null) {
+            return cached;
         }
-        String path = id.getPath();
-        return path.contains("spring") && !path.contains("lava");
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(block);
+        byte type = 0;
+        if (id != null && FlowingFluids.MOD_ID.equals(id.getNamespace()) && id.getPath().contains("spring")) {
+            type = (byte) (id.getPath().contains("lava") ? 2 : 1);
+        }
+        SPRING_BLOCK_TYPES.put(block, type);
+        return type;
     }
 
     public static boolean isNearFlowingFluidsWaterSpringSource(LevelAccessor level, BlockPos pos) {
@@ -1454,7 +1467,7 @@ public class FFFluidUtils {
         }
 
         if (normalizedAmount < 1) {
-            return removeAllFluidAtPos(levelAccessor, pos, fluid);
+            return removeAllFluidAtPos(levelAccessor, pos, fluid, blockState, existingState, false);
         }
 
         if (supportsVirtualFluidState(levelAccessor, blockState)) {
@@ -1662,9 +1675,15 @@ public class FFFluidUtils {
 
 
     public static boolean removeAllFluidAtPos(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid) {
-        var blockState = levelAccessor.getBlockState(pos);
+        BlockState blockState = levelAccessor.getBlockState(pos);
         FluidState existingState = getEffectiveFluidState(levelAccessor, pos, blockState);
-        if (shouldProtectSpringFedWaterFromRemoval(levelAccessor, pos, fluid, existingState)) {
+        return removeAllFluidAtPos(levelAccessor, pos, fluid, blockState, existingState, true);
+    }
+
+    private static boolean removeAllFluidAtPos(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid,
+                                               BlockState blockState, FluidState existingState,
+                                               boolean checkSpringProtection) {
+        if (checkSpringProtection && shouldProtectSpringFedWaterFromRemoval(levelAccessor, pos, fluid, existingState)) {
             return false;
         }
         boolean invalidateConnectedComponents = !existingState.isEmpty() && existingState.getAmount() > 0;
@@ -2599,9 +2618,17 @@ public class FFFluidUtils {
     }
 
     public static boolean matchInfiniteBiomes(Holder<Biome> biome){
-        return FlowingFluids.infiniteBiomeTags.stream().anyMatch(biome::is)
-                || FlowingFluids.infiniteBiomes.stream().anyMatch(biome::is)
-                || matchesConfiguredBiome(biome, FlowingFluids.config.extraInfiniteBiomeEntries)
+        for (TagKey<Biome> tag : FlowingFluids.infiniteBiomeTags) {
+            if (biome.is(tag)) {
+                return true;
+            }
+        }
+        for (ResourceKey<Biome> key : FlowingFluids.infiniteBiomes) {
+            if (biome.is(key)) {
+                return true;
+            }
+        }
+        return matchesConfiguredBiome(biome, FlowingFluids.config.extraInfiniteBiomeEntries)
                 || isOceanBiome(biome)
                 || isRiverBiome(biome)
                 || isBeachBiome(biome);
@@ -3343,41 +3370,73 @@ public class FFFluidUtils {
     public static boolean isOceanBiome(Holder<Biome> biome) {
         return biome.is(BiomeTags.IS_OCEAN)
                 || matchesConfiguredBiome(biome, FlowingFluids.config.extraOceanBiomes)
-                || isAutoDetectedWaterBiome(biome, "ocean", "sea", "gulf", "bay");
+                || isAutoDetectedWaterBiome(biome, OCEAN_BIOME_KEYWORDS);
     }
 
     public static boolean isRiverBiome(Holder<Biome> biome) {
         return biome.is(BiomeTags.IS_RIVER)
                 || matchesConfiguredBiome(biome, FlowingFluids.config.extraRiverBiomes)
-                || isAutoDetectedWaterBiome(biome, "river", "stream", "creek", "delta");
+                || isAutoDetectedWaterBiome(biome, RIVER_BIOME_KEYWORDS);
     }
 
     public static boolean isBeachBiome(Holder<Biome> biome) {
         return biome.is(BiomeTags.IS_BEACH)
                 || matchesConfiguredBiome(biome, FlowingFluids.config.extraBeachBiomes)
-                || isAutoDetectedWaterBiome(biome, "beach", "shore", "coast");
+                || isAutoDetectedWaterBiome(biome, BEACH_BIOME_KEYWORDS);
     }
 
     private static boolean matchesConfiguredBiome(Holder<Biome> biome, Collection<String> configuredBiomes) {
         if (configuredBiomes == null || configuredBiomes.isEmpty()) return false;
 
-        for (String configured : configuredBiomes) {
-            if (configured == null || configured.isBlank()) continue;
-            String trimmed = configured.trim();
-            if (trimmed.startsWith("#")) {
-                var res = ResourceLocation.tryParse(trimmed.substring(1));
-                if (res != null && biome.is(TagKey.create(Registries.BIOME, res))) {
-                    return true;
-                }
-            } else {
-                var res = ResourceLocation.tryParse(trimmed);
-                if (res != null && biome.is(ResourceKey.create(Registries.BIOME, res))) {
-                    return true;
-                }
+        ParsedBiomeMatcher matcher = parsedBiomeMatcher(configuredBiomes);
+        for (TagKey<Biome> tag : matcher.tags()) {
+            if (biome.is(tag)) {
+                return true;
             }
         }
-
+        for (ResourceKey<Biome> key : matcher.keys()) {
+            if (biome.is(key)) {
+                return true;
+            }
+        }
         return false;
+    }
+
+    private static ParsedBiomeMatcher parsedBiomeMatcher(Collection<String> configuredBiomes) {
+        int contentHash = configuredBiomes.hashCode();
+        synchronized (PARSED_BIOME_MATCHERS) {
+            ParsedBiomeMatcher cached = PARSED_BIOME_MATCHERS.get(configuredBiomes);
+            if (cached != null && cached.contentHash() == contentHash && cached.sourceSize() == configuredBiomes.size()) {
+                return cached;
+            }
+
+            List<TagKey<Biome>> tags = new ArrayList<>();
+            List<ResourceKey<Biome>> keys = new ArrayList<>();
+            for (String configured : configuredBiomes) {
+                if (configured == null || configured.isBlank()) {
+                    continue;
+                }
+                String trimmed = configured.trim();
+                if (trimmed.startsWith("#")) {
+                    ResourceLocation location = ResourceLocation.tryParse(trimmed.substring(1));
+                    if (location != null) {
+                        tags.add(TagKey.create(Registries.BIOME, location));
+                    }
+                } else {
+                    ResourceLocation location = ResourceLocation.tryParse(trimmed);
+                    if (location != null) {
+                        keys.add(ResourceKey.create(Registries.BIOME, location));
+                    }
+                }
+            }
+            if (PARSED_BIOME_MATCHERS.size() >= 16) {
+                PARSED_BIOME_MATCHERS.clear();
+            }
+            ParsedBiomeMatcher parsed = new ParsedBiomeMatcher(
+                contentHash, configuredBiomes.size(), List.copyOf(tags), List.copyOf(keys));
+            PARSED_BIOME_MATCHERS.put(configuredBiomes, parsed);
+            return parsed;
+        }
     }
 
     private static List<String> findMatchingConfiguredBiomeEntries(Holder<Biome> biome, Collection<String> configuredBiomes) {
@@ -3425,14 +3484,20 @@ public class FFFluidUtils {
     private static boolean isAutoDetectedWaterBiome(Holder<Biome> biome, String... keywords) {
         if (!FlowingFluids.config.autoDetectWaterBiomes) return false;
 
-        return biome.unwrapKey().map(key -> {
-            String path = key.location().getPath().toLowerCase(Locale.ROOT);
-            for (String keyword : keywords) {
-                if (path.contains(keyword)) {
-                    return true;
-                }
-            }
+        ResourceKey<Biome> key = biome.unwrapKey().orElse(null);
+        if (key == null) {
             return false;
-        }).orElse(false);
+        }
+        String path = key.location().getPath();
+        for (String keyword : keywords) {
+            if (path.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private record ParsedBiomeMatcher(int contentHash, int sourceSize,
+                                      List<TagKey<Biome>> tags, List<ResourceKey<Biome>> keys) {
     }
 }

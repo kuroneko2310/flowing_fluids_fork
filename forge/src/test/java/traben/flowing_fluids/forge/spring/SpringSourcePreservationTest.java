@@ -111,8 +111,10 @@ class SpringSourcePreservationTest {
                 "Spring-fed water should have a shared removal guard.");
         assertTrue(writer.contains("shouldProtectSpringFedWaterFromRemoval"),
                 "Direct zero-amount writes must not replace spring-fed water with air.");
-        assertTrue(remover.contains("shouldProtectSpringFedWaterFromRemoval"),
-                "Fluid removal must not replace spring-fed water with air.");
+        assertTrue(remover.contains("removeAllFluidAtPos(levelAccessor, pos, fluid, blockState, existingState, true)"),
+                "Public fluid removal must delegate with spring protection enabled.");
+        assertTrue(source.contains("checkSpringProtection && shouldProtectSpringFedWaterFromRemoval"),
+                "The shared removal implementation must preserve spring-fed water when protection is requested.");
     }
 
     private static void assertUpdateShapePreserves(String fileName) throws IOException {
