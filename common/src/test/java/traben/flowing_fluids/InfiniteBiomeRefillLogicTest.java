@@ -94,17 +94,18 @@ class InfiniteBiomeRefillLogicTest {
     }
 
     @Test
-    void passiveRefillNeedsSupportButCanRecoverQuickly() {
-        assertEquals(2, FFFluidUtils.classifyInfiniteBiomeRefillAmount(5, true, 3, 3, false, false));
-        assertEquals(1, FFFluidUtils.classifyInfiniteBiomeRefillAmount(6, true, 2, 1, false, false));
-        assertEquals(0, FFFluidUtils.classifyInfiniteBiomeRefillAmount(6, false, 1, 0, false, false));
+    void passiveRefillOnlyRepairsExposedNearlyFullSources() {
+        assertEquals(1, FFFluidUtils.classifyInfiniteBiomeRefillAmount(7, true, 2, 0, false, false));
+        assertEquals(0, FFFluidUtils.classifyInfiniteBiomeRefillAmount(6, true, 3, 0, false, false));
+        assertEquals(0, FFFluidUtils.classifyInfiniteBiomeRefillAmount(7, false, 3, 0, false, false));
     }
 
     @Test
-    void aggressiveRefillFullyRestoresStronglySupportedPools() {
-        assertEquals(5, FFFluidUtils.classifyInfiniteBiomeRefillAmount(3, true, 4, 3, false, true));
-        assertEquals(2, FFFluidUtils.classifyInfiniteBiomeRefillAmount(4, true, 2, 1, false, true));
-        assertEquals(0, FFFluidUtils.classifyInfiniteBiomeRefillAmount(4, false, 1, 0, false, true));
+    void refillRejectsVerticalColumnsAndPartialNeighbors() {
+        assertEquals(0, FFFluidUtils.classifyInfiniteBiomeRefillAmount(7, true, 3, 0, true, true));
+        assertEquals(0, FFFluidUtils.classifyInfiniteBiomeRefillAmount(7, true, 3, 1, false, true));
+        assertTrue(FFFluidUtils.isStableInfiniteSourceShape(8, true, 2, 0, false));
+        assertFalse(FFFluidUtils.isStableInfiniteSourceShape(8, true, 2, 0, true));
     }
 
     @Test
@@ -124,29 +125,32 @@ class InfiniteBiomeRefillLogicTest {
     @Test
     void heavyLoadFallbackNeedsVanillaLikeSeaLevelSourceShape() {
         assertTrue(FFFluidUtils.shouldFallbackToVanillaInfiniteSourceRefill(
-                true, 63, 63, 6, 2, true, false
+                true, 63, 63, 7, 2, 0, true, false
         ));
         assertTrue(FFFluidUtils.shouldFallbackToVanillaInfiniteSourceRefill(
-                true, 62, 63, 5, 3, true, false
+                true, 62, 63, 7, 3, 0, true, false
         ));
 
         assertFalse(FFFluidUtils.shouldFallbackToVanillaInfiniteSourceRefill(
-                false, 63, 63, 6, 2, true, false
+                false, 63, 63, 7, 2, 0, true, false
         ));
         assertFalse(FFFluidUtils.shouldFallbackToVanillaInfiniteSourceRefill(
-                true, 60, 63, 6, 2, true, false
+                true, 60, 63, 7, 2, 0, true, false
         ));
         assertFalse(FFFluidUtils.shouldFallbackToVanillaInfiniteSourceRefill(
-                true, 63, 63, 4, 3, true, false
+                true, 63, 63, 6, 3, 0, true, false
         ));
         assertFalse(FFFluidUtils.shouldFallbackToVanillaInfiniteSourceRefill(
-                true, 63, 63, 6, 1, true, false
+                true, 63, 63, 7, 1, 0, true, false
         ));
         assertFalse(FFFluidUtils.shouldFallbackToVanillaInfiniteSourceRefill(
-                true, 63, 63, 6, 2, false, false
+                true, 63, 63, 7, 2, 0, false, false
         ));
         assertFalse(FFFluidUtils.shouldFallbackToVanillaInfiniteSourceRefill(
-                true, 63, 63, 6, 2, true, true
+                true, 63, 63, 7, 2, 0, true, true
+        ));
+        assertFalse(FFFluidUtils.shouldFallbackToVanillaInfiniteSourceRefill(
+                true, 63, 63, 7, 2, 1, true, false
         ));
     }
 

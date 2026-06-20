@@ -2932,14 +2932,17 @@ public class FFFluidUtils {
             return 0;
         }
 
-        FluidState below = getEffectiveFluidState(level, pos.below(), level.getBlockState(pos.below()));
-        boolean hasFullBelow = below.getType().isSame(fluid) && below.getAmount() >= 8;
+        BlockPos belowPos = pos.below();
+        BlockState belowState = level.getBlockState(belowPos);
+        FluidState below = getEffectiveFluidState(level, belowPos, belowState);
+        boolean supportedBelow = (below.getType().isSame(fluid) && below.getAmount() >= 8)
+                || (!belowState.isAir() && !belowState.canBeReplaced(fluid));
 
         FluidState above = getEffectiveFluidState(level, pos.above(), level.getBlockState(pos.above()));
         boolean hasFluidAbove = above.getType().isSame(fluid) && above.getAmount() > 0;
 
-        int lateralWaterNeighbors = 0;
-        int supportedNeighbors = 0;
+        int fullLateralNeighbors = 0;
+        int partialLateralNeighbors = 0;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (Direction direction : Direction.Plane.HORIZONTAL) {
             cursor.setWithOffset(pos, direction);
@@ -2947,58 +2950,69 @@ public class FFFluidUtils {
             if (!neighbor.getType().isSame(fluid) || neighbor.getAmount() <= 0) {
                 continue;
             }
-            lateralWaterNeighbors++;
-
-            cursor.move(Direction.DOWN);
-            FluidState neighborBelow = getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
-            if (neighborBelow.getType().isSame(fluid) && neighborBelow.getAmount() >= 8) {
-                supportedNeighbors++;
+            if (neighbor.getAmount() >= 8) {
+                fullLateralNeighbors++;
+            } else {
+                partialLateralNeighbors++;
             }
-            cursor.move(Direction.UP);
         }
 
-        return classifyInfiniteBiomeRefillAmount(amount, hasFullBelow, lateralWaterNeighbors, supportedNeighbors, hasFluidAbove, aggressive);
+        return classifyInfiniteBiomeRefillAmount(
+                amount, supportedBelow, fullLateralNeighbors, partialLateralNeighbors, hasFluidAbove, aggressive);
     }
 
-    public static int classifyInfiniteBiomeRefillAmount(int amount, boolean hasFullBelow, int lateralWaterNeighbors,
-                                                        int supportedNeighbors, boolean hasFluidAbove, boolean aggressive) {
+    public static int classifyInfiniteBiomeRefillAmount(int amount, boolean supportedBelow, int fullLateralNeighbors,
+                                                        int partialLateralNeighbors, boolean hasFluidAbove, boolean aggressive) {
         int room = 8 - amount;
-        if (amount <= 0 || room <= 0) {
+        if (!isStableInfiniteSourceShape(
+                amount, supportedBelow, fullLateralNeighbors, partialLateralNeighbors, hasFluidAbove)) {
             return 0;
         }
+        return Math.min(room, aggressive ? 2 : 1);
+    }
 
-        boolean anchored = supportedNeighbors >= 2
-                || (hasFullBelow && lateralWaterNeighbors >= 1)
-                || (hasFluidAbove && lateralWaterNeighbors >= 1);
-        if (!anchored) {
-            return 0;
+    public static boolean isStableInfiniteSourceShape(int amount, boolean supportedBelow, int fullLateralNeighbors,
+                                                      int partialLateralNeighbors, boolean hasFluidAbove) {
+        return amount >= 7
+                && amount <= 8
+                && supportedBelow
+                && !hasFluidAbove
+                && fullLateralNeighbors >= 2
+                && partialLateralNeighbors == 0;
+    }
+
+    public static boolean hasStableInfiniteSourceShape(LevelAccessor level, BlockPos pos, Fluid fluid, int amount) {
+        if (level == null || pos == null || fluid == null || amount < 7 || amount > 8) {
+            return false;
         }
 
-        int supportScore = (hasFullBelow ? 2 : 0)
-                + lateralWaterNeighbors
-                + supportedNeighbors
-                + (hasFluidAbove ? 1 : 0);
+        BlockPos abovePos = pos.above();
+        FluidState above = getEffectiveFluidState(level, abovePos, level.getBlockState(abovePos));
+        boolean hasFluidAbove = above.getType().isSame(fluid) && above.getAmount() > 0;
 
-        if (aggressive) {
-            if (supportScore >= 7) {
-                return room;
+        BlockPos belowPos = pos.below();
+        BlockState belowState = level.getBlockState(belowPos);
+        FluidState below = getEffectiveFluidState(level, belowPos, belowState);
+        boolean supportedBelow = (below.getType().isSame(fluid) && below.getAmount() >= 8)
+                || (!belowState.isAir() && !belowState.canBeReplaced(fluid));
+
+        int fullLateralNeighbors = 0;
+        int partialLateralNeighbors = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            cursor.setWithOffset(pos, direction);
+            FluidState neighbor = getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
+            if (!neighbor.getType().isSame(fluid) || neighbor.getAmount() <= 0) {
+                continue;
             }
-            if (supportScore >= 5) {
-                return Math.min(room, 2);
+            if (neighbor.getAmount() >= 8) {
+                fullLateralNeighbors++;
+            } else {
+                partialLateralNeighbors++;
             }
-            if (supportScore >= 4 && amount <= 3) {
-                return 1;
-            }
-            return 0;
         }
-
-        if (supportScore >= 6) {
-            return Math.min(room, 2);
-        }
-        if (supportScore >= 4) {
-            return 1;
-        }
-        return 0;
+        return isStableInfiniteSourceShape(
+                amount, supportedBelow, fullLateralNeighbors, partialLateralNeighbors, hasFluidAbove);
     }
 
     public static boolean shouldAttemptInfiniteBiomeFlowingRefill(LevelAccessor level, BlockPos pos, Fluid fluid,
@@ -3016,6 +3030,9 @@ public class FFFluidUtils {
             return false;
         }
         if (!hasInfiniteBiomeAmbientAccess(level, pos, fluid, currentAmount)) {
+            return false;
+        }
+        if (!hasStableInfiniteSourceShape(level, pos, fluid, currentAmount)) {
             return false;
         }
         if (AdaptiveTickScheduler.isFlowActiveNow(level, pos)) {
@@ -3078,18 +3095,17 @@ public class FFFluidUtils {
                                                                       int seaLevel,
                                                                       int amount,
                                                                       int fullSourceNeighbors,
+                                                                      int partialWaterNeighbors,
                                                                       boolean supportedBelow,
                                                                       boolean hasFluidAbove) {
-        if (!heavyLoad || amount < 5 || amount >= 8) {
+        if (!heavyLoad || !isStableInfiniteSourceShape(
+                amount, supportedBelow, fullSourceNeighbors, partialWaterNeighbors, hasFluidAbove)) {
             return false;
         }
         if (y < seaLevel - 1 || y > seaLevel) {
             return false;
         }
-        if (hasFluidAbove || !supportedBelow) {
-            return false;
-        }
-        return fullSourceNeighbors >= 2;
+        return true;
     }
 
     public static boolean tryApplyVanillaInfiniteSourceRefill(LevelAccessor levelAccessor,
@@ -3117,12 +3133,15 @@ public class FFFluidUtils {
                 || (!belowState.isAir() && !belowState.canBeReplaced(fluid));
 
         int fullSourceNeighbors = 0;
+        int partialWaterNeighbors = 0;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (Direction direction : Direction.Plane.HORIZONTAL) {
             cursor.setWithOffset(pos, direction);
             FluidState neighbor = getEffectiveFluidState(levelAccessor, cursor, levelAccessor.getBlockState(cursor));
             if (neighbor.getType().isSame(fluid) && neighbor.getAmount() >= 8) {
                 fullSourceNeighbors++;
+            } else if (neighbor.getType().isSame(fluid) && neighbor.getAmount() > 0) {
+                partialWaterNeighbors++;
             }
         }
 
@@ -3132,6 +3151,7 @@ public class FFFluidUtils {
                 seaLevel(world),
                 currentAmount,
                 fullSourceNeighbors,
+                partialWaterNeighbors,
                 supportedBelow,
                 hasFluidAbove)) {
             return false;

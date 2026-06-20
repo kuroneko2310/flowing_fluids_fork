@@ -409,7 +409,9 @@ public abstract class MixinFlowingFluid extends Fluid {
             boolean dontConsumeWater = isWaterAndInfiniteBiome
                     && FFFluidUtils.isInfiniteBiomeNonConsumeEnabled()
                     && FFFluidUtils.seaLevel(level) != blockPos.getY()
-                    && level.getRandom().nextFloat() < FlowingFluids.config.infiniteWaterBiomeNonConsumeChance;
+                    && level.getRandom().nextFloat() < FlowingFluids.config.infiniteWaterBiomeNonConsumeChance
+                    && FFFluidUtils.hasStableInfiniteSourceShape(
+                    level, blockPos, fluidState.getType(), fluidState.getAmount());
 
             #if MC <= MC_21
             BlockState thisState = level.getBlockState(blockPos);
