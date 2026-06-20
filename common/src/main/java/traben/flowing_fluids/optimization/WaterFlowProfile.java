@@ -13,6 +13,7 @@ import net.minecraft.world.level.material.FluidState;
 import org.jetbrains.annotations.Nullable;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
+import traben.flowing_fluids.FFSectionSampleContext;
 import traben.flowing_fluids.FluidAmountConverter;
 import traben.flowing_fluids.FluidSectionDataCache;
 import traben.flowing_fluids.FluidSpatialGrid;
@@ -82,11 +83,22 @@ public final class WaterFlowProfile {
     }
 
     public static WaterFlowProfile analyze(Level level, BlockPos pos, FluidState fluidState, int amount) {
-        return analyze(level, pos, fluidState, amount, null);
+        return analyzeInternal(level, pos, fluidState, amount, null, null);
     }
 
     public static WaterFlowProfile analyze(Level level, BlockPos pos, FluidState fluidState, int amount,
                                            @Nullable FluidSectionDataCache sectionCache) {
+        return analyzeInternal(level, pos, fluidState, amount, sectionCache, null);
+    }
+
+    public static WaterFlowProfile analyze(Level level, BlockPos pos, FluidState fluidState, int amount,
+                                           FFSectionSampleContext sampleContext) {
+        return analyzeInternal(level, pos, fluidState, amount, null, sampleContext);
+    }
+
+    private static WaterFlowProfile analyzeInternal(Level level, BlockPos pos, FluidState fluidState, int amount,
+                                                    @Nullable FluidSectionDataCache sectionCache,
+                                                    @Nullable FFSectionSampleContext sampleContext) {
         if (level == null || pos == null || fluidState == null || !fluidState.is(FluidTags.WATER) || amount <= 0) {
             return NON_WATER;
         }
@@ -97,7 +109,8 @@ public final class WaterFlowProfile {
         float flowMomentum = FlowingFluids.config.flowInertiaMaxAgeTicks > 0
             ? AdaptiveTickScheduler.getFlowMomentum(level, pos, FlowingFluids.config.flowInertiaMaxAgeTicks)
             : 0.0f;
-        BasicNeighborhoodMetrics basicMetrics = sampleBasicNeighborhood(level, pos, fluidType, amount, sectionCache);
+        BasicNeighborhoodMetrics basicMetrics = sampleBasicNeighborhood(
+            level, pos, fluidType, amount, sectionCache, sampleContext);
         FluidSpatialGrid.MacroFluidHint macroHint = FluidSpatialGrid.getMacroFluidHint(level, pos);
 
         var biome = level.getBiome(pos);
@@ -116,11 +129,12 @@ public final class WaterFlowProfile {
             return fastPathProfile;
         }
 
-        NeighborhoodMetrics metrics = sampleNeighborhood(level, pos, fluidType, flowingFluid, amount, sectionCache, basicMetrics);
+        NeighborhoodMetrics metrics = sampleNeighborhood(
+            level, pos, fluidType, flowingFluid, amount, sectionCache, sampleContext, basicMetrics);
         boolean shouldSampleStableTicks = shouldSampleStableTicks(amount, flowActive, oceanLikeBiome, riverLikeBiome, metrics);
         int stableTicks = shouldSampleStableTicks ? AdaptiveTickScheduler.getPoolStableTicks(level, pos, 20) : 0;
         int stackedColumnHeight = shouldMeasureStackedColumnHeight(amount, metrics)
-            ? getStackedColumnHeight(level, pos, fluidType, metrics.hasFluidAbove(), sectionCache)
+            ? getStackedColumnHeight(level, pos, fluidType, metrics.hasFluidAbove(), sectionCache, sampleContext)
             : 1;
 
         boolean broadSurface = FFFluidUtils.classifyBroadSurfaceWater(
@@ -664,10 +678,13 @@ public final class WaterFlowProfile {
     }
 
     private static BasicNeighborhoodMetrics sampleBasicNeighborhood(Level level, BlockPos pos, Fluid fluidType,
-                                                                    int amount, @Nullable FluidSectionDataCache sectionCache) {
+                                                                    int amount, @Nullable FluidSectionDataCache sectionCache,
+                                                                    @Nullable FFSectionSampleContext sampleContext) {
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        SampledCell above = sampleCell(level, cursor.set(pos.getX(), pos.getY() + 1, pos.getZ()), fluidType, sectionCache);
-        SampledCell below = sampleCell(level, cursor.set(pos.getX(), pos.getY() - 1, pos.getZ()), fluidType, sectionCache);
+        SampledCell above = sampleCell(level, cursor.set(pos.getX(), pos.getY() + 1, pos.getZ()), fluidType,
+            sectionCache, sampleContext);
+        SampledCell below = sampleCell(level, cursor.set(pos.getX(), pos.getY() - 1, pos.getZ()), fluidType,
+            sectionCache, sampleContext);
         boolean hasFluidAbove = above.matches(fluidType);
         boolean supportedBelow = (below.matches(fluidType) && below.amount() >= amount)
             || (!below.air() && !below.replaceable());
@@ -676,7 +693,7 @@ public final class WaterFlowProfile {
         int surfaceEdgeCount = 0;
         for (Direction dir : Direction.Plane.HORIZONTAL) {
             cursor.setWithOffset(pos, dir);
-            SampledCell neighbor = sampleCell(level, cursor, fluidType, sectionCache);
+            SampledCell neighbor = sampleCell(level, cursor, fluidType, sectionCache, sampleContext);
             if (neighbor.matches(fluidType)) {
                 lateralWaterNeighbors++;
             } else if (neighbor.isSurfaceEdge()) {
@@ -694,14 +711,20 @@ public final class WaterFlowProfile {
     private static NeighborhoodMetrics sampleNeighborhood(Level level, BlockPos pos, Fluid fluidType,
                                                           @Nullable FlowingFluid flowingFluid, int amount,
                                                           @Nullable FluidSectionDataCache sectionCache,
+                                                          @Nullable FFSectionSampleContext sampleContext,
                                                           BasicNeighborhoodMetrics basicMetrics) {
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        BlockState sourceState = flowingFluid != null ? level.getBlockState(pos) : null;
+        BlockState sourceState = flowingFluid != null
+            ? sampleBlockState(level, pos, sampleContext)
+            : null;
         boolean immediateDownwardOutlet = false;
         if (flowingFluid != null && !basicMetrics.supportedBelow()) {
             BlockPos belowPos = pos.below();
-            BlockState belowState = level.getBlockState(belowPos);
-            FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
+            FFSectionSampleContext.CellSnapshot belowCell = sampleContext != null ? sampleContext.cell(level, belowPos) : null;
+            BlockState belowState = belowCell != null ? belowCell.blockState() : level.getBlockState(belowPos);
+            FluidState belowFluid = belowCell != null
+                ? belowCell.fluidState()
+                : FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
             immediateDownwardOutlet = FFFluidUtils.canFluidFlowFromPosToDirection(
                 flowingFluid,
                 Math.max(1, amount),
@@ -718,12 +741,15 @@ public final class WaterFlowProfile {
         int lateralEscapeRoutes = 0;
         for (Direction dir : Direction.Plane.HORIZONTAL) {
             cursor.setWithOffset(pos, dir);
-            SampledCell neighbor = sampleCell(level, cursor, fluidType, sectionCache);
+            SampledCell neighbor = sampleCell(level, cursor, fluidType, sectionCache, sampleContext);
             if (flowingFluid == null || (neighbor.matches(fluidType) && neighbor.amount() >= amount)) {
                 continue;
             }
-            BlockState neighborState = level.getBlockState(cursor);
-            FluidState neighborFluid = FFFluidUtils.getEffectiveFluidState(level, cursor, neighborState);
+            FFSectionSampleContext.CellSnapshot neighborCell = sampleContext != null ? sampleContext.cell(level, cursor) : null;
+            BlockState neighborState = neighborCell != null ? neighborCell.blockState() : level.getBlockState(cursor);
+            FluidState neighborFluid = neighborCell != null
+                ? neighborCell.fluidState()
+                : FFFluidUtils.getEffectiveFluidState(level, cursor, neighborState);
             if (FFFluidUtils.canFluidFlowFromPosToDirection(
                 flowingFluid,
                 Math.max(1, amount),
@@ -749,7 +775,8 @@ public final class WaterFlowProfile {
     }
 
     private static SampledCell sampleCell(Level level, BlockPos.MutableBlockPos cursor, Fluid fluidType,
-                                          @Nullable FluidSectionDataCache sectionCache) {
+                                          @Nullable FluidSectionDataCache sectionCache,
+                                          @Nullable FFSectionSampleContext sampleContext) {
         if (sectionCache != null) {
             int x = cursor.getX();
             int y = cursor.getY();
@@ -759,6 +786,16 @@ public final class WaterFlowProfile {
                 sectionCache.amount(x, y, z),
                 sectionCache.isAir(x, y, z),
                 sectionCache.isReplaceable(x, y, z)
+            );
+        }
+        if (sampleContext != null) {
+            FFSectionSampleContext.CellSnapshot snapshot = sampleContext.cell(level, cursor);
+            FluidState fluidState = snapshot.fluidState();
+            return new SampledCell(
+                fluidState.isEmpty() ? null : fluidState.getType(),
+                fluidState.getAmount(),
+                snapshot.blockState().isAir(),
+                snapshot.blockState().canBeReplaced(fluidType)
             );
         }
         BlockState state = level.getBlockState(cursor);
@@ -804,7 +841,8 @@ public final class WaterFlowProfile {
     }
 
     private static int getStackedColumnHeight(Level level, BlockPos pos, Fluid fluidType, boolean hasFluidAbove,
-                                              @Nullable FluidSectionDataCache sectionCache) {
+                                              @Nullable FluidSectionDataCache sectionCache,
+                                              @Nullable FFSectionSampleContext sampleContext) {
         if (!hasFluidAbove) {
             return 1;
         }
@@ -817,7 +855,9 @@ public final class WaterFlowProfile {
         int column = 1;
         BlockPos.MutableBlockPos cursor = pos.above().mutable();
         for (int i = 0; i < maxColumn; i++) {
-            FluidState state = FFFluidUtils.getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
+            FluidState state = sampleContext != null
+                ? sampleContext.cell(level, cursor).fluidState()
+                : FFFluidUtils.getEffectiveFluidState(level, cursor, level.getBlockState(cursor));
             if (!state.getType().isSame(fluidType) || state.getAmount() <= 0) {
                 break;
             }
@@ -825,6 +865,11 @@ public final class WaterFlowProfile {
             cursor.move(Direction.UP);
         }
         return column;
+    }
+
+    private static BlockState sampleBlockState(Level level, BlockPos pos,
+                                               @Nullable FFSectionSampleContext sampleContext) {
+        return sampleContext != null ? sampleContext.cell(level, pos).blockState() : level.getBlockState(pos);
     }
 
     private static boolean isSubterranean(Level level, BlockPos pos) {

@@ -6,16 +6,12 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
-import net.minecraft.world.level.material.Fluids;
-import org.jetbrains.annotations.Nullable;
 import traben.flowing_fluids.optimization.WaterFlowProfile;
 
 public final class FFSectionSampleContext {
     private Level level;
-    private FluidSectionDataCache cache;
     private final Long2ObjectOpenHashMap<CachedWaterProfile> waterProfiles = new Long2ObjectOpenHashMap<>();
     private final Long2ObjectOpenHashMap<CellSnapshot> cells = new Long2ObjectOpenHashMap<>();
-    private int sampleReads;
     private long gameTime = Long.MIN_VALUE;
     private long lastProfilePos = Long.MIN_VALUE;
     private Fluid lastProfileFluid;
@@ -24,8 +20,6 @@ public final class FFSectionSampleContext {
 
     public void begin(Level level) {
         this.level = level;
-        this.cache = null;
-        this.sampleReads = 0;
         this.waterProfiles.clear();
         this.cells.clear();
         this.gameTime = level == null ? Long.MIN_VALUE : level.getGameTime();
@@ -43,26 +37,11 @@ public final class FFSectionSampleContext {
         }
         long currentGameTime = level == null ? Long.MIN_VALUE : level.getGameTime();
         if (gameTime != currentGameTime) {
-            this.cache = null;
-            this.sampleReads = 0;
             this.waterProfiles.clear();
             this.cells.clear();
             this.gameTime = currentGameTime;
             clearLastProfile();
         }
-    }
-
-    public @Nullable FluidSectionDataCache sampleCache(Level level, int sampleThreshold) {
-        ensureFresh(level);
-        if (cache != null) {
-            return cache;
-        }
-        sampleReads++;
-        if (!shouldBuildSectionCache(sampleReads, sampleThreshold)) {
-            return null;
-        }
-        cache = new FluidSectionDataCache(level, 8);
-        return cache;
     }
 
     public CellSnapshot cell(Level level, BlockPos pos) {
@@ -71,28 +50,28 @@ public final class FFSectionSampleContext {
         }
         ensureFresh(level);
         long key = pos.asLong();
-        CellSnapshot cached = cells.get(key);
+        CellSnapshot cached = cachedCell(key);
         if (cached != null) {
             return cached;
         }
 
         BlockState blockState = level.getBlockState(pos);
         FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, pos, blockState);
-        int internalAmount = 0;
-        if (!fluidState.isEmpty()) {
-            internalAmount = FluidSpatialGrid.getFluidAmount(level, pos);
-            if (internalAmount <= 0) {
-                internalAmount = FluidAmountConverter.toInternal(fluidState.getAmount());
-            }
-        }
-        CellSnapshot snapshot = new CellSnapshot(blockState, fluidState, internalAmount);
-        cells.put(key, snapshot);
+        CellSnapshot snapshot = new CellSnapshot(blockState, fluidState);
+        rememberCell(key, snapshot);
         return snapshot;
     }
 
-    public boolean hasSectionCache(Level level) {
-        ensureFresh(level);
-        return cache != null;
+    CellSnapshot cachedCell(long posKey) {
+        return cells.get(posKey);
+    }
+
+    void rememberCell(long posKey, CellSnapshot snapshot) {
+        cells.put(posKey, snapshot);
+    }
+
+    int cachedCellCount() {
+        return cells.size();
     }
 
     public boolean hasCell(Level level, BlockPos pos) {
@@ -103,13 +82,9 @@ public final class FFSectionSampleContext {
         return cells.containsKey(pos.asLong());
     }
 
-    public int fluidAmountIfSame(Level level, BlockPos pos, Fluid fluid, int sampleThreshold) {
+    public int fluidAmountIfSame(Level level, BlockPos pos, Fluid fluid) {
         if (level == null || pos == null || fluid == null) {
             return 0;
-        }
-        FluidSectionDataCache sectionCache = sampleCache(level, sampleThreshold);
-        if (sectionCache != null) {
-            return sectionCache.amountIfFluid(pos, fluid);
         }
         CellSnapshot snapshot = cell(level, pos);
         return snapshot.fluidState().getType().isSame(fluid)
@@ -118,10 +93,6 @@ public final class FFSectionSampleContext {
     }
 
     public WaterFlowProfile waterProfile(Level level, BlockPos pos, FluidState fluidState, int amount) {
-        return waterProfile(level, pos, fluidState, amount, 0);
-    }
-
-    public WaterFlowProfile waterProfile(Level level, BlockPos pos, FluidState fluidState, int amount, int sampleThreshold) {
         if (level == null || pos == null || fluidState == null) {
             return WaterFlowProfile.analyze(level, pos, fluidState, amount);
         }
@@ -140,8 +111,7 @@ public final class FFSectionSampleContext {
             rememberLastProfile(key, fluidType, amount, cached.profile);
             return cached.profile;
         }
-        FluidSectionDataCache sectionCache = sampleThreshold > 0 ? sampleCache(level, sampleThreshold) : null;
-        WaterFlowProfile profile = WaterFlowProfile.analyze(level, pos, fluidState, amount, sectionCache);
+        WaterFlowProfile profile = WaterFlowProfile.analyze(level, pos, fluidState, amount, this);
         waterProfiles.put(key, new CachedWaterProfile(fluidType, amount, profile));
         rememberLastProfile(key, fluidType, amount, profile);
         return profile;
@@ -150,15 +120,6 @@ public final class FFSectionSampleContext {
     public void invalidate(BlockPos... positions) {
         if (positions == null || positions.length == 0) {
             return;
-        }
-        // Local writes only invalidate the touched sections; keeping the rest of the
-        // sample cache alive avoids rebuilding every later profile in the same tick.
-        if (cache != null) {
-            for (BlockPos pos : positions) {
-                if (pos != null) {
-                    cache.invalidate(pos);
-                }
-            }
         }
         for (BlockPos pos : positions) {
             if (pos != null) {
@@ -169,19 +130,8 @@ public final class FFSectionSampleContext {
         clearLastProfile();
     }
 
-    static boolean shouldBuildSectionCache(int sampleReads, int sampleThreshold) {
-        if (sampleThreshold <= 0) {
-            return sampleReads > 0;
-        }
-        return sampleReads >= sampleThreshold;
-    }
-
-    static boolean shouldBuildSectionCache(int sampleReads, int sampleThreshold, boolean dirtyTick) {
-        return shouldBuildSectionCache(sampleReads, sampleThreshold);
-    }
-
-    public record CellSnapshot(BlockState blockState, FluidState fluidState, int internalAmount) {
-        private static final CellSnapshot EMPTY = new CellSnapshot(null, Fluids.EMPTY.defaultFluidState(), 0);
+    public record CellSnapshot(BlockState blockState, FluidState fluidState) {
+        private static final CellSnapshot EMPTY = new CellSnapshot(null, null);
     }
 
     private record CachedWaterProfile(Fluid fluid, int amount, WaterFlowProfile profile) {
@@ -189,8 +139,6 @@ public final class FFSectionSampleContext {
 
     private void reset() {
         this.level = null;
-        this.cache = null;
-        this.sampleReads = 0;
         this.waterProfiles.clear();
         this.cells.clear();
         this.gameTime = Long.MIN_VALUE;

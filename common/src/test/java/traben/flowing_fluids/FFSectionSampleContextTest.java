@@ -1,34 +1,47 @@
 package traben.flowing_fluids;
 
+import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 class FFSectionSampleContextTest {
 
     @Test
-    void sectionCacheBuildsAfterThresholdWhenTickIsReadOnly() {
-        assertFalse(FFSectionSampleContext.shouldBuildSectionCache(23, 24));
-        assertTrue(FFSectionSampleContext.shouldBuildSectionCache(24, 24));
+    void samplesOnlyRequestedCellsAndReusesThem() {
+        FFSectionSampleContext context = new FFSectionSampleContext();
+        FFSectionSampleContext.CellSnapshot snapshot = airSnapshot();
+
+        for (int x = 0; x < 64; x++) {
+            context.rememberCell(new BlockPos(x, 64, 0).asLong(), snapshot);
+        }
+        for (int x = 0; x < 64; x++) {
+            assertSame(snapshot, context.cachedCell(new BlockPos(x, 64, 0).asLong()));
+        }
+
+        assertEquals(64, context.cachedCellCount());
     }
 
     @Test
-    void sectionCacheThresholdStillBuildsAfterLocalWriteCompatibilityCall() {
-        assertTrue(FFSectionSampleContext.shouldBuildSectionCache(40, 24, true));
+    void invalidationReloadsOnlyTheTouchedCell() {
+        FFSectionSampleContext context = new FFSectionSampleContext();
+        BlockPos first = BlockPos.ZERO;
+        BlockPos second = BlockPos.ZERO.east();
+        FFSectionSampleContext.CellSnapshot firstRead = airSnapshot();
+        FFSectionSampleContext.CellSnapshot secondRead = airSnapshot();
+        context.rememberCell(first.asLong(), firstRead);
+        context.rememberCell(second.asLong(), secondRead);
+
+        context.invalidate(first);
+
+        assertNull(context.cachedCell(first.asLong()));
+        assertSame(secondRead, context.cachedCell(second.asLong()));
+        assertEquals(1, context.cachedCellCount());
     }
 
-    @Test
-    void zeroThresholdBuildsOnFirstRead() {
-        assertTrue(FFSectionSampleContext.shouldBuildSectionCache(1, 0));
-    }
-
-    @Test
-    void compatibilityOverloadMatchesPrimaryRule() {
-        assertEquals(
-            FFSectionSampleContext.shouldBuildSectionCache(1, 0),
-            FFSectionSampleContext.shouldBuildSectionCache(1, 0, true)
-        );
+    private static FFSectionSampleContext.CellSnapshot airSnapshot() {
+        return new FFSectionSampleContext.CellSnapshot(null, null);
     }
 }

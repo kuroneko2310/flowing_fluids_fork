@@ -161,9 +161,6 @@ public abstract class MixinFlowingFluid extends Fluid {
             });
 
     @Unique
-    private static final int ff$SECTION_SAMPLE_THRESHOLD = 12;
-
-    @Unique
     private static final ThreadLocal<FFSectionSampleContext> ff$SECTION_SAMPLE_CONTEXT =
             ThreadLocal.withInitial(FFSectionSampleContext::new);
 
@@ -2992,14 +2989,10 @@ public abstract class MixinFlowingFluid extends Fluid {
     @Unique
     private int flowing_fluids$getWaterAmountAt(Level level, BlockPos pos, Fluid sourceFluid) {
         FFSectionSampleContext sampleContext = ff$getSectionSampleContext();
-        boolean sectionCacheHit = sampleContext.hasSectionCache(level);
-        boolean cellCacheHit = !sectionCacheHit && sampleContext.hasCell(level, pos);
-        int amount = sampleContext.fluidAmountIfSame(
-                level, pos, sourceFluid, ff$SECTION_SAMPLE_THRESHOLD);
+        boolean cellCacheHit = sampleContext.hasCell(level, pos);
+        int amount = sampleContext.fluidAmountIfSame(level, pos, sourceFluid);
         if (FlowingFluids.config.enablePerformanceMonitoring) {
-            if (sectionCacheHit || sampleContext.hasSectionCache(level)) {
-                FluidPerformanceMonitor.getInstance().recordSpatialGridHit();
-            } else if (cellCacheHit) {
+            if (cellCacheHit) {
                 FluidPerformanceMonitor.getInstance().recordFastPath();
             } else {
                 FluidPerformanceMonitor.getInstance().recordCacheMiss();
@@ -3082,7 +3075,7 @@ public abstract class MixinFlowingFluid extends Fluid {
 
     @Unique
     private WaterFlowProfile flowing_fluids$getWaterFlowProfile(Level level, BlockPos pos, FluidState fluidState, int amount) {
-        return ff$getSectionSampleContext().waterProfile(level, pos, fluidState, amount, ff$SECTION_SAMPLE_THRESHOLD);
+        return ff$getSectionSampleContext().waterProfile(level, pos, fluidState, amount);
     }
 
 
