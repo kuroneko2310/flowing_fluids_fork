@@ -1054,8 +1054,8 @@ public class AdaptiveTickScheduler {
         LongOpenHashSet uniquePositions = new LongOpenHashSet();
         LongOpenHashSet neighbors = new LongOpenHashSet();
         LongOpenHashSet frontierNeighbors = new LongOpenHashSet();
-        HashSet<ChunkPos> touchedChunks = new HashSet<>();
-        HashSet<ChunkPos> frontierWakeChunks = new HashSet<>();
+        LongOpenHashSet touchedChunkKeys = new LongOpenHashSet();
+        LongOpenHashSet frontierWakeChunkKeys = new LongOpenHashSet();
         final long now = System.currentTimeMillis();
         int activationTicks = FlowingFluids.config.flowActivationTicks;
         long frontierActivationUntil = 0L;
@@ -1079,14 +1079,13 @@ public class AdaptiveTickScheduler {
             if (activationTicks > 0) {
                 markFlowActive(level, pos, activationTicks);
             }
-            ChunkPos chunkPos = new ChunkPos(pos);
-            touchedChunks.add(chunkPos);
-            if (frontierActivationUntil > 0L && !wasChunkTouchedThisTick(level, dimensionData, chunkPos)) {
-                frontierWakeChunks.add(chunkPos);
-            }
+            touchedChunkKeys.add(ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4));
 
             for (Direction direction : NEIGHBOR_HASH_DIRECTIONS) {
-                neighbors.add(pos.relative(direction).asLong());
+                neighbors.add(BlockPos.asLong(
+                        pos.getX() + direction.getStepX(),
+                        pos.getY() + direction.getStepY(),
+                        pos.getZ() + direction.getStepZ()));
             }
         }
 
@@ -1100,15 +1099,29 @@ public class AdaptiveTickScheduler {
             }
         }
 
+        for (LongIterator it = touchedChunkKeys.iterator(); it.hasNext(); ) {
+            long chunkKey = it.nextLong();
+            ChunkPos chunkPos = new ChunkPos(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey));
+            if (frontierActivationUntil > 0L && !wasChunkTouchedThisTick(level, dimensionData, chunkPos)) {
+                frontierWakeChunkKeys.add(chunkKey);
+            }
+            touchChunk(level, dimensionData, chunkPos, now);
+        }
+
         if (frontierActivationUntil > 0L) {
             for (LongIterator it = uniquePositions.iterator(); it.hasNext(); ) {
                 long posKey = it.nextLong();
-                BlockPos pos = BlockPos.of(posKey);
-                if (!frontierWakeChunks.contains(new ChunkPos(pos))) {
+                int x = BlockPos.getX(posKey);
+                int y = BlockPos.getY(posKey);
+                int z = BlockPos.getZ(posKey);
+                if (!frontierWakeChunkKeys.contains(ChunkPos.asLong(x >> 4, z >> 4))) {
                     continue;
                 }
                 for (Direction direction : FLOW_CHECK_DIRECTIONS) {
-                    long neighborKey = pos.relative(direction).asLong();
+                    long neighborKey = BlockPos.asLong(
+                            x + direction.getStepX(),
+                            y + direction.getStepY(),
+                            z + direction.getStepZ());
                     if (!uniquePositions.contains(neighborKey)) {
                         frontierNeighbors.add(neighborKey);
                     }
@@ -1121,9 +1134,7 @@ public class AdaptiveTickScheduler {
             }
         }
 
-        for (ChunkPos chunkPos : touchedChunks) {
-            touchChunk(level, dimensionData, chunkPos, now);
-        }
+
     }
 
     public static void recordFlowDirection(LevelAccessor level, BlockPos pos, Direction direction) {

@@ -57,7 +57,7 @@ public final class RainWaterSystem {
 
     private static final ConcurrentHashMap<ResourceKey<Level>, Long> lastRunTick = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Level>, Long> lastCacheMaintenanceTick = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<String, ChunkBiomeCache> chunkCache = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ChunkCacheKey, ChunkBiomeCache> chunkCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Biome>, Float> PRECIP_MUL = new ConcurrentHashMap<>();
     private static final RainWetnessCache WETNESS_CACHE = new RainWetnessCache();
     private static final ConcurrentHashMap<ResourceKey<Level>, ConcurrentHashMap<Long, Long>> activeRainChunks = new ConcurrentHashMap<>();
@@ -217,12 +217,6 @@ public final class RainWaterSystem {
         WETNESS_CACHE.clearLevel(levelKey);
         purgeQueuedPlacements(levelKey);
         clearWakeState(levelKey);
-
-        traben.flowing_fluids.AdaptiveTickScheduler.clearDimension(level);
-        traben.flowing_fluids.FluidSpatialGrid.clearDimension(level);
-        traben.flowing_fluids.ChunkLocalSlopeCache.clearDimension(level);
-        traben.flowing_fluids.FluidTickBuffer.clearDimension(level);
-        traben.flowing_fluids.water.WaterPressureSystem.onLevelUnload(level);
     }
 
     public static String describeRuntimeState(ServerLevel level) {
@@ -883,7 +877,7 @@ public final class RainWaterSystem {
 
     private static ChunkBiomeCache getOrCreateChunkCache(ServerLevel level, long packedChunkPos, long currentTime) {
         final ResourceKey<Level> levelKey = level.dimension();
-        final String cacheKey = buildChunkCacheKey(levelKey, packedChunkPos);
+        final ChunkCacheKey cacheKey = new ChunkCacheKey(levelKey, packedChunkPos);
 
         if (FlowingFluids.config.rainEnableChunkCaching) {
             ChunkBiomeCache cached = chunkCache.get(cacheKey);
@@ -962,22 +956,18 @@ public final class RainWaterSystem {
         }
     }
 
-    private static String buildChunkCacheKey(ResourceKey<Level> levelKey, long packedChunkPos) {
-        return levelKey.location() + "|" + packedChunkPos;
-    }
-
-    private static String getChunkCachePrefix(ResourceKey<Level> levelKey) {
-        return levelKey.location() + "|";
-    }
-
     private static void clearChunkCacheForLevel(ResourceKey<Level> levelKey) {
-        final String prefix = getChunkCachePrefix(levelKey);
-        chunkCache.keySet().removeIf(key -> key.startsWith(prefix));
+        chunkCache.keySet().removeIf(key -> key.level().equals(levelKey));
     }
 
     private static long countChunkCacheEntries(ResourceKey<Level> levelKey) {
-        final String prefix = getChunkCachePrefix(levelKey);
-        return chunkCache.keySet().stream().filter(key -> key.startsWith(prefix)).count();
+        long count = 0L;
+        for (ChunkCacheKey key : chunkCache.keySet()) {
+            if (key.level().equals(levelKey)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static boolean findRainLandingMutable(ServerLevel level, int x, int z,
@@ -1108,11 +1098,14 @@ public final class RainWaterSystem {
     private record ChunkProcessingData(long packedPos, ChunkBiomeCache cache, int nearestPlayerRing) {
     }
 
+    private record ChunkCacheKey(ResourceKey<Level> level, long packedChunkPos) {
+    }
+
     private record ChunkBiomeCache(ResourceKey<Biome> biomeKey, float precipMul,
                                    boolean hasPrecipitation, boolean isInfiniteWaterBiome, long cachedTime) {
     }
 
-    private record WetnessCacheKey(ResourceKey<Level> level, BlockPos pos) {
+    private record WetnessCacheKey(ResourceKey<Level> level, long posKey) {
     }
 
     private record WetnessEntry(float wetness, long lastUpdateTick) {
@@ -1122,7 +1115,7 @@ public final class RainWaterSystem {
         private final ConcurrentHashMap<WetnessCacheKey, WetnessEntry> wetnessByBlock = new ConcurrentHashMap<>();
 
         private float getWetness(ResourceKey<Level> levelKey, BlockPos pos, long currentTime) {
-            WetnessCacheKey key = new WetnessCacheKey(levelKey, pos.immutable());
+            WetnessCacheKey key = new WetnessCacheKey(levelKey, pos.asLong());
             WetnessEntry entry = wetnessByBlock.get(key);
             if (entry == null) {
                 return 0.0f;
@@ -1141,7 +1134,7 @@ public final class RainWaterSystem {
                 return;
             }
 
-            WetnessCacheKey key = new WetnessCacheKey(levelKey, pos.immutable());
+            WetnessCacheKey key = new WetnessCacheKey(levelKey, pos.asLong());
             wetnessByBlock.compute(key, (ignored, entry) -> {
                 float currentWetness = entry == null
                         ? 0.0f

@@ -1,7 +1,7 @@
 package traben.flowing_fluids;
 
-import it.unimi.dsi.fastutil.objects.Object2IntMap;
-import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2IntMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
@@ -40,14 +40,15 @@ public final class FluidActivityTracker {
         long nowTick = level.getGameTime();
         DimensionKey key = DimensionKey.of(level);
         ConcurrentHashMap<ChunkPos, ActivityData> map = DATA.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
-        Object2IntOpenHashMap<ChunkPos> counts = new Object2IntOpenHashMap<>();
+        Long2IntOpenHashMap counts = new Long2IntOpenHashMap();
 
         for (BlockPos pos : positions) {
-            counts.addTo(new ChunkPos(pos), 1);
+            counts.addTo(ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4), 1);
         }
 
-        for (Object2IntMap.Entry<ChunkPos> entry : counts.object2IntEntrySet()) {
-            ChunkPos chunkPos = entry.getKey();
+        for (Long2IntMap.Entry entry : counts.long2IntEntrySet()) {
+            long chunkKey = entry.getLongKey();
+            ChunkPos chunkPos = new ChunkPos(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey));
             int count = entry.getIntValue();
             ActivityData data = map.computeIfAbsent(chunkPos, k -> new ActivityData(nowTick));
             data.record(nowTick, count);

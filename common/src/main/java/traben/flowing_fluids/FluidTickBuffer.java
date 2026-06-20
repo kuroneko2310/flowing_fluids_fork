@@ -10,10 +10,8 @@ import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import traben.flowing_fluids.util.DimensionKey;
 
-import java.lang.ref.WeakReference;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Batches fluid state updates to apply at tick end.
@@ -33,15 +31,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class FluidTickBuffer {
 
     // Thread-safe map to collect buffers from all threads during parallel ticking
-    private static final ConcurrentHashMap<Long, ThreadBufferEntry> threadBuffers = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<DimensionKey, AtomicInteger> pendingSignals = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Thread, TickBuffer> threadBuffers = new ConcurrentHashMap<>();
+    private static final Set<DimensionKey> pendingDimensions = ConcurrentHashMap.newKeySet();
 
     // Thread ID tracker for cleanup
-    private static final ThreadLocal<Long> currentThreadId = ThreadLocal.withInitial(() -> {
+    private static final ThreadLocal<TickBuffer> currentThreadBuffer = ThreadLocal.withInitial(() -> {
         Thread thread = Thread.currentThread();
-        long threadId = thread.getId();
-        threadBuffers.computeIfAbsent(threadId, id -> new ThreadBufferEntry(thread));
-        return threadId;
+        TickBuffer buffer = new TickBuffer();
+        threadBuffers.put(thread, buffer);
+        return buffer;
     });
 
     // Last cleanup time for dead thread removal
@@ -51,10 +49,7 @@ public class FluidTickBuffer {
      * Gets the current thread's buffer, creating if necessary.
      */
     private static TickBuffer getCurrentBuffer() {
-        long threadId = currentThreadId.get();
-        ThreadBufferEntry entry = threadBuffers.computeIfAbsent(threadId, k -> new ThreadBufferEntry(Thread.currentThread()));
-        entry.lastAccessTime = System.currentTimeMillis();
-        return entry.buffer;
+        return currentThreadBuffer.get();
     }
 
     /**
@@ -128,15 +123,13 @@ public class FluidTickBuffer {
             return 0;
         }
 
-        AtomicInteger pending = pendingSignals.get(dimensionKey);
-        if (pending == null || pending.get() <= 0) {
+        if (!pendingDimensions.remove(dimensionKey)) {
             return 0;
         }
-        pending.getAndSet(0);
 
         boolean hasAnyChanges = false;
-        for (ThreadBufferEntry entry : threadBuffers.values()) {
-            if (entry.buffer.hasAnyChanges(dimensionKey)) {
+        for (TickBuffer buffer : threadBuffers.values()) {
+            if (buffer.hasAnyChanges(dimensionKey)) {
                 hasAnyChanges = true;
                 break;
             }
@@ -150,8 +143,7 @@ public class FluidTickBuffer {
         List<ComponentInvalidation> allComponentInvalidations = new ArrayList<>();
 
         // Merge and drain all thread buffers
-        for (ThreadBufferEntry entry : threadBuffers.values()) {
-            TickBuffer buffer = entry.buffer;
+        for (TickBuffer buffer : threadBuffers.values()) {
             Map<BlockPos, FluidChange> fluidChanges = buffer.drainFluidChanges(dimensionKey);
             if (fluidChanges != null && !fluidChanges.isEmpty()) {
                 allFluidChanges.putAll(fluidChanges);
@@ -228,15 +220,14 @@ public class FluidTickBuffer {
         if (level == null) {
             return false;
         }
-        AtomicInteger pending = pendingSignals.get(DimensionKey.of(level));
-        return pending != null && pending.get() > 0;
+        return pendingDimensions.contains(DimensionKey.of(level));
     }
 
     private static void markPending(LevelAccessor level) {
         if (level == null) {
             return;
         }
-        pendingSignals.computeIfAbsent(DimensionKey.of(level), ignored -> new AtomicInteger()).incrementAndGet();
+        pendingDimensions.add(DimensionKey.of(level));
     }
 
     private static List<ChunkPos> toChunkPositions(LongOpenHashSet chunkKeys) {
@@ -257,10 +248,10 @@ public class FluidTickBuffer {
      * Use this if tick is cancelled or aborted.
      */
     public static void clearBuffer() {
-        for (ThreadBufferEntry entry : threadBuffers.values()) {
-            entry.buffer.clearAll();
+        for (TickBuffer buffer : threadBuffers.values()) {
+            buffer.clearAll();
         }
-        pendingSignals.clear();
+        pendingDimensions.clear();
     }
 
     /**
@@ -270,10 +261,10 @@ public class FluidTickBuffer {
     public static void clearDimension(LevelAccessor level) {
         if (level == null) return;
         DimensionKey key = DimensionKey.of(level);
-        for (ThreadBufferEntry entry : threadBuffers.values()) {
-            entry.buffer.clearDimension(key);
+        for (TickBuffer buffer : threadBuffers.values()) {
+            buffer.clearDimension(key);
         }
-        pendingSignals.remove(key);
+        pendingDimensions.remove(key);
     }
 
     /**
@@ -281,8 +272,8 @@ public class FluidTickBuffer {
      */
     public static int getBufferedChangeCount() {
         int total = 0;
-        for (ThreadBufferEntry entry : threadBuffers.values()) {
-            total += entry.buffer.getFluidChangeCount();
+        for (TickBuffer buffer : threadBuffers.values()) {
+            total += buffer.getFluidChangeCount();
         }
         return total;
     }
@@ -292,17 +283,9 @@ public class FluidTickBuffer {
      * Called periodically from applyAll().
      */
     private static void cleanupDeadThreads() {
-        long currentTime = System.currentTimeMillis();
-        final long THREAD_TIMEOUT = 300000; // 5 minutes
-
         threadBuffers.entrySet().removeIf(entry -> {
-            ThreadBufferEntry bufferEntry = entry.getValue();
-            Thread owner = bufferEntry.threadRef.get();
-            boolean threadAlive = owner != null && owner.isAlive();
-
-            boolean expired = currentTime - bufferEntry.lastAccessTime > THREAD_TIMEOUT;
-            if (!threadAlive || expired) {
-                bufferEntry.buffer.clearAll();
+            if (!entry.getKey().isAlive()) {
+                entry.getValue().clearAll();
                 return true;
             }
             return false;
@@ -412,18 +395,4 @@ public class FluidTickBuffer {
         }
     }
 
-    /**
-     * Wrapper for TickBuffer with metadata for dead thread cleanup.
-     */
-    private static class ThreadBufferEntry {
-        final TickBuffer buffer;
-        final WeakReference<Thread> threadRef;
-        volatile long lastAccessTime;
-
-        ThreadBufferEntry(Thread ownerThread) {
-            this.buffer = new TickBuffer();
-            this.threadRef = new WeakReference<>(ownerThread);
-            this.lastAccessTime = System.currentTimeMillis();
-        }
-    }
 }

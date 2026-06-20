@@ -4,12 +4,16 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelAccessor;
 import traben.flowing_fluids.drying.DryingEventSystem;
+import traben.flowing_fluids.flood.FloodEventSystem;
 import traben.flowing_fluids.optimization.HierarchicalDistanceManager;
 import traben.flowing_fluids.performance.FluidPerformanceMonitor;
 import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
+import traben.flowing_fluids.rain.RainWaterSystem;
 import traben.flowing_fluids.snow.SnowmeltWaterSystem;
 import traben.flowing_fluids.util.DimensionKey;
+import traben.flowing_fluids.water.WaterPressureSystem;
 
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class FlowingFluidsTick {
@@ -19,23 +23,22 @@ public final class FlowingFluidsTick {
     private static final int MAX_FRONTIER_REBUILD_BUDGET_PER_TICK = 6;
     private static final long MAINTENANCE_INTERVAL_TICKS = 200L;
     private static final ConcurrentHashMap<DimensionKey, Long> lastMaintenanceTick = new ConcurrentHashMap<>();
+    private static final Set<DimensionKey> disabledDimensionsCleared = ConcurrentHashMap.newKeySet();
 
     private FlowingFluidsTick() {
     }
 
     public static void onLevelTick(ServerLevel level) {
+        DimensionKey key = DimensionKey.of(level);
         if (!FlowingFluids.config.enableMod) {
-            DryingEventSystem.onLevelUnload(level);
-            ParallelFluidEqualizer.clearDimension(level);
-            ParallelFluidTickManager.clearDimension(level);
-            SiphonFlowSystem.clearDimension(level);
-            FluidTickBuffer.clearDimension(level);
-            FluidComponentGraph.clearDimension(level);
-            ExtendedWaterlogStore.clearDimension(level);
-            FluidTickWorkloadGovernor.clearDimension(level);
-            HierarchicalDistanceManager.getInstance().clearDimension(level);
+            if (disabledDimensionsCleared.add(key)) {
+                clearRuntimeState(level);
+            }
             return;
         }
+        disabledDimensionsCleared.remove(key);
+        FloodEventSystem.onLevelTick(level);
+        RainWaterSystem.onLevelTick(level);
         DryingEventSystem.onLevelTick(level);
         SnowmeltWaterSystem.onLevelTick(level);
 
@@ -72,7 +75,6 @@ public final class FlowingFluidsTick {
         );
 
         long now = level.getGameTime();
-        DimensionKey key = DimensionKey.of(level);
         long last = lastMaintenanceTick.getOrDefault(key, Long.MIN_VALUE);
         if (last == Long.MIN_VALUE || now - last >= MAINTENANCE_INTERVAL_TICKS) {
             boolean hasSchedulerData = AdaptiveTickScheduler.hasDimensionData(level);
@@ -144,9 +146,18 @@ public final class FlowingFluidsTick {
     }
 
     public static void onLevelUnload(ServerLevel level) {
+        DimensionKey key = DimensionKey.of(level);
+        disabledDimensionsCleared.remove(key);
+        clearRuntimeState(level);
+    }
+
+    private static void clearRuntimeState(ServerLevel level) {
         lastMaintenanceTick.remove(DimensionKey.of(level));
+        FloodEventSystem.onLevelUnload(level);
+        RainWaterSystem.onLevelUnload(level);
         DryingEventSystem.onLevelUnload(level);
         SnowmeltWaterSystem.onLevelUnload(level);
+        WaterPressureSystem.onLevelUnload(level);
         AsyncSlopeSearchPlanner.clearDimension(level);
         ParallelFluidEqualizer.clearDimension(level);
         ParallelFluidTickManager.clearDimension(level);

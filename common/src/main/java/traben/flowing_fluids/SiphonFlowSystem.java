@@ -18,7 +18,9 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class SiphonFlowSystem {
@@ -36,16 +38,8 @@ public final class SiphonFlowSystem {
     private static final int NATURAL_PRESSURE_HEAD_CAP = 8;
     private static final int NO_PARENT = -1;
 
-    private static final Long2LongOpenHashMap NEXT_HYDRAULIC_PUMP_TICK = new Long2LongOpenHashMap();
-    private static final Long2LongOpenHashMap NEXT_HYDRAULIC_PRESSURE_TICK = new Long2LongOpenHashMap();
-    private static final Long2LongOpenHashMap NEXT_HYDRAULIC_SEARCH_TICK = new Long2LongOpenHashMap();
-    private static final Long2LongOpenHashMap NEXT_NATURAL_SEARCH_TICK = new Long2LongOpenHashMap();
-    private static final ConcurrentHashMap<ChunkPos, LongOpenHashSet> NEXT_HYDRAULIC_PUMP_TICK_BY_CHUNK = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ChunkPos, LongOpenHashSet> NEXT_HYDRAULIC_PRESSURE_TICK_BY_CHUNK = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ChunkPos, LongOpenHashSet> NEXT_HYDRAULIC_SEARCH_TICK_BY_CHUNK = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ChunkPos, LongOpenHashSet> NEXT_NATURAL_SEARCH_TICK_BY_CHUNK = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ResourceKey<Level>, CooldownState> COOLDOWNS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Level>, SiphonDimensionQueue> SIPHON_QUEUES = new ConcurrentHashMap<>();
-    private static final Object SIPHON_LOCK = new Object();
 
     private SiphonFlowSystem() {
     }
@@ -55,16 +49,7 @@ public final class SiphonFlowSystem {
             return;
         }
         SIPHON_QUEUES.remove(level.dimension());
-        synchronized (SIPHON_LOCK) {
-            NEXT_HYDRAULIC_PUMP_TICK.clear();
-            NEXT_HYDRAULIC_PRESSURE_TICK.clear();
-            NEXT_HYDRAULIC_SEARCH_TICK.clear();
-            NEXT_NATURAL_SEARCH_TICK.clear();
-            NEXT_HYDRAULIC_PUMP_TICK_BY_CHUNK.clear();
-            NEXT_HYDRAULIC_PRESSURE_TICK_BY_CHUNK.clear();
-            NEXT_HYDRAULIC_SEARCH_TICK_BY_CHUNK.clear();
-            NEXT_NATURAL_SEARCH_TICK_BY_CHUNK.clear();
-        }
+        COOLDOWNS.remove(level.dimension());
     }
 
     public static void clearChunk(Level level, ChunkPos chunkPos) {
@@ -85,11 +70,16 @@ public final class SiphonFlowSystem {
                 }
             }
         }
-        synchronized (SIPHON_LOCK) {
-            removeCooldownChunk(NEXT_HYDRAULIC_PUMP_TICK, NEXT_HYDRAULIC_PUMP_TICK_BY_CHUNK, chunkPos);
-            removeCooldownChunk(NEXT_HYDRAULIC_PRESSURE_TICK, NEXT_HYDRAULIC_PRESSURE_TICK_BY_CHUNK, chunkPos);
-            removeCooldownChunk(NEXT_HYDRAULIC_SEARCH_TICK, NEXT_HYDRAULIC_SEARCH_TICK_BY_CHUNK, chunkPos);
-            removeCooldownChunk(NEXT_NATURAL_SEARCH_TICK, NEXT_NATURAL_SEARCH_TICK_BY_CHUNK, chunkPos);
+        CooldownState cooldownState = COOLDOWNS.get(level.dimension());
+        if (cooldownState != null) {
+            synchronized (cooldownState) {
+                for (CooldownType type : CooldownType.values()) {
+                    removeCooldownChunk(cooldownState.cooldowns(type), cooldownState.index(type), chunkPos);
+                }
+                if (cooldownState.isEmpty()) {
+                    COOLDOWNS.remove(level.dimension(), cooldownState);
+                }
+            }
         }
     }
 
@@ -227,20 +217,20 @@ public final class SiphonFlowSystem {
             }
 
             long nozzleKey = nozzlePos.asLong();
-            if (!isCooldownReady(NEXT_HYDRAULIC_PUMP_TICK, level, nozzleKey)) {
+            if (!isCooldownReady(CooldownType.HYDRAULIC_PUMP, level, nozzleKey)) {
                 continue;
             }
 
             HydraulicPressureDestination destination = findHydraulicPressureDestination(level, sourcePos, nozzlePos,
                     nozzlePos.relative(facing), facing);
             if (destination == null) {
-                markCooldown(NEXT_HYDRAULIC_PUMP_TICK, NEXT_HYDRAULIC_PUMP_TICK_BY_CHUNK, level, nozzleKey, PUMP_COOLDOWN_TICKS);
+                markCooldown(CooldownType.HYDRAULIC_PUMP, level, nozzleKey, PUMP_COOLDOWN_TICKS);
                 continue;
             }
 
             int moved = transferHydraulicPumpIntake(level, nozzlePos, destination.pos(), facing,
                     computePumpTransferAmount(facing, destination.pressureBoost()));
-            markCooldown(NEXT_HYDRAULIC_PUMP_TICK, NEXT_HYDRAULIC_PUMP_TICK_BY_CHUNK, level, nozzleKey, PUMP_COOLDOWN_TICKS);
+            markCooldown(CooldownType.HYDRAULIC_PUMP, level, nozzleKey, PUMP_COOLDOWN_TICKS);
             if (moved > 0) {
                 AdaptiveTickScheduler.scheduleFluidTick(level, destination.pos(), Fluids.WATER, 1);
                 return true;
@@ -332,7 +322,7 @@ public final class SiphonFlowSystem {
     private static boolean tryRunHydraulicPressureField(ServerLevel level, BlockPos sourcePos, FluidState sourceFluidState) {
         if (!FlowingFluids.config.enableHydraulicBlocks
                 || sourceFluidState.getAmount() <= PUMP_MIN_SOURCE_RETAIN
-                || !isCooldownReady(NEXT_HYDRAULIC_PRESSURE_TICK, level, sourcePos.asLong())) {
+                || !isCooldownReady(CooldownType.HYDRAULIC_PRESSURE, level, sourcePos.asLong())) {
             return false;
         }
 
@@ -369,7 +359,7 @@ public final class SiphonFlowSystem {
                     currentSource.getAmount() - PUMP_MIN_SOURCE_RETAIN);
             int moved = FFFluidUtils.transferFluidAmount(level, sourcePos, destination.pos(), Fluids.WATER,
                     requested, PUMP_MIN_SOURCE_RETAIN);
-            markCooldown(NEXT_HYDRAULIC_PRESSURE_TICK, NEXT_HYDRAULIC_PRESSURE_TICK_BY_CHUNK, level, sourcePos.asLong(), PRESSURE_FIELD_COOLDOWN_TICKS);
+            markCooldown(CooldownType.HYDRAULIC_PRESSURE, level, sourcePos.asLong(), PRESSURE_FIELD_COOLDOWN_TICKS);
             if (moved > 0) {
                 AdaptiveTickScheduler.scheduleFluidTick(level, sourcePos, Fluids.WATER, 1);
                 AdaptiveTickScheduler.scheduleFluidTick(level, destination.pos(), Fluids.WATER, 1);
@@ -438,7 +428,7 @@ public final class SiphonFlowSystem {
                 || sourceFluidState.getAmount() < 2
                 || FFFluidUtils.isInOrNearInfiniteBiome(level, sourcePos, 2)
                 || !hasHydraulicHardwareNear(level, sourcePos)
-                || !isCooldownReady(NEXT_HYDRAULIC_SEARCH_TICK, level, sourcePos.asLong())) {
+                || !isCooldownReady(CooldownType.HYDRAULIC_SEARCH, level, sourcePos.asLong())) {
             return false;
         }
 
@@ -456,14 +446,14 @@ public final class SiphonFlowSystem {
                 false,
                 true,
                 true);
-        markCooldown(NEXT_HYDRAULIC_SEARCH_TICK, NEXT_HYDRAULIC_SEARCH_TICK_BY_CHUNK, level, sourcePos.asLong(), result.success() ? HYDRAULIC_COOLDOWN_TICKS : HYDRAULIC_COOLDOWN_TICKS * 2);
+        markCooldown(CooldownType.HYDRAULIC_SEARCH, level, sourcePos.asLong(), result.success() ? HYDRAULIC_COOLDOWN_TICKS : HYDRAULIC_COOLDOWN_TICKS * 2);
         return result.success() && applySiphonTransfer(level, sourcePos, result, computeHydraulicTransfer(result), 1);
     }
 
     private static boolean tryRunNaturalTerrainSiphon(ServerLevel level, BlockPos sourcePos, FluidState sourceFluidState) {
         int minFilled = Mth.clamp(FlowingFluids.config.naturalSiphonMinFilledAmount, 1, 8);
         if (sourceFluidState.getAmount() < minFilled
-                || !isCooldownReady(NEXT_NATURAL_SEARCH_TICK, level, sourcePos.asLong())
+                || !isCooldownReady(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong())
                 || !isOrdinaryFlowBlocked(level, sourcePos, sourceFluidState)
                 || isBroadOpenWaterCell(level, sourcePos, minFilled)) {
             return false;
@@ -472,11 +462,11 @@ public final class SiphonFlowSystem {
         boolean requireEnclosed = FlowingFluids.config.naturalSiphonRequireEnclosedPath;
         boolean allowOpenSurface = FlowingFluids.config.naturalSiphonAllowOpenSurface;
         if (requireEnclosed && !isEnclosedPathCell(level, sourcePos, minFilled, null)) {
-            markCooldown(NEXT_NATURAL_SEARCH_TICK, NEXT_NATURAL_SEARCH_TICK_BY_CHUNK, level, sourcePos.asLong(), FlowingFluids.config.naturalSiphonCooldownTicks);
+            markCooldown(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong(), FlowingFluids.config.naturalSiphonCooldownTicks);
             return false;
         }
         if (!allowOpenSurface && isOpenSurfaceCell(level, sourcePos)) {
-            markCooldown(NEXT_NATURAL_SEARCH_TICK, NEXT_NATURAL_SEARCH_TICK_BY_CHUNK, level, sourcePos.asLong(), FlowingFluids.config.naturalSiphonCooldownTicks);
+            markCooldown(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong(), FlowingFluids.config.naturalSiphonCooldownTicks);
             return false;
         }
 
@@ -497,7 +487,7 @@ public final class SiphonFlowSystem {
                 allowOpenSurface,
                 false);
         int cooldown = Math.max(1, FlowingFluids.config.naturalSiphonCooldownTicks);
-        markCooldown(NEXT_NATURAL_SEARCH_TICK, NEXT_NATURAL_SEARCH_TICK_BY_CHUNK, level, sourcePos.asLong(), result.success() ? cooldown : cooldown * 2);
+        markCooldown(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong(), result.success() ? cooldown : cooldown * 2);
         if (!result.success()) {
             return false;
         }
@@ -1257,23 +1247,28 @@ public final class SiphonFlowSystem {
         return level.isInWorldBounds(pos) && level.hasChunkAt(pos);
     }
 
-    private static boolean isCooldownReady(Long2LongOpenHashMap cooldowns, Level level, long key) {
-        long now = level.getGameTime();
-        synchronized (SIPHON_LOCK) {
-            return cooldowns.getOrDefault(key, Long.MIN_VALUE) <= now;
+    private static boolean isCooldownReady(CooldownType type, Level level, long key) {
+        CooldownState state = COOLDOWNS.get(level.dimension());
+        if (state == null) {
+            return true;
+        }
+        synchronized (state) {
+            return state.cooldowns(type).getOrDefault(key, Long.MIN_VALUE) <= level.getGameTime();
         }
     }
 
-    private static void markCooldown(Long2LongOpenHashMap cooldowns, ConcurrentHashMap<ChunkPos, LongOpenHashSet> index,
-                                     Level level, long key, int ticks) {
-        synchronized (SIPHON_LOCK) {
+    private static void markCooldown(CooldownType type, Level level, long key, int ticks) {
+        CooldownState state = COOLDOWNS.computeIfAbsent(level.dimension(), ignored -> new CooldownState());
+        synchronized (state) {
+            Long2LongOpenHashMap cooldowns = state.cooldowns(type);
+            Map<ChunkPos, LongOpenHashSet> index = state.index(type);
             cleanupCooldowns(cooldowns, index, level.getGameTime());
             cooldowns.put(key, level.getGameTime() + Math.max(1, ticks));
             index.computeIfAbsent(chunkPos(key), ignored -> new LongOpenHashSet()).add(key);
         }
     }
 
-    private static void cleanupCooldowns(Long2LongOpenHashMap cooldowns, ConcurrentHashMap<ChunkPos, LongOpenHashSet> index,
+    private static void cleanupCooldowns(Long2LongOpenHashMap cooldowns, Map<ChunkPos, LongOpenHashSet> index,
                                          long now) {
         if (cooldowns.size() < 4096) {
             return;
@@ -1292,7 +1287,7 @@ public final class SiphonFlowSystem {
     }
 
     private static void removeCooldownChunk(Long2LongOpenHashMap cooldowns,
-                                            ConcurrentHashMap<ChunkPos, LongOpenHashSet> index,
+                                            Map<ChunkPos, LongOpenHashSet> index,
                                             ChunkPos chunkPos) {
         LongOpenHashSet keys = index.remove(chunkPos);
         if (keys == null || keys.isEmpty()) {
@@ -1303,7 +1298,7 @@ public final class SiphonFlowSystem {
         }
     }
 
-    private static void removeCooldownIndex(ConcurrentHashMap<ChunkPos, LongOpenHashSet> index, long posKey) {
+    private static void removeCooldownIndex(Map<ChunkPos, LongOpenHashSet> index, long posKey) {
         ChunkPos chunkPos = chunkPos(posKey);
         LongOpenHashSet keys = index.get(chunkPos);
         if (keys == null) {
@@ -1331,6 +1326,49 @@ public final class SiphonFlowSystem {
         return new ChunkPos(BlockPos.getX(posKey) >> 4, BlockPos.getZ(posKey) >> 4);
     }
 
+
+    private enum CooldownType {
+        HYDRAULIC_PUMP,
+        HYDRAULIC_PRESSURE,
+        HYDRAULIC_SEARCH,
+        NATURAL_SEARCH
+    }
+
+    private static final class CooldownState {
+        private final Long2LongOpenHashMap hydraulicPump = new Long2LongOpenHashMap();
+        private final Long2LongOpenHashMap hydraulicPressure = new Long2LongOpenHashMap();
+        private final Long2LongOpenHashMap hydraulicSearch = new Long2LongOpenHashMap();
+        private final Long2LongOpenHashMap naturalSearch = new Long2LongOpenHashMap();
+        private final Map<ChunkPos, LongOpenHashSet> hydraulicPumpByChunk = new HashMap<>();
+        private final Map<ChunkPos, LongOpenHashSet> hydraulicPressureByChunk = new HashMap<>();
+        private final Map<ChunkPos, LongOpenHashSet> hydraulicSearchByChunk = new HashMap<>();
+        private final Map<ChunkPos, LongOpenHashSet> naturalSearchByChunk = new HashMap<>();
+
+        private Long2LongOpenHashMap cooldowns(CooldownType type) {
+            return switch (type) {
+                case HYDRAULIC_PUMP -> hydraulicPump;
+                case HYDRAULIC_PRESSURE -> hydraulicPressure;
+                case HYDRAULIC_SEARCH -> hydraulicSearch;
+                case NATURAL_SEARCH -> naturalSearch;
+            };
+        }
+
+        private Map<ChunkPos, LongOpenHashSet> index(CooldownType type) {
+            return switch (type) {
+                case HYDRAULIC_PUMP -> hydraulicPumpByChunk;
+                case HYDRAULIC_PRESSURE -> hydraulicPressureByChunk;
+                case HYDRAULIC_SEARCH -> hydraulicSearchByChunk;
+                case NATURAL_SEARCH -> naturalSearchByChunk;
+            };
+        }
+
+        private boolean isEmpty() {
+            return hydraulicPump.isEmpty()
+                    && hydraulicPressure.isEmpty()
+                    && hydraulicSearch.isEmpty()
+                    && naturalSearch.isEmpty();
+        }
+    }
     private static final class SiphonDimensionQueue {
         private final LongArrayFIFOQueue pending = new LongArrayFIFOQueue();
         private final LongOpenHashSet queuedPositions = new LongOpenHashSet();

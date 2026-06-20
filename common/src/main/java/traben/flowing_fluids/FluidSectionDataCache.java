@@ -50,8 +50,15 @@ public final class FluidSectionDataCache {
         if (fluid == null) {
             return 0;
         }
-        Fluid present = fluidType(x, y, z);
-        return present != null && present.isSame(fluid) ? amount(x, y, z) : 0;
+        SectionData section = getSection(x, y, z);
+        if (!section.loaded()) {
+            return 0;
+        }
+        int index = sectionIndex(x, y, z);
+        Fluid present = section.fluids()[index];
+        return present != null && present.isSame(fluid)
+                ? FluidAmountConverter.toBlockState(section.amounts()[index] & 0xFFFF)
+                : 0;
     }
 
     short rawAmount(int x, int y, int z) {
@@ -105,8 +112,10 @@ public final class FluidSectionDataCache {
         int y = pos.getY();
         int z = pos.getZ();
 
-        byte belowFlags = flags(x, y - 1, z);
-        Fluid belowFluid = fluidType(x, y - 1, z);
+        SectionData belowSection = getSection(x, y - 1, z);
+        int belowIndex = sectionIndex(x, y - 1, z);
+        byte belowFlags = belowSection.loaded() ? belowSection.flags()[belowIndex] : 0;
+        Fluid belowFluid = belowSection.loaded() ? belowSection.fluids()[belowIndex] : null;
         if (belowFluid != null && (fallbackFluid == null || belowFluid.isSame(fallbackFluid))) {
             score += 3;
         } else if ((belowFlags & LOADED) != 0 && (belowFlags & AIR) == 0 && (belowFlags & REPLACEABLE) == 0) {
@@ -136,8 +145,13 @@ public final class FluidSectionDataCache {
         int height = 0;
         for (int step = 1; step <= maxScan; step++) {
             int y = origin.getY() + step;
-            Fluid fluid = fluidType(x, y, z);
-            if (fluid == null || !fluid.isSame(sourceFluid) || amount(x, y, z) <= 0) {
+            SectionData section = getSection(x, y, z);
+            if (!section.loaded()) {
+                break;
+            }
+            int index = sectionIndex(x, y, z);
+            Fluid fluid = section.fluids()[index];
+            if (fluid == null || !fluid.isSame(sourceFluid) || (section.amounts()[index] & 0xFFFF) <= 0) {
                 break;
             }
             height++;

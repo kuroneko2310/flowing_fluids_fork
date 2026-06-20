@@ -1,11 +1,7 @@
 package traben.flowing_fluids.rain;
 
 import net.minecraft.util.Mth;
-import net.minecraft.world.level.ChunkPos;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import traben.flowing_fluids.ChunkWorkSelector;
 
 final class RainMath {
 
@@ -74,79 +70,13 @@ final class RainMath {
                                                int maxChunks,
                                                long timeSlice,
                                                long seedSalt) {
-        if (chunkPositions.length != nearestPlayerRings.length) {
-            throw new IllegalArgumentException("Chunk position and ring arrays must be the same length.");
-        }
-        if (maxChunks <= 0 || chunkPositions.length <= maxChunks) {
-            return Arrays.copyOf(chunkPositions, chunkPositions.length);
-        }
-
-        int maxRing = 0;
-        for (int ring : nearestPlayerRings) {
-            maxRing = Math.max(maxRing, Math.max(0, ring));
-        }
-
-        @SuppressWarnings("unchecked")
-        List<ChunkSelectionData>[] buckets = new List[maxRing + 1];
-        for (int i = 0; i < chunkPositions.length; i++) {
-            int ring = Math.max(0, nearestPlayerRings[i]);
-            if (buckets[ring] == null) {
-                buckets[ring] = new ArrayList<>();
-            }
-
-            long packed = chunkPositions[i];
-            int chunkX = ChunkPos.getX(packed);
-            int chunkZ = ChunkPos.getZ(packed);
-            buckets[ring].add(new ChunkSelectionData(
-                    packed,
-                    computeChunkSelectionOrder(timeSlice, chunkX, chunkZ, ring, seedSalt)
-            ));
-        }
-
-        for (List<ChunkSelectionData> bucket : buckets) {
-            if (bucket == null || bucket.size() <= 1) {
-                continue;
-            }
-            bucket.sort((left, right) -> Long.compare(right.selectionOrder(), left.selectionOrder()));
-        }
-
-        int ringCount = buckets.length;
-        int[] bucketIndices = new int[ringCount];
-        long[] selected = new long[maxChunks];
-        int selectedCount = 0;
-        int startRing = chooseChunkSelectionStartRing(timeSlice, ringCount, seedSalt);
-
-        while (selectedCount < maxChunks) {
-            boolean addedAny = false;
-            for (int offset = 0; offset < ringCount && selectedCount < maxChunks; offset++) {
-                int ring = Math.floorMod(startRing + offset, ringCount);
-                List<ChunkSelectionData> bucket = buckets[ring];
-                int bucketIndex = bucketIndices[ring];
-                if (bucket == null || bucketIndex >= bucket.size()) {
-                    continue;
-                }
-
-                selected[selectedCount++] = bucket.get(bucketIndex).packedPos();
-                bucketIndices[ring] = bucketIndex + 1;
-                addedAny = true;
-            }
-
-            if (!addedAny) {
-                break;
-            }
-
-            startRing = Math.floorMod(startRing - 1, ringCount);
-        }
-
-        return selectedCount == selected.length ? selected : Arrays.copyOf(selected, selectedCount);
+        return ChunkWorkSelector.selectDistributed(
+                chunkPositions, nearestPlayerRings, maxChunks, timeSlice, seedSalt);
     }
-
     private static long mix64(long value) {
         value = (value ^ (value >>> 30)) * 0xbf58476d1ce4e5b9L;
         value = (value ^ (value >>> 27)) * 0x94d049bb133111ebL;
         return value ^ (value >>> 31);
     }
 
-    private record ChunkSelectionData(long packedPos, long selectionOrder) {
-    }
 }
