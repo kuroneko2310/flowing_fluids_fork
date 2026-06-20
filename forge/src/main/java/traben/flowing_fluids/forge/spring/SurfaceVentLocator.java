@@ -79,19 +79,21 @@ public final class SurfaceVentLocator {
         BlockPos springPos = vent.springPos();
         BlockPos mouthPos = vent.mouthPos();
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        boolean shaftOpenToMouth = true;
 
         for (int y = springPos.getY() + 1; y <= mouthPos.getY(); y++) {
             cursor.set(springPos.getX(), y, springPos.getZ());
             BlockState state = level.getBlockState(cursor);
             FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
             if (!SpringFluidEmitter.canEmitInto(state, fluidState, fluid)) {
-                return;
+                shaftOpenToMouth = false;
+                break;
             }
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, cursor, fluid, 8);
             AdaptiveTickScheduler.scheduleFluidTick(level, cursor, fluid, fluid.getTickDelay(level));
         }
 
-        if (keepSpoutRaised) {
+        if (keepSpoutRaised && shaftOpenToMouth) {
             int crestHeight = crestHeightFor(vent.strength());
             sustainRaisedCrest(level, mouthPos, fluid, crestHeight);
             sprayFountain(level, mouthPos, fluid, crestHeight, sprayBurstsFor(vent.strength()));

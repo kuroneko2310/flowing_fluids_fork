@@ -83,15 +83,17 @@ class SpringSourcePreservationTest {
     }
 
     @Test
-    void surfaceVentsStopCompletelyWhenTheirShaftIsBlocked() throws IOException {
+    void surfaceVentsFillUpToABlockerWithoutGeneratingAboveIt() throws IOException {
         String source = Files.readString(springSourcePath("SurfaceVentLocator.java"));
         String sustain = methodBody(source, "public static void sustainSurfaceVent");
         String shaft = methodBody(source, "private static boolean hasPassableShaft");
 
         assertTrue(sustain.contains("if (!SpringFluidEmitter.canEmitInto"),
                 "Surface vents must revalidate every shaft cell while sustaining water.");
-        assertTrue(sustain.contains("return;"),
-                "A blocked shaft must stop before crest or spray generation above the blocker.");
+        assertTrue(sustain.contains("shaftOpenToMouth = false;") && sustain.contains("break;"),
+                "A blocked shaft must retain the water filled below it instead of aborting the whole pulse.");
+        assertTrue(sustain.contains("if (keepSpoutRaised && shaftOpenToMouth)"),
+                "Crest and spray generation must only run when water actually reached the mouth.");
         assertTrue(shaft.contains("SpringFluidEmitter.canEmitInto"),
                 "Surface vent discovery must use the same strict spring obstruction rule.");
     }
