@@ -34,27 +34,25 @@ public final class ExtendedWaterlogStore {
     public static FluidState get(LevelAccessor level, BlockPos pos) {
         DimensionStore store = STORE.get(DimensionKey.of(level));
         if (store == null) return Fluids.EMPTY.defaultFluidState();
-        synchronized (store) {
-            StoredFluid stored = store.byPosition.get(pos.asLong());
-            return stored == null ? Fluids.EMPTY.defaultFluidState() : stored.state();
-        }
+        StoredFluid stored = store.byPosition.get(pos.asLong());
+        return stored == null ? Fluids.EMPTY.defaultFluidState() : stored.state();
     }
 
     public static int getAmount(LevelAccessor level, BlockPos pos) {
         DimensionStore store = STORE.get(DimensionKey.of(level));
         if (store == null) return 0;
-        synchronized (store) {
-            StoredFluid stored = store.byPosition.get(pos.asLong());
-            return stored == null ? 0 : stored.amount();
-        }
+        StoredFluid stored = store.byPosition.get(pos.asLong());
+        return stored == null ? 0 : stored.amount();
     }
 
     public static boolean has(LevelAccessor level, BlockPos pos) {
         DimensionStore store = STORE.get(DimensionKey.of(level));
-        if (store == null) return false;
-        synchronized (store) {
-            return store.byPosition.containsKey(pos.asLong());
-        }
+        return store != null && store.byPosition.containsKey(pos.asLong());
+    }
+
+    public static boolean hasDimensionData(LevelAccessor level) {
+        DimensionStore store = STORE.get(DimensionKey.of(level));
+        return store != null && !store.byPosition.isEmpty();
     }
 
     public static void set(LevelAccessor level, BlockPos pos, Fluid fluid, int amount) {

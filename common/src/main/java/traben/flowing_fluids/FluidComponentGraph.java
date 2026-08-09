@@ -1,7 +1,8 @@
 package traben.flowing_fluids;
 
-import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -268,6 +269,7 @@ public final class FluidComponentGraph {
         }
         int componentId = NEXT_COMPONENT_ID.getAndIncrement();
         LongOpenHashSet visited = new LongOpenHashSet();
+        IntOpenHashSet supersededComponentIds = new IntOpenHashSet();
         LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
         queue.enqueue(seedKey);
         visited.add(seedKey);
@@ -279,15 +281,17 @@ public final class FluidComponentGraph {
         int inletCells = 0;
         int minY = seedPos.getY();
         int maxY = seedPos.getY();
+        int processedCells = 0;
         boolean partial = false;
 
         while (!queue.isEmpty()) {
             long currentKey = queue.dequeueLong();
-            rebuiltCells.add(currentKey);
-            if (visited.size() > maxNodes) {
+            if (processedCells >= maxNodes) {
                 partial = true;
                 break;
             }
+            rebuiltCells.add(currentKey);
+            processedCells++;
             int x = BlockPos.getX(currentKey);
             int y = BlockPos.getY(currentKey);
             int z = BlockPos.getZ(currentKey);
@@ -310,7 +314,10 @@ public final class FluidComponentGraph {
 
             graph.cells.put(currentKey, new FluidComponentCell(seedFluid, amount, componentId,
                 shape.frontier(), shape.outlet(), shape.inlet()));
-            graph.componentByCell.put(currentKey, componentId);
+            Integer previousComponentId = graph.componentByCell.put(currentKey, componentId);
+            if (previousComponentId != null && previousComponentId > 0 && previousComponentId != componentId) {
+                supersededComponentIds.add(previousComponentId.intValue());
+            }
             trackCell(graph, currentKey);
 
             for (Direction direction : ALL_DIRECTIONS) {
@@ -329,8 +336,11 @@ public final class FluidComponentGraph {
             }
         }
 
+        for (int supersededComponentId : supersededComponentIds) {
+            graph.summaries.remove(supersededComponentId);
+        }
         graph.summaries.put(componentId, new FluidComponentSummary(componentId, seedFluid,
-            visited.size(), totalMass, frontierCells, outletCells, inletCells, minY, maxY, partial));
+            processedCells, totalMass, frontierCells, outletCells, inletCells, minY, maxY, partial));
     }
 
     private static CellShape classifyCell(Level level, ComponentSampleCache cache, int x, int y, int z, Fluid fluid) {

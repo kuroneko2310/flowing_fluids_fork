@@ -283,7 +283,8 @@ public abstract class MixinFlowingFluid extends Fluid {
             final BlockPos.MutableBlockPos movingDirAbove = pos.above().mutable();
             boolean stablePath = true;
 
-            for (int i = 0; i < FlowingFluids.config.randomTickLevelingDistance; i++) {
+            int searchDistance = Math.min(FlowingFluids.config.randomTickLevelingDistance, maxTransferDistance);
+            for (int i = 0; i < searchDistance; i++) {
                 Direction step = straightOnly ? randomDirection : (random.nextBoolean() ? randomDirection : offStep);
                 movingDir.move(step);
                 movingDirAbove.move(step);
@@ -458,7 +459,9 @@ public abstract class MixinFlowingFluid extends Fluid {
                 ) {
                     waterProfile = flowing_fluids$getWaterFlowProfile(level, blockPos, fluidState, fluidState.getAmount());
                     distanceManager = HierarchicalDistanceManager.getInstance();
-                    rangeTier = distanceManager.getSimulationTier(blockPos, level);
+                    rangeTier = FlowingFluids.config.enableDistanceBasedOptimization
+                            ? distanceManager.getSimulationTier(blockPos, level)
+                            : HierarchicalDistanceManager.RangeTier.NEAR;
                     boolean forcedRecheck = AdaptiveTickScheduler.hasForcedRecheck(level, blockPos);
                     HierarchicalDistanceManager.TerrainType terrainType = distanceManager.estimateTerrainType(blockPos, level);
                     effectiveFlowDistance = distanceManager.getEffectiveFlowDistance(

@@ -22,7 +22,7 @@ public abstract class MixinRenderChunkRegion {
     @Final
     protected Level level;
 
-    @Inject(method = "getFluidState", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getFluidState", at = @At("RETURN"), cancellable = true)
     private void ff$useEffectiveFluidState(BlockPos pos, CallbackInfoReturnable<FluidState> cir) {
         if (FlowingFluids.config == null
                 || !FlowingFluids.config.enableMod
@@ -30,11 +30,15 @@ public abstract class MixinRenderChunkRegion {
             return;
         }
 
-        BlockState state = level.getBlockState(pos);
-        if (!ExtendedWaterlogStore.has(level, pos) && !FFFluidUtils.canStoreVirtualFluidState(level, state)) {
+        FluidState stored = ExtendedWaterlogStore.get(level, pos);
+        if (stored.isEmpty()) {
             return;
         }
-
-        cir.setReturnValue(FFFluidUtils.getEffectiveFluidState(level, pos, state));
+        BlockState state = level.getBlockState(pos);
+        if (FFFluidUtils.canStoreVirtualFluidState(level, state)) {
+            cir.setReturnValue(stored);
+        } else {
+            cir.setReturnValue(FFFluidUtils.getEffectiveFluidState(level, pos, state));
+        }
     }
 }

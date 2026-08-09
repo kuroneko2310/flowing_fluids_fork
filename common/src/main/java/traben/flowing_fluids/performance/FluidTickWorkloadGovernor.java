@@ -89,14 +89,7 @@ public final class FluidTickWorkloadGovernor {
             return Math.max(0, queuedWakeTicks);
         }
         int base = computeBulkWakeFlushBudgetForMspt(getMspt(level));
-        base = Math.min(base, configured);
-        if (queuedWakeTicks >= 131_072) {
-            return Math.min(configured, Math.max(base, 4096));
-        }
-        if (queuedWakeTicks >= 32_768) {
-            return Math.min(configured, Math.max(base, 2048));
-        }
-        return base;
+        return Math.min(base, configured);
     }
 
     public static int getBulkWakeMaxDelay(Level level, int queuedWakeTicks) {
@@ -122,17 +115,17 @@ public final class FluidTickWorkloadGovernor {
         int distancePenalty = Math.max(0, flowDistance - 2) * 384;
         int budget;
         if (mspt >= 250.0) {
-            budget = Math.max(EXTREME_BUDGET, 512);
+            budget = EXTREME_BUDGET;
         } else if (mspt >= 120.0) {
-            budget = Math.max(CRITICAL_BUDGET, 2048);
+            budget = CRITICAL_BUDGET;
         } else if (mspt >= 70.0) {
-            budget = Math.max(OVERLOADED_BUDGET, 8192);
+            budget = OVERLOADED_BUDGET;
         } else if (mspt >= 45.0) {
-            budget = Math.max(BUSY_BUDGET, 16_384);
+            budget = BUSY_BUDGET;
         } else {
-            budget = Math.max(HEALTHY_BUDGET, 65_536);
+            budget = HEALTHY_BUDGET;
         }
-        return Math.max(256, budget - distancePenalty);
+        return Math.max(EXTREME_BUDGET, budget - distancePenalty);
     }
 
     static boolean shouldSpatiallyDefer(BlockPos pos, Fluid fluid, long gameTime, double mspt, int flowDistance) {
@@ -173,18 +166,18 @@ public final class FluidTickWorkloadGovernor {
 
     static int computeBulkWakeFlushBudgetForMspt(double mspt) {
         if (mspt >= 250.0) {
-            return 1024;
+            return 128;
         }
         if (mspt >= 120.0) {
-            return 2048;
+            return 384;
         }
         if (mspt >= 70.0) {
-            return 8192;
+            return 1024;
         }
         if (mspt >= 45.0) {
-            return 16_384;
+            return 2048;
         }
-        return 32_768;
+        return 4096;
     }
 
     private static int getBaseDeferredDelay(Level level, int flowDistance) {

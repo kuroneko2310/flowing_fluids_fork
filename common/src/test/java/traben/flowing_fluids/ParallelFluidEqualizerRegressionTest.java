@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -112,5 +113,13 @@ class ParallelFluidEqualizerRegressionTest {
         assertTrue(quietBudget >= 32);
         assertTrue(backedUpBudget >= 32);
         assertTrue(backedUpBudget < quietBudget);
+    }
+
+    @Test
+    void snapshotCaptureBudgetProtectsTheServerThreadUnderLoad() {
+        assertEquals(4, ParallelFluidEqualizer.getSnapshotCaptureBudget(20.0, 0));
+        assertEquals(2, ParallelFluidEqualizer.getSnapshotCaptureBudget(55.0, 0));
+        assertEquals(1, ParallelFluidEqualizer.getSnapshotCaptureBudget(90.0, 0));
+        assertEquals(1, ParallelFluidEqualizer.getSnapshotCaptureBudget(20.0, 48));
     }
 }
