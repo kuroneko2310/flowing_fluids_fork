@@ -125,7 +125,7 @@ class SpringSourcePreservationTest {
     @Test
     void sharedFluidWritesCannotTreatSpringSourcesAsVirtualFluidCells() throws IOException {
         String source = Files.readString(sharedSourcePath("common/src/main/java/traben/flowing_fluids/FFFluidUtils.java"));
-        String support = methodBody(source, "public static boolean supportsVirtualFluidState");
+        String support = methodBody(source, "public static boolean canStoreVirtualFluidState");
         String writer = methodBody(source, "public static boolean setFluidStateAtPosToNewAmount");
         String remover = methodBody(source, "public static boolean removeAllFluidAtPos");
         String surfaceDrain = methodBody(source, "public static int getInfiniteBiomeSurfaceDrainAmount");

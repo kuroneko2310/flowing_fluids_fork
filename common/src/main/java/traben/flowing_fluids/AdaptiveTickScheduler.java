@@ -655,7 +655,8 @@ public class AdaptiveTickScheduler {
         if (!neighborFluid.isEmpty()) {
             return false;
         }
-        return neighborState.isSolid();
+        return neighborState.isSolid()
+                && !FFFluidUtils.isPassThroughFluidBlock(level, neighborState, null);
     }
 
     /**

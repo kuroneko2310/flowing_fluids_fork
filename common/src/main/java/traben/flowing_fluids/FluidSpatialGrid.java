@@ -25,8 +25,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Multi-resolution spatial hash grid for ultra-fast fluid position queries.
  *
  * Three-layer architecture:
- * - Layer 1 (Macro): 16×16×16 cells per chunk - fluid presence, average level, gradient
- * - Layer 2 (Fine): 1×1×1 block-level - active internal fluid amount (0-63)
+ * - Layer 1 (Macro): 16ÁE6ÁE6 cells per chunk - fluid presence, average level, gradient
+ * - Layer 2 (Fine): 1ÁEÁE block-level - active internal fluid amount (0-63)
  * - Layer 3 (Connectivity): Connected component IDs - track fluid regions to avoid redundant BFS
  *
  * Performance improvement: 60-80% reduction in BFS search nodes, O(1) queries
@@ -644,8 +644,8 @@ public class FluidSpatialGrid {
     /**
      * Internal multi-resolution grid for a single chunk.
      *
-     * Layer 1 (Macro): 16×16×16 cells - stores fluid presence, average level, gradient direction
-     * Layer 2 (Fine): 1×1×1 blocks - stores active internal fluid amount (0-63)
+     * Layer 1 (Macro): 16ÁE6ÁE6 cells - stores fluid presence, average level, gradient direction
+     * Layer 2 (Fine): 1ÁEÁE blocks - stores active internal fluid amount (0-63)
      * Layer 3 (Connectivity): Connected component IDs for each fluid region
      */
     private static class ChunkFluidGrid {
@@ -1158,7 +1158,7 @@ public class FluidSpatialGrid {
 
             if (neighborState.isAir()
                     || neighborState.canBeReplaced(sourceFluid)
-                    || FFFluidUtils.supportsVirtualFluidState(level, neighborState)) {
+                    || FFFluidUtils.canStoreVirtualFluidState(level, neighborState)) {
                 return true;
             }
         }
@@ -1211,7 +1211,7 @@ public class FluidSpatialGrid {
 
             if (neighborState.isAir()
                     || neighborState.canBeReplaced(sourceFluid)
-                    || FFFluidUtils.supportsVirtualFluidState(level, neighborState)) {
+                    || FFFluidUtils.canStoreVirtualFluidState(level, neighborState)) {
                 return true;
             }
         }

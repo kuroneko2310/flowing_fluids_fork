@@ -88,12 +88,22 @@ class MixinFlowingFluidRegressionTest {
         String spreadTo = methodBody(source, "protected void flowing_fluids$spreadTo2");
         String setOrRemove = methodBody(source, "private void flowing_fluids$setOrRemoveWaterAmountAt");
 
-        assertTrue(spreadTo.contains("supportsVirtualFluidState")
+        assertTrue(spreadTo.contains("canStoreVirtualFluidState")
                         && spreadTo.contains("setFluidStateAtPosToNewAmount"),
                 "Virtual waterlogged targets must update the internal fluid store instead of relying on vanilla spreadTo.");
-        assertTrue(setOrRemove.contains("supportsVirtualFluidState")
+        assertTrue(setOrRemove.contains("canStoreVirtualFluidState")
                         && setOrRemove.contains("setFluidStateAtPosToNewAmount"),
                 "Virtual waterlogged sources must reduce their stored amount when they emit water.");
+    }
+
+    @Test
+    void flowTickUsesEffectiveVirtualFluidAmountInsteadOfVanillaSourceAmount() throws IOException {
+        String source = Files.readString(sourcePath("common/src/main/java/traben/flowing_fluids/mixin/MixinFlowingFluid.java"));
+        String tick = methodBody(source, "private void ff$tickMixin");
+
+        assertTrue(tick.contains("getEffectiveFluidState(level, blockPos, thisState)")
+                        && tick.contains("fluidState = effectiveTickState"),
+                "Flow ticks must use the stored virtual fluid amount so non-full blocks do not behave like infinite sources.");
     }
 
     private static String methodBody(String source, String signature) {

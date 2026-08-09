@@ -245,7 +245,7 @@ public final class LavaFlowProfile {
         SampledCell below = sampleCell(level, cursor.set(pos.getX(), pos.getY() - 1, pos.getZ()), fluidType, sectionCache);
         boolean hasFluidAbove = above.matches(fluidType);
         boolean supportedBelow = (below.matches(fluidType) && below.amount() >= amount)
-            || (!below.air() && !below.replaceable());
+            || below.isSolidSupport();
 
         BlockState sourceState = flowingFluid != null ? level.getBlockState(pos) : null;
         boolean immediateDownwardOutlet = false;
@@ -297,7 +297,8 @@ public final class LavaFlowProfile {
                 sectionCache.fluidType(x, y, z),
                 sectionCache.amount(x, y, z),
                 sectionCache.isAir(x, y, z),
-                sectionCache.isReplaceable(x, y, z)
+                sectionCache.isReplaceable(x, y, z),
+                sectionCache.isPassThrough(x, y, z)
             );
         }
         BlockState state = level.getBlockState(cursor);
@@ -306,7 +307,8 @@ public final class LavaFlowProfile {
             fluidState.isEmpty() ? null : fluidState.getType(),
             fluidState.getAmount(),
             state.isAir(),
-            state.canBeReplaced(fluidType)
+            state.canBeReplaced(fluidType),
+            FFFluidUtils.isPassThroughFluidBlock(level, state, null)
         );
     }
 
@@ -325,13 +327,17 @@ public final class LavaFlowProfile {
                                        int surfaceEdgeCount) {
     }
 
-    private record SampledCell(@Nullable Fluid fluid, int amount, boolean air, boolean replaceable) {
+    private record SampledCell(@Nullable Fluid fluid, int amount, boolean air, boolean replaceable, boolean passThrough) {
         private boolean matches(Fluid targetFluid) {
             return fluid != null && fluid.isSame(targetFluid) && amount > 0;
         }
 
         private boolean isSurfaceEdge() {
-            return amount <= 0 && (air || replaceable);
+            return amount <= 0 && (air || replaceable || passThrough);
+        }
+
+        private boolean isSolidSupport() {
+            return !air && !replaceable && !passThrough;
         }
     }
 }

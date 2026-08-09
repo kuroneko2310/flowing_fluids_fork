@@ -196,7 +196,7 @@ public abstract class MixinFlowingFluid extends Fluid {
     ) {
         //check if either too or from is water loggable and if so exit early if we cannot perform this flow due to settings
         boolean fromIsWaterloggableVanilla = FFFluidUtils.isVanillaWaterloggable(thisState);
-        boolean fromUsesVirtualFluidState = FFFluidUtils.supportsVirtualFluidState(level, thisState);
+        boolean fromUsesVirtualFluidState = FFFluidUtils.canStoreVirtualFluidState(level, thisState);
         boolean fromNeedsSpecialHandling = fromIsWaterloggableVanilla || fromUsesVirtualFluidState;
         if (fromIsWaterloggableVanilla
                 && (flowingDown ? //cannot flow out
@@ -208,7 +208,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         var blockToState = level.getBlockState(posTo);
         var blockTo = blockToState.getBlock();
         boolean toIsWaterloggableVanilla = FFFluidUtils.isVanillaWaterloggable(blockToState);
-        boolean toUsesVirtualFluidState = FFFluidUtils.supportsVirtualFluidState(level, blockToState);
+        boolean toUsesVirtualFluidState = FFFluidUtils.canStoreVirtualFluidState(level, blockToState);
         boolean toNeedsSpecialHandling = toIsWaterloggableVanilla || toUsesVirtualFluidState;
         if (toIsWaterloggableVanilla && FlowingFluids.config.waterLogFlowMode.blocksFlowIn(flowingDown)) {//cannot flow in
             return true;
@@ -357,7 +357,7 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Inject(method = "tick", at = @At(value = "HEAD"), cancellable = true)
-    private void ff$tickMixin(final #if MC > MC_21 ServerLevel #else Level #endif level, final BlockPos blockPos,#if MC > MC_21 BlockState thisState, #endif final FluidState fluidState, final CallbackInfo ci) {
+    private void ff$tickMixin(final #if MC > MC_21 ServerLevel #else Level #endif level, final BlockPos blockPos,#if MC > MC_21 BlockState thisState, #endif FluidState fluidState, final CallbackInfo ci) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.isFluidAllowed(fluidState)) {
             final boolean monitorEnabled = FlowingFluids.config.enablePerformanceMonitoring;
@@ -405,6 +405,17 @@ public abstract class MixinFlowingFluid extends Fluid {
             ff$getConnectedHeadCache().clear();
             ff$getSectionSampleContext().begin(level);
 
+            #if MC <= MC_21
+            BlockState thisState = level.getBlockState(blockPos);
+            #endif
+            FluidState effectiveTickState = FFFluidUtils.getEffectiveFluidState(level, blockPos, thisState);
+            if (effectiveTickState.getType().isSame(this)
+                    && effectiveTickState.getAmount() > 0
+                    && (!effectiveTickState.getType().isSame(fluidState.getType())
+                    || effectiveTickState.getAmount() != fluidState.getAmount())) {
+                fluidState = effectiveTickState;
+            }
+
             boolean withinInfBiomeHeights = FFFluidUtils.isWithinInfiniteBiomeRefillBand(level, blockPos);
 
             boolean isWaterAndInfiniteBiome = fluidState.is(FluidTags.WATER)
@@ -422,10 +433,6 @@ public abstract class MixinFlowingFluid extends Fluid {
                     && level.getRandom().nextFloat() < FlowingFluids.config.infiniteWaterBiomeNonConsumeChance
                     && FFFluidUtils.hasStableInfiniteSourceShape(
                     level, blockPos, fluidState.getType(), fluidState.getAmount());
-
-            #if MC <= MC_21
-            BlockState thisState = level.getBlockState(blockPos);
-            #endif
 
             try {
                 if (fluidState.is(FluidTags.WATER)) {
@@ -1517,7 +1524,7 @@ public abstract class MixinFlowingFluid extends Fluid {
     @Unique
     private void flowing_fluids$setOrRemoveWaterAmountAt(final Level level, final BlockPos blockPos, final int amount, final BlockState thisState, Direction direction) {
         if (amount > 0) {
-            if (FFFluidUtils.supportsVirtualFluidState(level, thisState)) {
+            if (FFFluidUtils.canStoreVirtualFluidState(level, thisState)) {
                 FFFluidUtils.setFluidStateAtPosToNewAmount(level, blockPos, this, amount);
                 return;
             }
@@ -2394,7 +2401,7 @@ public abstract class MixinFlowingFluid extends Fluid {
                     || flowing_fluids$hasImmediateSurfaceEdge(level, targetPos, sourceState.getType())) {
                 return false;
             }
-            // 谿�E�蟾�E�蜁E��蜿�E�縺後≠繧九�E繧画椛蛻�E�縺励↑縺・
+            // Let nearby step-down outlets drain before treating the pair as contained.
             if (flowing_fluids$hasNearbyStepDownOutlet(level, sourcePos, sourceState.getType(), sourceAmount)
                     || flowing_fluids$hasNearbyStepDownOutlet(level, targetPos, sourceState.getType(), Math.max(1, targetAmount))) {
                 return false;
@@ -2538,8 +2545,7 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     /**
-     * 霁E��驥冗沿: 荳区婿蜷代↓豬√ｌ繧峨�E�繧九°縺�E�邁E��譏薙メ繧�E�繝�EぁE
-     * canSpreadToOptionallySameOrEmpty 縺�E�莉｣繧上ｊ縺�E�菴�E�逕ｨ縺励※鬮倬溷喧
+     * Fast downward probe used instead of the heavier spread option check.
      */
     @Unique
     private boolean flowing_fluids$canFlowDownFast(Level level, BlockState belowState, FluidState belowFluid, Fluid sourceFluid, int sourceAmount) {
@@ -2844,7 +2850,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         BlockState belowState = level.getBlockState(pos.below());
         FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, pos.below(), belowState);
         boolean supportedBelow = (belowFluid.getType().isSame(fluidState.getType()) && belowFluid.getAmount() >= amount)
-                || (!belowState.isAir() && !belowState.canBeReplaced(fluidState.getType()));
+                || FFFluidUtils.isFluidSupportBlock(level, belowState, Direction.DOWN, fluidState.getType());
         if (!supportedBelow) {
             return false;
         }
@@ -3015,7 +3021,7 @@ public abstract class MixinFlowingFluid extends Fluid {
 
     @Unique
     protected void flowing_fluids$spreadTo2(LevelAccessor levelAccessor, BlockPos blockPos, BlockState blockState, Direction direction, int amount) {
-        if (FFFluidUtils.supportsVirtualFluidState(levelAccessor, blockState)) {
+        if (FFFluidUtils.canStoreVirtualFluidState(levelAccessor, blockState)) {
             FluidState before = FFFluidUtils.getEffectiveFluidState(levelAccessor, blockPos, blockState);
             FFFluidUtils.setFluidStateAtPosToNewAmount(levelAccessor, blockPos, this, amount);
             FluidState updated = FFFluidUtils.getEffectiveFluidState(levelAccessor, blockPos, levelAccessor.getBlockState(blockPos));

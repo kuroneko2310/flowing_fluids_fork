@@ -108,7 +108,7 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
                     BlockState blockState = level.getBlockState(blockPos);
                     FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, blockPos, blockState);
                     boolean canUseHitBlock = (this.content == Fluids.WATER
-                            && (FFFluidUtils.supportsVirtualFluidState(level, blockState)
+                            && (FFFluidUtils.canStoreVirtualFluidState(level, blockState)
                             || blockState.getBlock() instanceof LiquidBlockContainer))
                             || (this.content.isSame(fluidState.getType()) && fluidState.getAmount() < 8);
                     BlockPos blockPos3 = canUseHitBlock
@@ -159,7 +159,7 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
             var fluidState = FFFluidUtils.getEffectiveFluidState(level, blockPos, state);
 
             boolean fluidIsSameAsContent = this.content.isSame(fluidState.getType());
-            boolean virtualTarget = FFFluidUtils.supportsVirtualFluidState(level, state);
+            boolean virtualTarget = FFFluidUtils.canStoreVirtualFluidState(level, state);
             boolean canPlaceLiquidInPos = state.canBeReplaced(this.content)
                     || state.isAir()
                     || fluidIsSameAsContent

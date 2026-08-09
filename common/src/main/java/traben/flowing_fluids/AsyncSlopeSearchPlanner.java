@@ -55,7 +55,7 @@ public final class AsyncSlopeSearchPlanner {
         if (!FlowingFluids.config.enableDistanceBasedOptimization) {
             return false;
         }
-        if (FFFluidUtils.supportsVirtualFluidState(level, sourceState)) {
+        if (FFFluidUtils.canStoreVirtualFluidState(level, sourceState)) {
             return false;
         }
         for (int i = 0; i < directionCount; i++) {
@@ -65,7 +65,7 @@ public final class AsyncSlopeSearchPlanner {
             }
             BlockPos neighborPos = sourcePos.relative(direction);
             BlockState neighborState = level.getBlockState(neighborPos);
-            if (FFFluidUtils.supportsVirtualFluidState(level, neighborState)
+            if (FFFluidUtils.canStoreVirtualFluidState(level, neighborState)
                     || FFFluidUtils.isPassThroughFluidBlock(level, neighborState, direction)) {
                 return false;
             }
@@ -74,7 +74,7 @@ public final class AsyncSlopeSearchPlanner {
                 continue;
             }
             BlockState belowState = level.getBlockState(belowPos);
-            if (FFFluidUtils.supportsVirtualFluidState(level, belowState)) {
+            if (FFFluidUtils.canStoreVirtualFluidState(level, belowState)) {
                 return false;
             }
         }

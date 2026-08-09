@@ -389,7 +389,7 @@ private void ff$trySpawnSurfaceWater(Level level, BlockPos origin, RandomSource 
 
         if (!candidateState.isAir()
                 && !candidateState.canBeReplaced(this)
-                && !FFFluidUtils.supportsVirtualFluidState(level, candidateState)) continue;
+                && !FFFluidUtils.canStoreVirtualFluidState(level, candidateState)) continue;
 
         var belowState = level.getBlockState(candidate.below());
         if (belowState.isAir()) continue;
