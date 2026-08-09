@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.material.Fluid;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -23,6 +24,15 @@ class FluidTickWorkloadGovernorTest {
         assertTrue(overloaded > critical);
         assertTrue(critical > extreme);
         assertTrue(extreme >= 32);
+    }
+
+    @Test
+    void budgetUsesTheDeclaredLimitsInsteadOfInflatedFallbacks() {
+        assertEquals(4096, FluidTickWorkloadGovernor.computeBudgetForMspt(20.0, 2));
+        assertEquals(2048, FluidTickWorkloadGovernor.computeBudgetForMspt(55.0, 2));
+        assertEquals(768, FluidTickWorkloadGovernor.computeBudgetForMspt(90.0, 2));
+        assertEquals(192, FluidTickWorkloadGovernor.computeBudgetForMspt(150.0, 2));
+        assertEquals(64, FluidTickWorkloadGovernor.computeBudgetForMspt(300.0, 2));
     }
 
     @Test

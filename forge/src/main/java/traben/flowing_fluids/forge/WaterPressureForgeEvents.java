@@ -24,6 +24,9 @@ public final class WaterPressureForgeEvents {
 
     @SubscribeEvent(priority = EventPriority.NORMAL)
     public static void onNeighborNotify(BlockEvent.NeighborNotifyEvent event) {
+        if (!isEnabled()) {
+            return;
+        }
         WaterPressureSystem.handleNeighborUpdate(event.getLevel(), event.getPos());
         for (Direction direction : event.getNotifiedSides()) {
             WaterPressureSystem.handleNeighborUpdate(event.getLevel(), event.getPos().relative(direction));
@@ -32,7 +35,16 @@ public final class WaterPressureForgeEvents {
 
     @SubscribeEvent(priority = EventPriority.NORMAL)
     public static void onFluidPlaced(BlockEvent.FluidPlaceBlockEvent event) {
+        if (!isEnabled()) {
+            return;
+        }
         WaterPressureSystem.handleNeighborUpdate(event.getLevel(), event.getPos());
         WaterPressureSystem.handleNeighborUpdate(event.getLevel(), event.getLiquidPos());
+    }
+
+    private static boolean isEnabled() {
+        return FlowingFluids.config != null
+            && FlowingFluids.config.enableMod
+            && FlowingFluids.config.enableWaterPressure;
     }
 }

@@ -1434,20 +1434,26 @@ public class FFFluidUtils {
     }
 
     public static void wakeAdjacentVirtualFluidCells(Level level, BlockPos pos) {
-        if (level == null || level.isClientSide() || pos == null) {
+        if (level == null || level.isClientSide() || pos == null
+                || FlowingFluids.config == null
+                || !FlowingFluids.config.enableMod
+                || !FlowingFluids.config.enableExtendedWaterlogging
+                || !ExtendedWaterlogStore.hasDimensionData(level)) {
             return;
         }
 
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (Direction direction : Direction.values()) {
             cursor.setWithOffset(pos, direction);
+            FluidState neighborFluid = ExtendedWaterlogStore.get(level, cursor);
+            if (neighborFluid.isEmpty()) {
+                continue;
+            }
             BlockState neighborState = level.getBlockState(cursor);
             if (!canStoreVirtualFluidState(level, neighborState)) {
                 continue;
             }
-
-            FluidState neighborFluid = getEffectiveFluidState(level, cursor, neighborState);
-            if (!(neighborFluid.getType() instanceof FlowingFluid flowingFluid) || neighborFluid.getAmount() <= 0) {
+            if (!(neighborFluid.getType() instanceof FlowingFluid) || neighborFluid.getAmount() <= 0) {
                 continue;
             }
 

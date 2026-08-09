@@ -73,6 +73,7 @@ public final class ParallelFluidEqualizer {
     private static final int FOCUSED_SNAPSHOT_RIBBON_RADIUS = 1;
     private static final int QUEUED_SELECTION_BUDGET_PER_TICK = 512;
     private static final int MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION = 64;
+    private static final int MAX_SNAPSHOT_CAPTURES_PER_TICK = 4;
     private static final int MIN_COMPLETED_RESULT_APPLY_BUDGET = 2;
     private static final int BASE_COMPLETED_RESULT_APPLY_BUDGET = 8;
     private static final int MAX_COMPLETED_RESULT_APPLY_BUDGET = 32;
@@ -137,8 +138,14 @@ public final class ParallelFluidEqualizer {
 
         FluidSectionDataCache captureCache = new FluidSectionDataCache(level, Math.max(32, representativeSources.size() * 8));
         List<Request> requests = new ArrayList<>(representativeSources.size());
+        int snapshotCaptureBudget = getSnapshotCaptureBudget(
+            FluidPerformanceMonitor.getInstance().getLoadControlMspt(0.0), pendingAsyncCount);
         for (ScanCandidate candidate : representativeSources) {
             long posKey = candidate.pos().asLong();
+            if (requests.size() >= snapshotCaptureBudget) {
+                requeue(level, posKey);
+                continue;
+            }
             ActiveKey activeKey = new ActiveKey(dimensionKey, posKey);
             if (!ACTIVE.add(activeKey)) {
                 continue;
@@ -307,6 +314,16 @@ public final class ParallelFluidEqualizer {
         }
 
         return Math.max(32, Math.min(QUEUED_SELECTION_BUDGET_PER_TICK * 2, budget));
+    }
+
+    static int getSnapshotCaptureBudget(double mspt, int pendingAsyncResults) {
+        if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION * 3 / 4 || mspt >= 70.0) {
+            return 1;
+        }
+        if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION / 2 || mspt >= 45.0) {
+            return 2;
+        }
+        return MAX_SNAPSHOT_CAPTURES_PER_TICK;
     }
 
     public static void clearDimension(LevelAccessor level) {
