@@ -38,6 +38,8 @@ import traben.flowing_fluids.performance.InfiniteBiomeRefillSuppression;
 import traben.flowing_fluids.forge.debug.ForgeDebugCommands;
 import traben.flowing_fluids.forge.debug.ForgeDebugItemRegistry;
 import traben.flowing_fluids.forge.hydraulic.ForgeHydraulicBlockRegistry;
+import traben.flowing_fluids.forge.hydraulic.FlowAnchorRuntime;
+import traben.flowing_fluids.forge.hydraulic.RainCollectorRuntime;
 import traben.flowing_fluids.forge.nether.ForgeNetherLavaCommands;
 import traben.flowing_fluids.forge.nether.NetherLavaEventSystem;
 import traben.flowing_fluids.forge.spring.ForgeSpringRegistry;
@@ -100,6 +102,8 @@ public final class FlowingFluidsForge {
             NetherLavaEventSystem.onLevelUnload(level);
             FlowingFluidsTick.onLevelUnload(level);
             InfiniteBiomeRefillSuppression.onLevelUnload(level);
+            FlowAnchorRuntime.clearDimension(level);
+            RainCollectorRuntime.clearDimension(level);
         }
     }
 
@@ -154,6 +158,7 @@ public final class FlowingFluidsForge {
         traben.flowing_fluids.ChunkLocalSlopeCache.clearAll();
         traben.flowing_fluids.FluidTickBuffer.clearBuffer();
         traben.flowing_fluids.FluidActivityTracker.clearAll();
+        traben.flowing_fluids.SiphonFlowSystem.clearAll();
         FluidAutoTickDelay.resetRuntime();
         InfiniteBiomeRefillFallbackController.resetRuntime();
         InfiniteBiomeRefillSuppression.clearAll();

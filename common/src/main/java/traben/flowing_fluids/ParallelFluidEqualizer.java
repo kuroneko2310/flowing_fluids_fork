@@ -1253,12 +1253,14 @@ public final class ParallelFluidEqualizer {
         private static Snapshot captureFocused(Level level, BlockPos center, int radius, Fluid sourceFluid,
                                                FluidSectionDataCache captureCache, Direction inletGradient,
                                                Vec3i gradientVector) {
-            int minX = center.getX() - radius;
-            int maxX = center.getX() + radius;
-            int minZ = center.getZ() - radius;
-            int maxZ = center.getZ() + radius;
-            int minY = Math.max(level.getMinBuildHeight(), center.getY() - radius);
-            int maxY = Math.min(level.getMaxBuildHeight() - 1, center.getY() + radius);
+            Direction dominantGradient = dominantHorizontalDirection(gradientVector);
+            FocusedBounds bounds = computeFocusedBounds(level, center, radius, inletGradient, dominantGradient);
+            int minX = bounds.minX();
+            int maxX = bounds.maxX();
+            int minZ = bounds.minZ();
+            int maxZ = bounds.maxZ();
+            int minY = bounds.minY();
+            int maxY = bounds.maxY();
             int sizeX = maxX - minX + 1;
             int sizeY = maxY - minY + 1;
             int sizeZ = maxZ - minZ + 1;
@@ -1275,9 +1277,37 @@ public final class ParallelFluidEqualizer {
             copyRibbon(captureCache, sourceFluid, minX, minY, minZ, sizeX, sizeY, sizeZ, flags, amounts,
                 center, inletGradient, radius);
             copyRibbon(captureCache, sourceFluid, minX, minY, minZ, sizeX, sizeY, sizeZ, flags, amounts,
-                center, dominantHorizontalDirection(gradientVector), radius);
+                center, dominantGradient, radius);
 
             return new Snapshot(minX, minY, minZ, sizeX, sizeY, sizeZ, flags, amounts);
+        }
+
+        private static FocusedBounds computeFocusedBounds(Level level, BlockPos center, int radius,
+                                                          Direction inletGradient, Direction dominantGradient) {
+            int coreRadius = Math.min(radius, FOCUSED_SNAPSHOT_CORE_RADIUS);
+            int minX = center.getX() - coreRadius;
+            int maxX = center.getX() + coreRadius;
+            int minZ = center.getZ() - coreRadius;
+            int maxZ = center.getZ() + coreRadius;
+            int minY = Math.max(level.getMinBuildHeight(), center.getY() - radius);
+            int maxY = Math.min(level.getMaxBuildHeight() - 1, center.getY() + radius);
+
+            Direction[] ribbons = {inletGradient, dominantGradient};
+            for (Direction direction : ribbons) {
+                if (direction == null) {
+                    continue;
+                }
+                int endX = center.getX() + direction.getStepX() * radius;
+                int endZ = center.getZ() + direction.getStepZ() * radius;
+                minX = Math.min(minX, Math.min(center.getX(), endX) - FOCUSED_SNAPSHOT_RIBBON_RADIUS);
+                maxX = Math.max(maxX, Math.max(center.getX(), endX) + FOCUSED_SNAPSHOT_RIBBON_RADIUS);
+                minZ = Math.min(minZ, Math.min(center.getZ(), endZ) - FOCUSED_SNAPSHOT_RIBBON_RADIUS);
+                maxZ = Math.max(maxZ, Math.max(center.getZ(), endZ) + FOCUSED_SNAPSHOT_RIBBON_RADIUS);
+            }
+            return new FocusedBounds(minX, minY, minZ, maxX, maxY, maxZ);
+        }
+
+        private record FocusedBounds(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
         }
 
         private static void copyBox(FluidSectionDataCache captureCache, Fluid sourceFluid,
@@ -1383,6 +1413,9 @@ public final class ParallelFluidEqualizer {
             if ((cellFlags & AIR) != 0 || (cellFlags & REPLACEABLE) != 0) {
                 return true;
             }
+            if ((cellFlags & FluidSectionDataCache.PASS_THROUGH) != 0) {
+                return true;
+            }
             return (cellFlags & HAS_FLUID) == 0 && (cellFlags & SOLID) == 0;
         }
 
@@ -1470,7 +1503,7 @@ public final class ParallelFluidEqualizer {
         BlockState belowState = level.getBlockState(belowPos);
         FluidState belowFluid = FFFluidUtils.getEffectiveFluidState(level, belowPos, belowState);
         return (belowFluid.getType().isSame(fluidType) && belowFluid.getAmount() >= amount)
-            || (!belowState.isAir() && !belowState.canBeReplaced(fluidType));
+            || FFFluidUtils.isFluidSupportBlock(level, belowState, Direction.DOWN, fluidType);
     }
 
     private static boolean hasImmediateSurfaceEdge(Level level, BlockPos pos, Fluid fluidType) {
@@ -1479,7 +1512,10 @@ public final class ParallelFluidEqualizer {
             cursor.setWithOffset(pos, dir);
             BlockState state = level.getBlockState(cursor);
             FluidState neighbor = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
-            if (neighbor.isEmpty() && (state.isAir() || state.canBeReplaced(fluidType))) {
+            if (neighbor.isEmpty()
+                    && (state.isAir()
+                    || state.canBeReplaced(fluidType)
+                    || FFFluidUtils.isPassThroughFluidBlock(level, state, dir))) {
                 return true;
             }
         }

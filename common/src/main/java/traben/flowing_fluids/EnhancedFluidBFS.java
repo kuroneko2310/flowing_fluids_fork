@@ -211,7 +211,8 @@ public class EnhancedFluidBFS {
 
         for (BlockPos pos : positions) {
             int amount = cache.internalAmount(pos);
-            if (amount > 0 || cache.canAcceptFluid(pos)) {
+            boolean supportsPartialAmount = !cache.isBinaryFluidStorage(pos);
+            if (supportsPartialAmount && (amount > 0 || cache.canAcceptFluid(pos))) {
                 totalAmount += amount;
                 validPos.add(pos);
                 validAmounts.add(amount);
@@ -285,27 +286,55 @@ public class EnhancedFluidBFS {
             remaining = equalizeAmounts(finalAmounts, yLevels, wetOrder, dryOrder, totalAmount, preferWaterSurfacePotential);
         }
 
-        int changedCells = 0;
+        int originalBlockTotal = 0;
+        for (int amount : validAmounts) {
+            originalBlockTotal += FluidAmountConverter.toBlockState(amount);
+        }
+        int[] resolvedBlockAmounts = quantizeInternalAmountsPreservingBlockTotal(
+            resolvedAmounts,
+            originalBlockTotal
+        );
+        int[] resolvedInternalAmounts = fitInternalAmountsToBlockBucketsPreservingTotal(
+            resolvedAmounts,
+            resolvedBlockAmounts,
+            totalAmount
+        );
+        FluidMutationBatch worldMutations = new FluidMutationBatch(level);
+        Fluid[] writeFluids = new Fluid[validPos.size()];
 
-        // Distribute fluid to valid positions only
+        // Build one validated world mutation before changing the simulation authority.
         for (int index = 0; index < validPos.size(); index++) {
             BlockPos pos = validPos.get(index);
             int originalAmount = validAmounts.get(index);
-            int newAmount = resolvedAmounts[index];
-            if (newAmount == originalAmount) {
-                continue;
-            }
-            changedCells++;
-
-            // Buffer the change with null safety
             Fluid fluidType = cache.fluidType(pos);
             if (fluidType == null) {
                 fluidType = fallbackFluid;
             }
-
-            if (fluidType != null) {
-                FluidTickBuffer.bufferFluidChange(level, pos, newAmount, newAmount > 0, fluidType);
+            writeFluids[index] = fluidType;
+            int originalBlockAmount = FluidAmountConverter.toBlockState(originalAmount);
+            int resolvedBlockAmount = resolvedBlockAmounts[index];
+            if (fluidType != null && originalBlockAmount != resolvedBlockAmount) {
+                worldMutations.set(pos, fluidType, originalBlockAmount, resolvedBlockAmount);
             }
+        }
+
+        FluidMutationBatch.ApplyResult worldResult = worldMutations.apply();
+        if (!worldResult.applied()) {
+            return;
+        }
+
+        int changedCells = 0;
+        for (int index = 0; index < validPos.size(); index++) {
+            int originalAmount = validAmounts.get(index);
+            int newAmount = resolvedInternalAmounts[index];
+            Fluid fluidType = writeFluids[index];
+            if (fluidType == null || newAmount == originalAmount) {
+                continue;
+            }
+            changedCells++;
+            BlockPos pos = validPos.get(index);
+            FluidTickBuffer.bufferFluidChange(level, pos, newAmount, newAmount > 0, fluidType);
+            cache.invalidate(pos);
         }
 
         if (changedCells > 0
@@ -315,9 +344,157 @@ public class EnhancedFluidBFS {
                 && FlowingFluids.config.enableAnalyticPoolDormancy) {
             for (int index = 0; index < validPos.size(); index++) {
                 AdaptiveTickScheduler.markPoolStable(level, validPos.get(index), true,
-                    FluidAmountConverter.toBlockState(resolvedAmounts[index]));
+                    resolvedBlockAmounts[index]);
             }
         }
+    }
+
+    static int[] quantizeInternalAmountsPreservingBlockTotal(int[] internalAmounts, int targetBlockTotal) {
+        if (internalAmounts == null) {
+            throw new IllegalArgumentException("Internal amounts are required");
+        }
+        int maxTotal = internalAmounts.length * FluidAmountConverter.getMaxBlockState();
+        if (targetBlockTotal < 0 || targetBlockTotal > maxTotal) {
+            throw new IllegalArgumentException("Target block total is outside the available capacity");
+        }
+
+        int[] blockAmounts = new int[internalAmounts.length];
+        int currentTotal = 0;
+        for (int i = 0; i < internalAmounts.length; i++) {
+            blockAmounts[i] = FluidAmountConverter.toBlockState(FluidAmountConverter.clamp(internalAmounts[i]));
+            currentTotal += blockAmounts[i];
+        }
+
+        while (currentTotal > targetBlockTotal) {
+            int best = findLeastCostQuantizationStep(internalAmounts, blockAmounts, -1);
+            if (best < 0) {
+                throw new IllegalStateException("Unable to reduce quantized fluid total");
+            }
+            blockAmounts[best]--;
+            currentTotal--;
+        }
+        while (currentTotal < targetBlockTotal) {
+            int best = findLeastCostQuantizationStep(internalAmounts, blockAmounts, 1);
+            if (best < 0) {
+                throw new IllegalStateException("Unable to increase quantized fluid total");
+            }
+            blockAmounts[best]++;
+            currentTotal++;
+        }
+        return blockAmounts;
+    }
+
+    static int[] fitInternalAmountsToBlockBucketsPreservingTotal(int[] preferredInternalAmounts,
+                                                                  int[] blockAmounts,
+                                                                  int targetInternalTotal) {
+        if (preferredInternalAmounts == null || blockAmounts == null
+                || preferredInternalAmounts.length != blockAmounts.length) {
+            throw new IllegalArgumentException("Matching internal and block amount arrays are required");
+        }
+        int minTotal = 0;
+        int maxTotal = 0;
+        int[] fitted = new int[blockAmounts.length];
+        int currentTotal = 0;
+        for (int i = 0; i < blockAmounts.length; i++) {
+            int min = minimumInternalForBlockAmount(blockAmounts[i]);
+            int max = maximumInternalForBlockAmount(blockAmounts[i]);
+            minTotal += min;
+            maxTotal += max;
+            fitted[i] = Math.max(min, Math.min(max, FluidAmountConverter.clamp(preferredInternalAmounts[i])));
+            currentTotal += fitted[i];
+        }
+        if (targetInternalTotal < minTotal || targetInternalTotal > maxTotal) {
+            throw new IllegalArgumentException("Target internal total cannot fit the quantized block amounts");
+        }
+
+        while (currentTotal < targetInternalTotal) {
+            int best = findLeastCostInternalStep(preferredInternalAmounts, fitted, blockAmounts, 1);
+            fitted[best]++;
+            currentTotal++;
+        }
+        while (currentTotal > targetInternalTotal) {
+            int best = findLeastCostInternalStep(preferredInternalAmounts, fitted, blockAmounts, -1);
+            fitted[best]--;
+            currentTotal--;
+        }
+        return fitted;
+    }
+
+    private static int findLeastCostQuantizationStep(int[] internalAmounts, int[] blockAmounts, int delta) {
+        int bestIndex = -1;
+        int bestPenalty = Integer.MAX_VALUE;
+        int targetInternalTotal = 0;
+        int currentMinimum = 0;
+        int currentMaximum = 0;
+        for (int i = 0; i < blockAmounts.length; i++) {
+            targetInternalTotal += FluidAmountConverter.clamp(internalAmounts[i]);
+            currentMinimum += minimumInternalForBlockAmount(blockAmounts[i]);
+            currentMaximum += maximumInternalForBlockAmount(blockAmounts[i]);
+        }
+        for (int i = 0; i < blockAmounts.length; i++) {
+            int candidate = blockAmounts[i] + delta;
+            if (candidate < 0 || candidate > FluidAmountConverter.getMaxBlockState()) {
+                continue;
+            }
+            int candidateMinimum = currentMinimum
+                - minimumInternalForBlockAmount(blockAmounts[i])
+                + minimumInternalForBlockAmount(candidate);
+            int candidateMaximum = currentMaximum
+                - maximumInternalForBlockAmount(blockAmounts[i])
+                + maximumInternalForBlockAmount(candidate);
+            if (targetInternalTotal < candidateMinimum || targetInternalTotal > candidateMaximum) {
+                continue;
+            }
+            int currentError = Math.abs(FluidAmountConverter.toInternal(blockAmounts[i]) - internalAmounts[i]);
+            int candidateError = Math.abs(FluidAmountConverter.toInternal(candidate) - internalAmounts[i]);
+            int penalty = candidateError - currentError;
+            if (penalty < bestPenalty) {
+                bestPenalty = penalty;
+                bestIndex = i;
+            }
+        }
+        return bestIndex;
+    }
+
+    private static int findLeastCostInternalStep(int[] preferred, int[] current, int[] blockAmounts, int delta) {
+        int bestIndex = -1;
+        int bestPenalty = Integer.MAX_VALUE;
+        for (int i = 0; i < current.length; i++) {
+            int candidate = current[i] + delta;
+            if (candidate < minimumInternalForBlockAmount(blockAmounts[i])
+                    || candidate > maximumInternalForBlockAmount(blockAmounts[i])) {
+                continue;
+            }
+            int penalty = Math.abs(candidate - preferred[i]) - Math.abs(current[i] - preferred[i]);
+            if (penalty < bestPenalty) {
+                bestPenalty = penalty;
+                bestIndex = i;
+            }
+        }
+        if (bestIndex < 0) {
+            throw new IllegalStateException("Unable to fit internal fluid total");
+        }
+        return bestIndex;
+    }
+
+    private static int minimumInternalForBlockAmount(int blockAmount) {
+        if (blockAmount <= 0) {
+            return 0;
+        }
+        if (blockAmount >= FluidAmountConverter.getMaxBlockState()) {
+            return 57;
+        }
+        return ((blockAmount - 1) * 8) + 1;
+    }
+
+    private static int maximumInternalForBlockAmount(int blockAmount) {
+        if (blockAmount <= 0) {
+            return 0;
+        }
+        if (blockAmount >= FluidAmountConverter.getMaxBlockState()) {
+            return FluidAmountConverter.getMaxInternal();
+        }
+        return blockAmount * 8;
     }
 
     private static boolean shouldUseRouteSolver(boolean preferWaterSurfacePotential) {

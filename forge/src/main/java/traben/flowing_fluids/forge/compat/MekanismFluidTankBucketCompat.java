@@ -226,7 +226,7 @@ public final class MekanismFluidTankBucketCompat {
         BlockState hitState = level.getBlockState(hitPos);
         FluidState hitFluidState = FFFluidUtils.getEffectiveFluidState(level, hitPos, hitState);
         if ((fluid == Fluids.WATER
-                && (FFFluidUtils.supportsVirtualFluidState(level, hitState)
+                && (FFFluidUtils.canStoreVirtualFluidState(level, hitState)
                 || hitState.getBlock() instanceof LiquidBlockContainer))
                 || (fluid.isSame(hitFluidState.getType()) && hitFluidState.getAmount() < 8)) {
             return hitPos;
@@ -239,7 +239,7 @@ public final class MekanismFluidTankBucketCompat {
         BlockState state = level.getBlockState(targetPos);
         FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, targetPos, state);
         boolean fluidIsSame = fluid.isSame(fluidState.getType());
-        boolean virtualTarget = FFFluidUtils.supportsVirtualFluidState(level, state);
+        boolean virtualTarget = FFFluidUtils.canStoreVirtualFluidState(level, state);
         boolean canPlaceLiquidInPos = state.canBeReplaced(fluid) || state.isAir() || fluidIsSame || virtualTarget;
 
         if (!virtualTarget && !canPlaceLiquidInPos && state.getBlock() instanceof LiquidBlockContainer container) {

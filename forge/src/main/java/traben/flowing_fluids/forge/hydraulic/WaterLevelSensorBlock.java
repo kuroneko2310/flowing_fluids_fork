@@ -161,7 +161,7 @@ public class WaterLevelSensorBlock extends DirectionalBlock {
     }
 
     private boolean ff$shouldKeepRefreshing(LevelAccessor level, BlockState observedState, int signal) {
-        return signal > 0 || FFFluidUtils.supportsVirtualFluidState(level, observedState);
+        return signal > 0 || FFFluidUtils.canStoreVirtualFluidState(level, observedState);
     }
 
     private void ff$updateOutputNeighbors(Level level, BlockPos pos, BlockState state) {

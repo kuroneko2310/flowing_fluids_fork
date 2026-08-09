@@ -41,6 +41,7 @@ public final class FlowingFluidsTick {
         RainWaterSystem.onLevelTick(level);
         DryingEventSystem.onLevelTick(level);
         SnowmeltWaterSystem.onLevelTick(level);
+        SiphonFlowSystem.onLevelTick(level);
 
         FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
         double mspt = monitor.getLoadControlMspt(level.getServer().getAverageTickTime());
@@ -158,6 +159,9 @@ public final class FlowingFluidsTick {
         DryingEventSystem.onLevelUnload(level);
         SnowmeltWaterSystem.onLevelUnload(level);
         WaterPressureSystem.onLevelUnload(level);
+        AdaptiveTickScheduler.clearDimension(level);
+        FluidSpatialGrid.clearDimension(level);
+        ChunkLocalSlopeCache.clearDimension(level);
         AsyncSlopeSearchPlanner.clearDimension(level);
         ParallelFluidEqualizer.clearDimension(level);
         ParallelFluidTickManager.clearDimension(level);

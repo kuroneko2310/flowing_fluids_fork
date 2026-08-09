@@ -24,8 +24,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class SiphonFlowSystem {
-    private static final int MAX_SIPHON_PROBES_PER_TICK = 8;
+    private static final int MAX_SIPHON_PROBES_PER_TICK = 2;
     private static final int MAX_PENDING_SIPHON_PROBES_PER_DIMENSION = 2048;
+    private static final int MAX_PENDING_SIPHON_PROBES_PER_CHUNK = 8;
+    private static final int CANDIDATE_RESCAN_TICKS = 20;
     private static final int HYDRAULIC_COOLDOWN_TICKS = 6;
     private static final int PUMP_LIFT_AMOUNT = 6;
     private static final int PUMP_PRESSURE_BOOST_AMOUNT = 3;
@@ -40,6 +42,8 @@ public final class SiphonFlowSystem {
 
     private static final ConcurrentHashMap<ResourceKey<Level>, CooldownState> COOLDOWNS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<ResourceKey<Level>, SiphonDimensionQueue> SIPHON_QUEUES = new ConcurrentHashMap<>();
+    private static final ThreadLocal<SiphonSearchWorkspace> SEARCH_WORKSPACE =
+            ThreadLocal.withInitial(SiphonSearchWorkspace::new);
 
     private SiphonFlowSystem() {
     }
@@ -50,6 +54,52 @@ public final class SiphonFlowSystem {
         }
         SIPHON_QUEUES.remove(level.dimension());
         COOLDOWNS.remove(level.dimension());
+    }
+
+    public static void clearAll() {
+        SIPHON_QUEUES.clear();
+        COOLDOWNS.clear();
+        SEARCH_WORKSPACE.remove();
+    }
+
+    public static void onLevelTick(ServerLevel level) {
+        if (!isEnabled(level)) {
+            if (level != null && (SIPHON_QUEUES.containsKey(level.dimension())
+                    || COOLDOWNS.containsKey(level.dimension()))) {
+                clearDimension(level);
+            }
+            return;
+        }
+        drainQueuedProbes(level);
+    }
+
+    public static boolean isEnabled(ServerLevel level) {
+        return FlowingFluids.config != null
+                && level != null
+                && FlowingFluids.config.enableMod
+                && FlowingFluids.config.enableSiphons
+                && !FlowingFluids.config.isDimensionExcluded(level)
+                && FlowingFluids.config.isWaterAllowed();
+    }
+
+    public static void wakeHydraulicBlock(ServerLevel level, BlockPos hardwarePos) {
+        if (!isEnabled(level) || hardwarePos == null || !FlowingFluids.config.enableHydraulicBlocks) {
+            return;
+        }
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.values()) {
+            cursor.setWithOffset(hardwarePos, direction);
+            if (!isLoadedAndInBounds(level, cursor)) {
+                continue;
+            }
+            FluidState fluid = FFFluidUtils.getEffectiveFluidState(level, cursor);
+            if (!isSupportedSiphonFluid(fluid) || fluid.getAmount() <= 0) {
+                continue;
+            }
+            clearCandidateScan(level, cursor.asLong());
+            enqueueProbe(level, cursor);
+            AdaptiveTickScheduler.scheduleFluidTick(level, cursor, Fluids.WATER, 1);
+        }
     }
 
     public static void clearChunk(Level level, ChunkPos chunkPos) {
@@ -84,66 +134,90 @@ public final class SiphonFlowSystem {
     }
 
     public static boolean tryRun(ServerLevel level, BlockPos sourcePos, FluidState sourceFluidState) {
-        if (FlowingFluids.config == null
-                || level == null
+        if (!isEnabled(level)
                 || sourcePos == null
                 || sourceFluidState == null
-                || !FlowingFluids.config.enableMod
-                || !FlowingFluids.config.enableSiphons
-                || FlowingFluids.config.isDimensionExcluded(level)
-                || !FlowingFluids.config.isWaterAllowed()
-                || !sourceFluidState.is(FluidTags.WATER)
+                || !isSupportedSiphonFluid(sourceFluidState)
                 || sourceFluidState.getAmount() <= 0
                 || !isLoadedAndInBounds(level, sourcePos)) {
             return false;
         }
 
-        if (!isLikelySiphonCandidate(level, sourcePos, sourceFluidState)) {
-            return drainQueuedProbes(level);
+        long sourceKey = sourcePos.asLong();
+        if (!tryBeginCandidateScan(level, sourceKey)) {
+            return false;
         }
-        enqueueProbe(level, sourcePos);
-        return drainQueuedProbes(level);
+        if (!isLikelySiphonCandidate(level, sourcePos, sourceFluidState)) {
+            return false;
+        }
+        return enqueueProbe(level, sourcePos);
     }
 
     private static boolean runProbeNow(ServerLevel level, BlockPos sourcePos, FluidState sourceFluidState) {
-        if (tryRunHydraulicPump(level, sourcePos, sourceFluidState)) {
-            return true;
-        }
-        if (tryRunHydraulicPressureField(level, sourcePos, sourceFluidState)) {
-            return true;
-        }
-        if (tryRunHydraulicSiphon(level, sourcePos, sourceFluidState)) {
-            return true;
+        if (FlowingFluids.config.enableHydraulicBlocks && hasHydraulicNozzleNear(level, sourcePos)) {
+            if (tryRunHydraulicPump(level, sourcePos, sourceFluidState)) {
+                return true;
+            }
+            if (tryRunHydraulicPressureField(level, sourcePos, sourceFluidState)) {
+                return true;
+            }
+            if (tryRunHydraulicSiphon(level, sourcePos, sourceFluidState)) {
+                return true;
+            }
         }
         return FlowingFluids.config.enableNaturalTerrainSiphons
                 && tryRunNaturalTerrainSiphon(level, sourcePos, sourceFluidState);
     }
 
     private static boolean isLikelySiphonCandidate(ServerLevel level, BlockPos sourcePos, FluidState sourceFluidState) {
-        if (FlowingFluids.config.enableHydraulicBlocks && hasHydraulicHardwareNear(level, sourcePos)) {
+        if (FlowingFluids.config.enableHydraulicBlocks && hasHydraulicNozzleNear(level, sourcePos)) {
             return true;
         }
         int minFilled = Mth.clamp(FlowingFluids.config.naturalSiphonMinFilledAmount, 1, 8);
         return FlowingFluids.config.enableNaturalTerrainSiphons
                 && sourceFluidState.getAmount() >= minFilled
-                && isOrdinaryFlowBlocked(level, sourcePos, sourceFluidState)
-                && !isBroadOpenWaterCell(level, sourcePos, minFilled);
+                && isCooldownReady(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong())
+                && (FlowingFluids.config.naturalSiphonAllowOpenSurface || !isOpenSurfaceCell(level, sourcePos));
     }
 
-    private static void enqueueProbe(ServerLevel level, BlockPos sourcePos) {
+    static boolean enqueueProbe(Level level, BlockPos sourcePos) {
         SiphonDimensionQueue queue = SIPHON_QUEUES.computeIfAbsent(level.dimension(), ignored -> new SiphonDimensionQueue());
         long posKey = sourcePos.asLong();
         synchronized (queue) {
             if (queue.queuedPositions.contains(posKey)) {
-                return;
+                return false;
             }
             if (queue.queuedPositions.size() >= MAX_PENDING_SIPHON_PROBES_PER_DIMENSION) {
-                return;
+                return false;
+            }
+            ChunkPos chunkPos = chunkPos(posKey);
+            LongOpenHashSet chunkQueued = queue.queuedByChunk.computeIfAbsent(chunkPos,
+                    ignored -> new LongOpenHashSet());
+            if (chunkQueued.size() >= MAX_PENDING_SIPHON_PROBES_PER_CHUNK) {
+                return false;
             }
             queue.pending.enqueue(posKey);
             queue.queuedPositions.add(posKey);
-            queue.queuedByChunk.computeIfAbsent(chunkPos(posKey), ignored -> new LongOpenHashSet()).add(posKey);
+            chunkQueued.add(posKey);
+            return true;
         }
+    }
+
+    static int getQueuedProbeCount(Level level) {
+        if (level == null) {
+            return 0;
+        }
+        SiphonDimensionQueue queue = SIPHON_QUEUES.get(level.dimension());
+        if (queue == null) {
+            return 0;
+        }
+        synchronized (queue) {
+            return queue.queuedPositions.size();
+        }
+    }
+
+    static boolean isSupportedSiphonFluid(FluidState state) {
+        return state != null && state.getType().isSame(Fluids.WATER);
     }
 
     private static boolean drainQueuedProbes(ServerLevel level) {
@@ -159,7 +233,7 @@ public final class SiphonFlowSystem {
             long posKey;
             synchronized (queue) {
                 if (queue.pending.isEmpty()) {
-                    return movedAny;
+                    break;
                 }
                 posKey = queue.pending.dequeueLong();
                 if (!queue.queuedPositions.remove(posKey)) {
@@ -176,6 +250,11 @@ public final class SiphonFlowSystem {
                 }
             }
             processed++;
+        }
+        synchronized (queue) {
+            if (queue.queuedPositions.isEmpty()) {
+                SIPHON_QUEUES.remove(level.dimension(), queue);
+            }
         }
         return movedAny;
     }
@@ -427,7 +506,6 @@ public final class SiphonFlowSystem {
         if (!FlowingFluids.config.enableHydraulicBlocks
                 || sourceFluidState.getAmount() < 2
                 || FFFluidUtils.isInOrNearInfiniteBiome(level, sourcePos, 2)
-                || !hasHydraulicHardwareNear(level, sourcePos)
                 || !isCooldownReady(CooldownType.HYDRAULIC_SEARCH, level, sourcePos.asLong())) {
             return false;
         }
@@ -453,20 +531,21 @@ public final class SiphonFlowSystem {
     private static boolean tryRunNaturalTerrainSiphon(ServerLevel level, BlockPos sourcePos, FluidState sourceFluidState) {
         int minFilled = Mth.clamp(FlowingFluids.config.naturalSiphonMinFilledAmount, 1, 8);
         if (sourceFluidState.getAmount() < minFilled
-                || !isCooldownReady(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong())
-                || !isOrdinaryFlowBlocked(level, sourcePos, sourceFluidState)
-                || isBroadOpenWaterCell(level, sourcePos, minFilled)) {
+                || !isCooldownReady(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong())) {
             return false;
         }
 
+        int cooldown = Math.max(1, FlowingFluids.config.naturalSiphonCooldownTicks);
         boolean requireEnclosed = FlowingFluids.config.naturalSiphonRequireEnclosedPath;
         boolean allowOpenSurface = FlowingFluids.config.naturalSiphonAllowOpenSurface;
-        if (requireEnclosed && !isEnclosedPathCell(level, sourcePos, minFilled, null)) {
-            markCooldown(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong(), FlowingFluids.config.naturalSiphonCooldownTicks);
+        if ((!allowOpenSurface && isOpenSurfaceCell(level, sourcePos))
+                || !isOrdinaryFlowBlocked(level, sourcePos, sourceFluidState)
+                || isBroadOpenWaterCell(level, sourcePos, minFilled)) {
+            markCooldown(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong(), cooldown);
             return false;
         }
-        if (!allowOpenSurface && isOpenSurfaceCell(level, sourcePos)) {
-            markCooldown(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong(), FlowingFluids.config.naturalSiphonCooldownTicks);
+        if (requireEnclosed && !isEnclosedPathCell(level, sourcePos, minFilled, null)) {
+            markCooldown(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong(), cooldown);
             return false;
         }
 
@@ -486,7 +565,6 @@ public final class SiphonFlowSystem {
                 requireEnclosed,
                 allowOpenSurface,
                 false);
-        int cooldown = Math.max(1, FlowingFluids.config.naturalSiphonCooldownTicks);
         markCooldown(CooldownType.NATURAL_SEARCH, level, sourcePos.asLong(), result.success() ? cooldown : cooldown * 2);
         if (!result.success()) {
             return false;
@@ -507,16 +585,18 @@ public final class SiphonFlowSystem {
         int boundedPressureHead = hydraulicMode
                 ? Mth.clamp(FlowingFluids.config.hydraulicSiphonMaxPressureHead, 0, 32)
                 : 0;
-        long[] positions = new long[boundedNodes];
-        int[] parents = new int[boundedNodes];
-        int[] depths = new int[boundedNodes];
-        int[] highestYs = new int[boundedNodes];
-        int[] bends = new int[boundedNodes];
-        int[] openSurfaces = new int[boundedNodes];
-        int[] pressureHeads = new int[boundedNodes];
-        Direction[] entryDirections = new Direction[boundedNodes];
-        int[] queue = new int[boundedNodes];
-        LongOpenHashSet visited = new LongOpenHashSet(boundedNodes);
+        SiphonSearchWorkspace workspace = SEARCH_WORKSPACE.get();
+        workspace.resetSearch();
+        long[] positions = workspace.positions;
+        int[] parents = workspace.parents;
+        int[] depths = workspace.depths;
+        int[] highestYs = workspace.highestYs;
+        int[] bends = workspace.bends;
+        int[] openSurfaces = workspace.openSurfaces;
+        int[] pressureHeads = workspace.pressureHeads;
+        Direction[] entryDirections = workspace.entryDirections;
+        int[] queue = workspace.queue;
+        LongOpenHashSet visited = workspace.searchVisited;
 
         long sourceKey = sourcePos.asLong();
         positions[0] = sourceKey;
@@ -526,6 +606,7 @@ public final class SiphonFlowSystem {
         bends[0] = 0;
         openSurfaces[0] = isOpenSurfaceCell(level, sourcePos) ? 1 : 0;
         pressureHeads[0] = hydraulicMode ? computeHydraulicPressureHead(level, sourcePos, boundedPressureHead) : 0;
+        entryDirections[0] = null;
         queue[0] = 0;
         visited.add(sourceKey);
 
@@ -751,8 +832,11 @@ public final class SiphonFlowSystem {
                                                      int requestedTransfer, int minSourceAmount, int maxNodes,
                                                      List<BlockPos> changed) {
         int nodeLimit = Mth.clamp(maxNodes, 1, 512);
-        LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
-        LongOpenHashSet visited = new LongOpenHashSet(nodeLimit);
+        SiphonSearchWorkspace workspace = SEARCH_WORKSPACE.get();
+        LongArrayFIFOQueue queue = workspace.transferQueue;
+        LongOpenHashSet visited = workspace.transferVisited;
+        queue.clear();
+        visited.clear();
         queue.enqueue(sourcePos.asLong());
         visited.add(sourcePos.asLong());
 
@@ -837,9 +921,7 @@ public final class SiphonFlowSystem {
     }
 
     private static boolean isHydraulicPathCell(ServerLevel level, BlockPos pos) {
-        return level.getBlockState(pos.below()).is(FlowingFluids.HYDRAULIC_FLOW_GUIDE_BLOCKS)
-                || level.getBlockState(pos.below()).is(FlowingFluids.HYDRAULIC_NOZZLE_BLOCKS)
-                || hasHydraulicHardwareNear(level, pos);
+        return hasHydraulicHardwareNear(level, pos);
     }
 
     private static boolean isHydraulicBridge(ServerLevel level, BlockPos fromPos, BlockPos toPos, Direction direction) {
@@ -1139,8 +1221,9 @@ public final class SiphonFlowSystem {
         if (!isLoadedAndInBounds(level, pos.below())) {
             return false;
         }
-        if (level.getBlockState(pos.below()).is(FlowingFluids.HYDRAULIC_FLOW_GUIDE_BLOCKS)
-                || level.getBlockState(pos.below()).is(FlowingFluids.HYDRAULIC_NOZZLE_BLOCKS)) {
+        BlockState directBelowState = level.getBlockState(pos.below());
+        if (directBelowState.is(FlowingFluids.HYDRAULIC_FLOW_GUIDE_BLOCKS)
+                || directBelowState.is(FlowingFluids.HYDRAULIC_NOZZLE_BLOCKS)) {
             return true;
         }
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
@@ -1150,11 +1233,28 @@ public final class SiphonFlowSystem {
                 continue;
             }
             BlockPos below = cursor.below();
-            if (level.getBlockState(cursor).is(FlowingFluids.HYDRAULIC_FLOW_GUIDE_BLOCKS)
-                    || level.getBlockState(cursor).is(FlowingFluids.HYDRAULIC_NOZZLE_BLOCKS)
-                    || (isLoadedAndInBounds(level, below)
-                    && (level.getBlockState(below).is(FlowingFluids.HYDRAULIC_FLOW_GUIDE_BLOCKS)
-                    || level.getBlockState(below).is(FlowingFluids.HYDRAULIC_NOZZLE_BLOCKS)))) {
+            BlockState cursorState = level.getBlockState(cursor);
+            if (cursorState.is(FlowingFluids.HYDRAULIC_FLOW_GUIDE_BLOCKS)
+                    || cursorState.is(FlowingFluids.HYDRAULIC_NOZZLE_BLOCKS)) {
+                return true;
+            }
+            if (isLoadedAndInBounds(level, below)) {
+                BlockState belowState = level.getBlockState(below);
+                if (belowState.is(FlowingFluids.HYDRAULIC_FLOW_GUIDE_BLOCKS)
+                        || belowState.is(FlowingFluids.HYDRAULIC_NOZZLE_BLOCKS)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasHydraulicNozzleNear(ServerLevel level, BlockPos pos) {
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.values()) {
+            cursor.setWithOffset(pos, direction);
+            if (isLoadedAndInBounds(level, cursor)
+                    && level.getBlockState(cursor).is(FlowingFluids.HYDRAULIC_NOZZLE_BLOCKS)) {
                 return true;
             }
         }
@@ -1257,6 +1357,23 @@ public final class SiphonFlowSystem {
         }
     }
 
+    static boolean tryBeginCandidateScan(Level level, long key) {
+        CooldownState state = COOLDOWNS.computeIfAbsent(level.dimension(), ignored -> new CooldownState());
+        synchronized (state) {
+            return state.candidateScans.tryAcquire(key, level.getGameTime(), CANDIDATE_RESCAN_TICKS);
+        }
+    }
+
+    private static void clearCandidateScan(Level level, long key) {
+        CooldownState state = COOLDOWNS.get(level.dimension());
+        if (state == null) {
+            return;
+        }
+        synchronized (state) {
+            state.candidateScans.invalidate(key);
+        }
+    }
+
     private static void markCooldown(CooldownType type, Level level, long key, int ticks) {
         CooldownState state = COOLDOWNS.computeIfAbsent(level.dimension(), ignored -> new CooldownState());
         synchronized (state) {
@@ -1335,6 +1452,7 @@ public final class SiphonFlowSystem {
     }
 
     private static final class CooldownState {
+        private final CandidateScanCache candidateScans = new CandidateScanCache();
         private final Long2LongOpenHashMap hydraulicPump = new Long2LongOpenHashMap();
         private final Long2LongOpenHashMap hydraulicPressure = new Long2LongOpenHashMap();
         private final Long2LongOpenHashMap hydraulicSearch = new Long2LongOpenHashMap();
@@ -1375,6 +1493,57 @@ public final class SiphonFlowSystem {
         private final ConcurrentHashMap<ChunkPos, LongOpenHashSet> queuedByChunk = new ConcurrentHashMap<>();
         private long lastProcessTick = Long.MIN_VALUE;
         private int processedThisTick = 0;
+    }
+
+    private static final class SiphonSearchWorkspace {
+        private static final int MAX_NODES = 512;
+        private final long[] positions = new long[MAX_NODES];
+        private final int[] parents = new int[MAX_NODES];
+        private final int[] depths = new int[MAX_NODES];
+        private final int[] highestYs = new int[MAX_NODES];
+        private final int[] bends = new int[MAX_NODES];
+        private final int[] openSurfaces = new int[MAX_NODES];
+        private final int[] pressureHeads = new int[MAX_NODES];
+        private final Direction[] entryDirections = new Direction[MAX_NODES];
+        private final int[] queue = new int[MAX_NODES];
+        private final LongOpenHashSet searchVisited = new LongOpenHashSet(MAX_NODES);
+        private final LongArrayFIFOQueue transferQueue = new LongArrayFIFOQueue();
+        private final LongOpenHashSet transferVisited = new LongOpenHashSet(MAX_NODES);
+
+        private void resetSearch() {
+            searchVisited.clear();
+        }
+    }
+
+    private static final class CandidateScanCache {
+        private static final int SIZE = 4096;
+        private static final int MASK = SIZE - 1;
+        private final long[] keys = new long[SIZE];
+        private final long[] retryAt = new long[SIZE];
+
+        private boolean tryAcquire(long key, long now, int delay) {
+            int index = index(key);
+            if (keys[index] == key && retryAt[index] > now) {
+                return false;
+            }
+            keys[index] = key;
+            retryAt[index] = now + Math.max(1, delay);
+            return true;
+        }
+
+        private void invalidate(long key) {
+            int index = index(key);
+            if (keys[index] == key) {
+                retryAt[index] = Long.MIN_VALUE;
+            }
+        }
+
+        private static int index(long key) {
+            long mixed = key ^ (key >>> 33);
+            mixed *= 0xff51afd7ed558ccdl;
+            mixed ^= mixed >>> 33;
+            return (int) mixed & MASK;
+        }
     }
 
     private record SiphonOutlet(BlockPos pos, int score, boolean sameLevelHydraulic) {

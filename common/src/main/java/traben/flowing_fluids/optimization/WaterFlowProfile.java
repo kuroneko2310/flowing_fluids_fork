@@ -687,7 +687,7 @@ public final class WaterFlowProfile {
             sectionCache, sampleContext);
         boolean hasFluidAbove = above.matches(fluidType);
         boolean supportedBelow = (below.matches(fluidType) && below.amount() >= amount)
-            || (!below.air() && !below.replaceable());
+            || below.isSolidSupport();
 
         int lateralWaterNeighbors = 0;
         int surfaceEdgeCount = 0;
@@ -785,17 +785,20 @@ public final class WaterFlowProfile {
                 sectionCache.fluidType(x, y, z),
                 sectionCache.amount(x, y, z),
                 sectionCache.isAir(x, y, z),
-                sectionCache.isReplaceable(x, y, z)
+                sectionCache.isReplaceable(x, y, z),
+                sectionCache.isPassThrough(x, y, z)
             );
         }
         if (sampleContext != null) {
             FFSectionSampleContext.CellSnapshot snapshot = sampleContext.cell(level, cursor);
             FluidState fluidState = snapshot.fluidState();
+            BlockState blockState = snapshot.blockState();
             return new SampledCell(
                 fluidState.isEmpty() ? null : fluidState.getType(),
                 fluidState.getAmount(),
-                snapshot.blockState().isAir(),
-                snapshot.blockState().canBeReplaced(fluidType)
+                blockState.isAir(),
+                blockState.canBeReplaced(fluidType),
+                FFFluidUtils.isPassThroughFluidBlock(level, blockState, null)
             );
         }
         BlockState state = level.getBlockState(cursor);
@@ -804,7 +807,8 @@ public final class WaterFlowProfile {
             fluidState.isEmpty() ? null : fluidState.getType(),
             fluidState.getAmount(),
             state.isAir(),
-            state.canBeReplaced(fluidType)
+            state.canBeReplaced(fluidType),
+            FFFluidUtils.isPassThroughFluidBlock(level, state, null)
         );
     }
 
@@ -890,13 +894,17 @@ public final class WaterFlowProfile {
                                             int lateralWaterNeighbors, int surfaceEdgeCount) {
     }
 
-    private record SampledCell(@Nullable Fluid fluid, int amount, boolean air, boolean replaceable) {
+    private record SampledCell(@Nullable Fluid fluid, int amount, boolean air, boolean replaceable, boolean passThrough) {
         private boolean matches(Fluid targetFluid) {
             return fluid != null && fluid.isSame(targetFluid) && amount > 0;
         }
 
         private boolean isSurfaceEdge() {
-            return amount <= 0 && (air || replaceable);
+            return amount <= 0 && (air || replaceable || passThrough);
+        }
+
+        private boolean isSolidSupport() {
+            return !air && !replaceable && !passThrough;
         }
     }
 }

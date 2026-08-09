@@ -43,6 +43,7 @@ import net.minecraft.world.level.block.BucketPickup;
 import net.minecraft.world.level.block.BushBlock;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.FenceBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.KelpBlock;
 import net.minecraft.world.level.block.KelpPlantBlock;
@@ -522,21 +523,40 @@ public class FFFluidUtils {
 
     public static boolean isPassThroughFluidBlock(LevelAccessor level, BlockState state, Direction direction) {
         var block = state.getBlock();
-        if (block instanceof DoorBlock && FlowingFluids.config.applyPressureToDoors) {
-            return state.hasProperty(BlockStateProperties.OPEN) && state.getValue(BlockStateProperties.OPEN);
+        if (isOpenDoorLikeFluidConduit(state)) {
+            return true;
         }
-        if (block instanceof TrapDoorBlock && FlowingFluids.config.applyPressureToTrapdoors) {
-            return state.hasProperty(BlockStateProperties.OPEN) && state.getValue(BlockStateProperties.OPEN);
-        }
-        if (block instanceof FenceGateBlock && FlowingFluids.config.applyPressureToFenceGates) {
-            return state.hasProperty(BlockStateProperties.OPEN) && state.getValue(BlockStateProperties.OPEN);
-        }
-        if (!FlowingFluids.config.extendedWaterloggingAllowFences) {
+        if (block instanceof DoorBlock || block instanceof TrapDoorBlock || block instanceof FenceGateBlock) {
             return false;
         }
-        return state.is(net.minecraft.tags.BlockTags.FENCES)
-                || state.is(net.minecraft.tags.BlockTags.WALLS)
-                || block == net.minecraft.world.level.block.Blocks.IRON_BARS;
+        if (block instanceof FenceBlock
+                || state.is(net.minecraft.tags.BlockTags.FENCES)
+                || block == net.minecraft.world.level.block.Blocks.IRON_BARS) {
+            return true;
+        }
+        return FlowingFluids.config != null
+                && FlowingFluids.config.extendedWaterloggingAllowFences
+                && state.is(net.minecraft.tags.BlockTags.WALLS);
+    }
+
+    public static boolean isOpenDoorLikeFluidConduit(BlockState state) {
+        var block = state.getBlock();
+        if (block instanceof DoorBlock) {
+            return state.hasProperty(BlockStateProperties.OPEN) && state.getValue(BlockStateProperties.OPEN);
+        }
+        if (block instanceof TrapDoorBlock) {
+            return state.hasProperty(BlockStateProperties.OPEN) && state.getValue(BlockStateProperties.OPEN);
+        }
+        if (block instanceof FenceGateBlock) {
+            return state.hasProperty(BlockStateProperties.OPEN) && state.getValue(BlockStateProperties.OPEN);
+        }
+        return false;
+    }
+
+    public static boolean isFluidSupportBlock(LevelAccessor levelAccessor, BlockState state, Direction direction, Fluid fluid) {
+        return !state.isAir()
+                && !state.canBeReplaced(fluid)
+                && !isPassThroughFluidBlock(levelAccessor, state, direction);
     }
 
     static boolean usesShapeAwareVirtualFluidState(BlockState state) {
@@ -803,22 +823,31 @@ public class FFFluidUtils {
         if (isProtectedFlowingFluidsSpringSource(state)) {
             return false;
         }
+        if (shouldAvoidVirtualFluidStorage(state)) {
+            return false;
+        }
         return hasRawVanillaWaterlogSupport(state)
                 && state.hasProperty(BlockStateProperties.WATERLOGGED)
                 && (usesShapeAwareVirtualFluidState(state) || hasAnyShapeOpening(state));
     }
 
-    public static boolean supportsVirtualFluidState(LevelAccessor level, BlockState state) {
+    public static boolean canStoreVirtualFluidState(LevelAccessor level, BlockState state) {
         if (!isVirtualFluidStorageEnabled()) {
             return false;
         }
         if (isProtectedFlowingFluidsSpringSource(state)) {
             return false;
         }
+        if (shouldAvoidVirtualFluidStorage(state)) {
+            return false;
+        }
         return isExtendedWaterloggable(level, state)
                 || shouldOverrideVanillaWaterlogging(state)
-                || isGenericNonFullVirtualFluidBlock(state)
-                || isDirectionalVirtualFluidPassableBlock(level, state, null);
+                || isGenericNonFullVirtualFluidBlock(state);
+    }
+
+    public static boolean supportsVirtualFluidState(LevelAccessor level, BlockState state) {
+        return canStoreVirtualFluidState(level, state);
     }
 
     private static boolean isProtectedFlowingFluidsSpringSource(BlockState state) {
@@ -884,6 +913,9 @@ public class FFFluidUtils {
         if (state == null || state.isAir() || state.hasBlockEntity()) {
             return false;
         }
+        if (shouldAvoidVirtualFluidStorage(state)) {
+            return false;
+        }
         if (state.getBlock() instanceof LiquidBlockContainer || state.canBeReplaced(Fluids.WATER)) {
             return false;
         }
@@ -891,12 +923,22 @@ public class FFFluidUtils {
         return !shape.isEmpty() && hasAnyShapeOpening(state);
     }
 
+    private static boolean shouldAvoidVirtualFluidStorage(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        Block block = state.getBlock();
+        return block instanceof DoorBlock
+                || block instanceof FenceGateBlock
+                || isOpenDoorLikeFluidConduit(state);
+    }
+
     public static boolean isVanillaWaterloggable(BlockState state) {
         return hasRawVanillaWaterlogSupport(state) && !shouldOverrideVanillaWaterlogging(state);
     }
 
     public static boolean canStorePartialFluidAmount(LevelAccessor levelAccessor, BlockPos pos, BlockState blockState, Fluid fluid) {
-        if (supportsVirtualFluidState(levelAccessor, blockState)) {
+        if (canStoreVirtualFluidState(levelAccessor, blockState)) {
             return true;
         }
         if (isVanillaWaterloggable(blockState)) {
@@ -959,7 +1001,7 @@ public class FFFluidUtils {
             BlockState belowState = level.getBlockState(belowPos);
             FluidState belowFluid = getEffectiveFluidState(level, belowPos, belowState);
             boolean supportedBelow = (belowFluid.getType().isSame(fluid) && belowFluid.getAmount() >= currentAmount)
-                    || (!belowState.isAir() && !belowState.canBeReplaced(fluid));
+                    || isFluidSupportBlock(level, belowState, Direction.DOWN, fluid);
             if (!supportedBelow) {
                 return false;
             }
@@ -1008,7 +1050,7 @@ public class FFFluidUtils {
         if (clampedAmount <= 0) {
             return 0;
         }
-        if (supportsVirtualFluidState(levelAccessor, blockState)) {
+        if (canStoreVirtualFluidState(levelAccessor, blockState)) {
             return clampedAmount;
         }
         if (isVanillaWaterloggable(blockState)) {
@@ -1036,7 +1078,7 @@ public class FFFluidUtils {
             return base;
         }
         if (ExtendedWaterlogStore.has(level, pos)) {
-            if (supportsVirtualFluidState(level, state)) {
+            if (canStoreVirtualFluidState(level, state)) {
                 return ExtendedWaterlogStore.get(level, pos);
             }
             clearStoredVirtualFluidState(level, pos);
@@ -1400,7 +1442,7 @@ public class FFFluidUtils {
         for (Direction direction : Direction.values()) {
             cursor.setWithOffset(pos, direction);
             BlockState neighborState = level.getBlockState(cursor);
-            if (!supportsVirtualFluidState(level, neighborState)) {
+            if (!canStoreVirtualFluidState(level, neighborState)) {
                 continue;
             }
 
@@ -1470,7 +1512,7 @@ public class FFFluidUtils {
             return removeAllFluidAtPos(levelAccessor, pos, fluid, blockState, existingState, false);
         }
 
-        if (supportsVirtualFluidState(levelAccessor, blockState)) {
+        if (canStoreVirtualFluidState(levelAccessor, blockState)) {
             if (!prepareBlockForVirtualFluidStorage(levelAccessor, pos, blockState)) {
                 return false;
             }
@@ -1617,7 +1659,7 @@ public class FFFluidUtils {
     private static double getFluidSurfaceHeight(LevelAccessor levelAccessor, BlockPos pos, int amount) {
         int clampedAmount = Mth.clamp(amount, 0, 8);
         BlockState state = levelAccessor.getBlockState(pos);
-        if (supportsVirtualFluidState(levelAccessor, state)) {
+        if (canStoreVirtualFluidState(levelAccessor, state)) {
             return Mth.clamp(getVirtualFluidSurfaceY(getVirtualFluidCavity(state), clampedAmount / 8.0D),
                     0.0D, 1.0D);
         }
@@ -1691,7 +1733,7 @@ public class FFFluidUtils {
             recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
             return true;
         }
-        if (supportsVirtualFluidState(levelAccessor, blockState) || ExtendedWaterlogStore.has(levelAccessor, pos)) {
+        if (canStoreVirtualFluidState(levelAccessor, blockState) || ExtendedWaterlogStore.has(levelAccessor, pos)) {
             boolean cleared = clearStoredVirtualFluidState(levelAccessor, pos);
             if (!cleared
                     && shouldOverrideVanillaWaterlogging(blockState)
@@ -1822,23 +1864,31 @@ public class FFFluidUtils {
         }
         boolean replaceableTarget = fluidState2.isEmpty() && blockState2.canBeReplaced(sourceFluid);
         boolean virtualEnabled = isVirtualFluidStorageEnabled();
-        boolean porousSource = virtualEnabled && blockGetter instanceof LevelAccessor accessor
-                && isDirectionalVirtualFluidPassableBlock(accessor, blockState, direction);
-        boolean porousTarget = virtualEnabled && blockGetter instanceof LevelAccessor accessor
-                && isDirectionalVirtualFluidPassableBlock(accessor, blockState2, direction.getOpposite());
-        boolean virtualTarget = virtualEnabled && blockGetter instanceof LevelAccessor accessor
-                && supportsVirtualFluidState(accessor, blockState2);
+        LevelAccessor levelAccessor = blockGetter instanceof LevelAccessor accessor ? accessor : null;
+        boolean porousSource = virtualEnabled && levelAccessor != null
+                && isDirectionalVirtualFluidPassableBlock(levelAccessor, blockState, direction);
+        boolean porousTarget = virtualEnabled && levelAccessor != null
+                && isDirectionalVirtualFluidPassableBlock(levelAccessor, blockState2, direction.getOpposite());
+        boolean passThroughSource = levelAccessor != null
+                && isPassThroughFluidBlock(levelAccessor, blockState, direction);
+        boolean passThroughTarget = levelAccessor != null
+                && isPassThroughFluidBlock(levelAccessor, blockState2, direction.getOpposite());
+        boolean virtualTarget = virtualEnabled && levelAccessor != null
+                && canStoreVirtualFluidState(levelAccessor, blockState2);
         boolean compatibleHeights = hasCompatibleVirtualFluidHeights(
                 blockGetter, blockPos, blockState, sourceFluidState, direction, blockPos2, blockState2, fluidState2);
         //add extra fluid check for replacing into self
         return (replaceableTarget
+                || passThroughTarget
                 || fluidState2.canBeReplacedWith(blockGetter, blockPos2, sourceFluid, direction)
                 || canFitIntoFluid(sourceFluid, fluidState2, direction, sourceAmount, blockState2))
                 && compatibleHeights
-                && (porousSource
+                && (passThroughSource
+                    || passThroughTarget
+                    || porousSource
                     || porousTarget
                     || sourceFluid.canPassThroughWall(direction, blockGetter, blockPos, blockState, blockPos2, blockState2))
-                && (replaceableTarget || virtualTarget || sourceFluid.canHoldFluid(blockGetter, blockPos2, blockState2, sourceFluid));
+                && (replaceableTarget || passThroughTarget || virtualTarget || sourceFluid.canHoldFluid(blockGetter, blockPos2, blockState2, sourceFluid));
     }
 
     public static boolean canFluidFlowFromPosToDirectionFitOverride(FlowingFluid sourceFluid, BlockGetter blockGetter,
@@ -1851,20 +1901,27 @@ public class FFFluidUtils {
                 ? getEffectiveFluidState(accessor, blockPos2, blockState2)
                 : blockState2.getFluidState();
         boolean virtualEnabled = isVirtualFluidStorageEnabled();
-        boolean porousSource = virtualEnabled && blockGetter instanceof LevelAccessor accessor
-                && isDirectionalVirtualFluidPassableBlock(accessor, blockState, direction);
-        boolean porousTarget = virtualEnabled && blockGetter instanceof LevelAccessor accessor
-                && isDirectionalVirtualFluidPassableBlock(accessor, blockState2, direction.getOpposite());
-        boolean virtualTarget = virtualEnabled && blockGetter instanceof LevelAccessor accessor
-                && supportsVirtualFluidState(accessor, blockState2);
+        LevelAccessor levelAccessor = blockGetter instanceof LevelAccessor accessor ? accessor : null;
+        boolean porousSource = virtualEnabled && levelAccessor != null
+                && isDirectionalVirtualFluidPassableBlock(levelAccessor, blockState, direction);
+        boolean porousTarget = virtualEnabled && levelAccessor != null
+                && isDirectionalVirtualFluidPassableBlock(levelAccessor, blockState2, direction.getOpposite());
+        boolean passThroughSource = levelAccessor != null
+                && isPassThroughFluidBlock(levelAccessor, blockState, direction);
+        boolean passThroughTarget = levelAccessor != null
+                && isPassThroughFluidBlock(levelAccessor, blockState2, direction.getOpposite());
+        boolean virtualTarget = virtualEnabled && levelAccessor != null
+                && canStoreVirtualFluidState(levelAccessor, blockState2);
         boolean compatibleHeights = hasCompatibleVirtualFluidHeights(
                 blockGetter, blockPos, blockState, sourceFluidState, direction, blockPos2, blockState2, targetFluidState);
         //add extra fluid check for replacing into self
         return compatibleHeights
-                && (porousSource
+                && (passThroughSource
+                || passThroughTarget
+                || porousSource
                 || porousTarget
                 || sourceFluid.canPassThroughWall(direction, blockGetter, blockPos, blockState, blockPos2, blockState2))
-                && (blockState2.canBeReplaced(sourceFluid) || virtualTarget || sourceFluid.canHoldFluid(blockGetter, blockPos2, blockState2, sourceFluid));
+                && (blockState2.canBeReplaced(sourceFluid) || passThroughTarget || virtualTarget || sourceFluid.canHoldFluid(blockGetter, blockPos2, blockState2, sourceFluid));
     }
 
     public static boolean canTraverseFluidAdjacency(LevelAccessor levelAccessor,
@@ -1884,7 +1941,11 @@ public class FFFluidUtils {
         boolean virtualEnabled = isVirtualFluidStorageEnabled();
         boolean porousSource = virtualEnabled && isDirectionalVirtualFluidPassableBlock(levelAccessor, fromState, direction);
         boolean porousTarget = virtualEnabled && isDirectionalVirtualFluidPassableBlock(levelAccessor, toState, direction.getOpposite());
-        boolean facePassable = porousSource
+        boolean passThroughSource = isPassThroughFluidBlock(levelAccessor, fromState, direction);
+        boolean passThroughTarget = isPassThroughFluidBlock(levelAccessor, toState, direction.getOpposite());
+        boolean facePassable = passThroughSource
+                || passThroughTarget
+                || porousSource
                 || porousTarget
                 || sourceFluid.canPassThroughWall(direction, levelAccessor, fromPos, fromState, toPos, toState);
         FluidState sourceFluidState = getEffectiveFluidState(levelAccessor, fromPos, fromState);
@@ -1892,7 +1953,7 @@ public class FFFluidUtils {
                 levelAccessor, fromPos, fromState, sourceFluidState, direction, toPos, toState, resolvedToFluid);
         boolean targetSameFluid = !resolvedToFluid.isEmpty() && resolvedToFluid.getType().isSame(sourceFluid);
         boolean targetHasOtherFluid = !resolvedToFluid.isEmpty() && !targetSameFluid;
-        boolean targetVirtual = supportsVirtualFluidState(levelAccessor, toState);
+        boolean targetVirtual = canStoreVirtualFluidState(levelAccessor, toState);
         boolean targetCanHoldFluid = sourceFluid.canHoldFluid(levelAccessor, toPos, toState, sourceFluid);
 
         return FluidRegressionLogic.shouldTraverseFluidAdjacency(
@@ -1901,7 +1962,7 @@ public class FFFluidUtils {
                 targetHasOtherFluid,
                 toState.isAir(),
                 toState.canBeReplaced(sourceFluid),
-                targetVirtual,
+                targetVirtual || passThroughTarget,
                 targetCanHoldFluid
         );
     }
@@ -1974,11 +2035,12 @@ public class FFFluidUtils {
                 FluidState state = getEffectiveFluidState(levelAccessor, currentPos, blockState);
                 boolean isSameFluid = fluid.isSame(state.getType());
                 boolean canReceiveNewFluid = state.isEmpty()
-                        && (blockState.isAir() || blockState.canBeReplaced(fluid) || supportsVirtualFluidState(levelAccessor, blockState));
-                if (isSameFluid || canReceiveNewFluid) {
+                        && (blockState.isAir() || blockState.canBeReplaced(fluid) || canStoreVirtualFluidState(levelAccessor, blockState));
+                boolean passThroughConduit = state.isEmpty() && isPassThroughFluidBlock(levelAccessor, blockState, null);
+                if (isSameFluid || canReceiveNewFluid || passThroughConduit) {
                     traversedCandidateCells++;
                     int currentAmountAtPos = isSameFluid ? state.getAmount() : 0;
-                    int space = 8 - currentAmountAtPos;
+                    int space = passThroughConduit ? 0 : 8 - currentAmountAtPos;
                     if (space > 0) {
                         positionBuffer.add(currentKey);
                         levelBuffer.add(currentAmountAtPos);
@@ -2245,7 +2307,7 @@ public class FFFluidUtils {
         BlockState belowState = levelAccessor.getBlockState(belowPos);
         FluidState belowFluid = getEffectiveFluidState(levelAccessor, belowPos, belowState);
         return (belowFluid.getType().isSame(fluid) && belowFluid.getAmount() > 0)
-                || (!belowState.isAir() && !belowState.canBeReplaced(fluid));
+                || isFluidSupportBlock(levelAccessor, belowState, Direction.DOWN, fluid);
     }
 
     private static boolean hasContainedImmediateDownwardOutlet(LevelAccessor levelAccessor, BlockPos pos, Fluid fluid) {
@@ -2253,7 +2315,10 @@ public class FFFluidUtils {
         BlockState belowState = levelAccessor.getBlockState(belowPos);
         FluidState belowFluid = getEffectiveFluidState(levelAccessor, belowPos, belowState);
         if (belowFluid.isEmpty()) {
-            return belowState.isAir() || belowState.canBeReplaced(fluid) || supportsVirtualFluidState(levelAccessor, belowState);
+            return belowState.isAir()
+                    || belowState.canBeReplaced(fluid)
+                    || canStoreVirtualFluidState(levelAccessor, belowState)
+                    || isPassThroughFluidBlock(levelAccessor, belowState, Direction.DOWN);
         }
         return belowFluid.getType().isSame(fluid) && belowFluid.getAmount() < 8;
     }
@@ -2266,7 +2331,10 @@ public class FFFluidUtils {
             BlockState sideState = levelAccessor.getBlockState(cursor);
             FluidState sideFluid = getEffectiveFluidState(levelAccessor, cursor, sideState);
             if (sideFluid.isEmpty()) {
-                if (sideState.isAir() || sideState.canBeReplaced(fluid) || supportsVirtualFluidState(levelAccessor, sideState)) {
+                if (sideState.isAir()
+                        || sideState.canBeReplaced(fluid)
+                        || canStoreVirtualFluidState(levelAccessor, sideState)
+                        || isPassThroughFluidBlock(levelAccessor, sideState, direction)) {
                     routes++;
                 }
             } else if (sideFluid.getType().isSame(fluid) && sideFluid.getAmount() < 8) {
@@ -2332,7 +2400,7 @@ public class FFFluidUtils {
         FluidState belowFluid = getEffectiveFluidState(levelAccessor, mutablePos, belowState);
         if (belowFluid.getType().isSame(fluid) && belowFluid.getAmount() > 0) {
             score += 3;
-        } else if (!belowState.isAir() && !belowState.canBeReplaced(fluid)) {
+        } else if (isFluidSupportBlock(levelAccessor, belowState, Direction.DOWN, fluid)) {
             score += 2;
         }
 
@@ -2438,29 +2506,32 @@ public class FFFluidUtils {
 
             BlockState currentBlockState = levelAccessor.getBlockState(mutablePos);
             FluidState state = getEffectiveFluidState(levelAccessor, mutablePos, currentBlockState);
-            if (!fluid.isSame(state.getType())) {
+            boolean passThroughConduit = state.isEmpty() && isPassThroughFluidBlock(levelAccessor, currentBlockState, null);
+            if (!fluid.isSame(state.getType()) && !passThroughConduit) {
                 continue;
             }
 
-            int amount = state.getAmount();
-            if (amount <= 0) {
+            int amount = fluid.isSame(state.getType()) ? state.getAmount() : 0;
+            if (amount <= 0 && !passThroughConduit) {
                 continue;
             }
 
             traversedFluidCells++;
-            foundAmount += amount;
-            if (foundAmount > maxAmountToFind) {
-                int finalLevel = foundAmount - maxAmountToFind;
-                positionBuffer.add(currentKey);
-                levelBuffer.add(finalLevel);
-                foundAmount = maxAmountToFind;
-                break;
-            }
+            if (!passThroughConduit) {
+                foundAmount += amount;
+                if (foundAmount > maxAmountToFind) {
+                    int finalLevel = foundAmount - maxAmountToFind;
+                    positionBuffer.add(currentKey);
+                    levelBuffer.add(finalLevel);
+                    foundAmount = maxAmountToFind;
+                    break;
+                }
 
-            positionBuffer.add(currentKey);
-            levelBuffer.add(0);
-            if (foundAmount == maxAmountToFind) {
-                break;
+                positionBuffer.add(currentKey);
+                levelBuffer.add(0);
+                if (foundAmount == maxAmountToFind) {
+                    break;
+                }
             }
 
             for (Direction direction : searchOrder) {
@@ -2936,7 +3007,7 @@ public class FFFluidUtils {
         BlockState belowState = level.getBlockState(belowPos);
         FluidState below = getEffectiveFluidState(level, belowPos, belowState);
         boolean supportedBelow = (below.getType().isSame(fluid) && below.getAmount() >= 8)
-                || (!belowState.isAir() && !belowState.canBeReplaced(fluid));
+                || isFluidSupportBlock(level, belowState, Direction.DOWN, fluid);
 
         FluidState above = getEffectiveFluidState(level, pos.above(), level.getBlockState(pos.above()));
         boolean hasFluidAbove = above.getType().isSame(fluid) && above.getAmount() > 0;
@@ -2994,7 +3065,7 @@ public class FFFluidUtils {
         BlockState belowState = level.getBlockState(belowPos);
         FluidState below = getEffectiveFluidState(level, belowPos, belowState);
         boolean supportedBelow = (below.getType().isSame(fluid) && below.getAmount() >= 8)
-                || (!belowState.isAir() && !belowState.canBeReplaced(fluid));
+                || isFluidSupportBlock(level, belowState, Direction.DOWN, fluid);
 
         int fullLateralNeighbors = 0;
         int partialLateralNeighbors = 0;
@@ -3130,7 +3201,7 @@ public class FFFluidUtils {
         BlockState belowState = levelAccessor.getBlockState(belowPos);
         FluidState belowFluid = getEffectiveFluidState(levelAccessor, belowPos, belowState);
         boolean supportedBelow = (belowFluid.getType().isSame(fluid) && belowFluid.getAmount() >= 8)
-                || (!belowState.isAir() && !belowState.canBeReplaced(fluid));
+                || isFluidSupportBlock(levelAccessor, belowState, Direction.DOWN, fluid);
 
         int fullSourceNeighbors = 0;
         int partialWaterNeighbors = 0;
@@ -3359,9 +3430,11 @@ public class FFFluidUtils {
             return true;
         }
 
-        FluidState below = getEffectiveFluidState(level, pos.below(), level.getBlockState(pos.below()));
+        BlockPos belowPos = pos.below();
+        BlockState belowState = level.getBlockState(belowPos);
+        FluidState below = getEffectiveFluidState(level, belowPos, belowState);
         boolean supportedBelow = (below.getType().isSame(fluid) && below.getAmount() >= Math.max(amount, 4))
-            || (!world.getBlockState(pos.below()).isAir() && !world.getBlockState(pos.below()).canBeReplaced(fluid));
+            || isFluidSupportBlock(level, belowState, Direction.DOWN, fluid);
 
         int lateralWaterNeighbors = 0;
         int supportedNeighbors = 0;
