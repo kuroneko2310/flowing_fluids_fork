@@ -11,13 +11,13 @@ import traben.flowing_fluids.util.DimensionKey;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class FluidTickWorkloadGovernor {
-    private static final int HEALTHY_BUDGET = 4096;
-    private static final int BUSY_BUDGET = 2048;
-    private static final int OVERLOADED_BUDGET = 768;
-    private static final int CRITICAL_BUDGET = 192;
-    private static final int EXTREME_BUDGET = 64;
+    private static final int HEALTHY_BUDGET = 65_536;
+    private static final int BUSY_BUDGET = 16_384;
+    private static final int OVERLOADED_BUDGET = 8_192;
+    private static final int CRITICAL_BUDGET = 2_048;
+    private static final int EXTREME_BUDGET = 512;
     private static final int MIN_DEFER_DELAY = 2;
-    private static final int MAX_DEFER_DELAY = 10;
+    private static final int MAX_DEFER_DELAY = 32;
     private static final long DEFER_SALT = 0x464c5549445f544bL;
 
     private static final ConcurrentHashMap<DimensionKey, TickBudget> BUDGETS = new ConcurrentHashMap<>();
@@ -89,7 +89,14 @@ public final class FluidTickWorkloadGovernor {
             return Math.max(0, queuedWakeTicks);
         }
         int base = computeBulkWakeFlushBudgetForMspt(getMspt(level));
-        return Math.min(base, configured);
+        base = Math.min(base, configured);
+        if (queuedWakeTicks >= 131_072) {
+            return Math.min(configured, Math.max(base, 4096));
+        }
+        if (queuedWakeTicks >= 32_768) {
+            return Math.min(configured, Math.max(base, 2048));
+        }
+        return base;
     }
 
     public static int getBulkWakeMaxDelay(Level level, int queuedWakeTicks) {
@@ -125,7 +132,7 @@ public final class FluidTickWorkloadGovernor {
         } else {
             budget = HEALTHY_BUDGET;
         }
-        return Math.max(EXTREME_BUDGET, budget - distancePenalty);
+        return Math.max(256, budget - distancePenalty);
     }
 
     static boolean shouldSpatiallyDefer(BlockPos pos, Fluid fluid, long gameTime, double mspt, int flowDistance) {
@@ -166,18 +173,18 @@ public final class FluidTickWorkloadGovernor {
 
     static int computeBulkWakeFlushBudgetForMspt(double mspt) {
         if (mspt >= 250.0) {
-            return 128;
-        }
-        if (mspt >= 120.0) {
-            return 384;
-        }
-        if (mspt >= 70.0) {
             return 1024;
         }
-        if (mspt >= 45.0) {
+        if (mspt >= 120.0) {
             return 2048;
         }
-        return 4096;
+        if (mspt >= 70.0) {
+            return 8192;
+        }
+        if (mspt >= 45.0) {
+            return 16_384;
+        }
+        return 32_768;
     }
 
     private static int getBaseDeferredDelay(Level level, int flowDistance) {
@@ -200,7 +207,7 @@ public final class FluidTickWorkloadGovernor {
 
     private static double getMspt(Level level) {
         FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
-        double mspt = monitor.getLoadControlMspt(50.0);
+        double mspt = monitor.getLoadControlMspt(0.0);
         if (mspt <= 0.0 && level instanceof ServerLevel serverLevel) {
             mspt = serverLevel.getServer().getAverageTickTime();
         }

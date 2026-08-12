@@ -73,7 +73,7 @@ public final class ParallelFluidEqualizer {
     private static final int FOCUSED_SNAPSHOT_RIBBON_RADIUS = 1;
     private static final int QUEUED_SELECTION_BUDGET_PER_TICK = 512;
     private static final int MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION = 64;
-    private static final int MAX_SNAPSHOT_CAPTURES_PER_TICK = 4;
+    private static final int MAX_SNAPSHOT_CAPTURES_PER_TICK = 16;
     private static final int MIN_COMPLETED_RESULT_APPLY_BUDGET = 2;
     private static final int BASE_COMPLETED_RESULT_APPLY_BUDGET = 8;
     private static final int MAX_COMPLETED_RESULT_APPLY_BUDGET = 32;
@@ -317,11 +317,17 @@ public final class ParallelFluidEqualizer {
     }
 
     static int getSnapshotCaptureBudget(double mspt, int pendingAsyncResults) {
-        if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION * 3 / 4 || mspt >= 70.0) {
+        if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION * 3 / 4 || mspt >= 250.0) {
             return 1;
         }
-        if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION / 2 || mspt >= 45.0) {
+        if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION / 2 || mspt >= 120.0) {
             return 2;
+        }
+        if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION / 4 || mspt >= 70.0) {
+            return 4;
+        }
+        if (mspt >= 45.0) {
+            return 8;
         }
         return MAX_SNAPSHOT_CAPTURES_PER_TICK;
     }

@@ -27,12 +27,12 @@ class FluidTickWorkloadGovernorTest {
     }
 
     @Test
-    void budgetUsesTheDeclaredLimitsInsteadOfInflatedFallbacks() {
-        assertEquals(4096, FluidTickWorkloadGovernor.computeBudgetForMspt(20.0, 2));
-        assertEquals(2048, FluidTickWorkloadGovernor.computeBudgetForMspt(55.0, 2));
-        assertEquals(768, FluidTickWorkloadGovernor.computeBudgetForMspt(90.0, 2));
-        assertEquals(192, FluidTickWorkloadGovernor.computeBudgetForMspt(150.0, 2));
-        assertEquals(64, FluidTickWorkloadGovernor.computeBudgetForMspt(300.0, 2));
+    void budgetPreservesEnoughAdmissionsForWaterToKeepMoving() {
+        assertEquals(65_536, FluidTickWorkloadGovernor.computeBudgetForMspt(20.0, 2));
+        assertEquals(16_384, FluidTickWorkloadGovernor.computeBudgetForMspt(55.0, 2));
+        assertEquals(8_192, FluidTickWorkloadGovernor.computeBudgetForMspt(90.0, 2));
+        assertEquals(2_048, FluidTickWorkloadGovernor.computeBudgetForMspt(150.0, 2));
+        assertEquals(512, FluidTickWorkloadGovernor.computeBudgetForMspt(300.0, 2));
     }
 
     @Test
