@@ -117,9 +117,11 @@ class ParallelFluidEqualizerRegressionTest {
 
     @Test
     void snapshotCaptureBudgetProtectsTheServerThreadUnderLoad() {
-        assertEquals(4, ParallelFluidEqualizer.getSnapshotCaptureBudget(20.0, 0));
-        assertEquals(2, ParallelFluidEqualizer.getSnapshotCaptureBudget(55.0, 0));
-        assertEquals(1, ParallelFluidEqualizer.getSnapshotCaptureBudget(90.0, 0));
+        assertEquals(16, ParallelFluidEqualizer.getSnapshotCaptureBudget(20.0, 0));
+        assertEquals(8, ParallelFluidEqualizer.getSnapshotCaptureBudget(55.0, 0));
+        assertEquals(4, ParallelFluidEqualizer.getSnapshotCaptureBudget(90.0, 0));
+        assertEquals(2, ParallelFluidEqualizer.getSnapshotCaptureBudget(150.0, 0));
+        assertEquals(1, ParallelFluidEqualizer.getSnapshotCaptureBudget(300.0, 0));
         assertEquals(1, ParallelFluidEqualizer.getSnapshotCaptureBudget(20.0, 48));
     }
 }
