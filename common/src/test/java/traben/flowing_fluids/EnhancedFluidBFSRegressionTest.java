@@ -8,6 +8,7 @@ import java.util.Random;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class EnhancedFluidBFSRegressionTest {
@@ -37,6 +38,11 @@ class EnhancedFluidBFSRegressionTest {
     }
 
     @Test
+    void loadReductionDefaultsOn() {
+        assertTrue(new FFConfig().enableLoadReduction);
+    }
+
+    @Test
     void quantizationKeepsTheWorldVisibleFluidTotal() {
         int[] internalAmounts = {7, 7, 4};
 
@@ -59,6 +65,24 @@ class EnhancedFluidBFSRegressionTest {
     void quantizationRejectsImpossibleVisibleTotals() {
         assertThrows(IllegalArgumentException.class,
             () -> EnhancedFluidBFS.quantizeInternalAmountsPreservingBlockTotal(new int[]{8}, 9));
+    }
+
+    @Test
+    void quantizationRedistributesSourceBucketsBeforeReducing() {
+        int[] blockAmounts = EnhancedFluidBFS.quantizeInternalAmountsPreservingBlockTotal(
+            new int[]{60, 60, 0}, 15);
+
+        assertArrayEquals(new int[]{7, 7, 1}, blockAmounts);
+        assertEquals(15, sum(blockAmounts));
+    }
+
+    @Test
+    void quantizationRedistributesEmptyBucketsBeforeIncreasing() {
+        int[] blockAmounts = EnhancedFluidBFS.quantizeInternalAmountsPreservingBlockTotal(
+            new int[]{9, 0, 0}, 3);
+
+        assertArrayEquals(new int[]{1, 1, 1}, blockAmounts);
+        assertEquals(3, sum(blockAmounts));
     }
 
     @Test

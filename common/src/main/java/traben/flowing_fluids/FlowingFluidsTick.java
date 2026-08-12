@@ -52,7 +52,9 @@ public final class FlowingFluidsTick {
         GroundwaterSystem.onLevelTick(level);
 
         FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
-        double mspt = monitor.getLoadControlMspt(level.getServer().getAverageTickTime());
+        double mspt = FlowingFluids.config.enableLoadReduction
+            ? monitor.getLoadControlMspt(level.getServer().getAverageTickTime())
+            : 0.0;
         int pendingChunkInitializations = FluidSpatialGrid.getPendingChunkInitializationCount(level);
         if (pendingChunkInitializations > 0) {
             FluidSpatialGrid.processPendingChunkInitializations(level,

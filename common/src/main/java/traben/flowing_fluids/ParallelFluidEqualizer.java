@@ -124,7 +124,9 @@ public final class ParallelFluidEqualizer {
         }
 
         int pendingAsyncCount = pendingResults == null ? 0 : pendingResults.size();
-        LongOpenHashSet queued = drainQueuedCandidates(dimensionKey, getQueuedSelectionBudget(pendingAsyncCount));
+        boolean loadReductionEnabled = FlowingFluids.config == null || FlowingFluids.config.enableLoadReduction;
+        LongOpenHashSet queued = drainQueuedCandidates(
+            dimensionKey, getQueuedSelectionBudget(pendingAsyncCount, loadReductionEnabled));
         if (queued == null || queued.isEmpty()) {
             return applied;
         }
@@ -139,7 +141,9 @@ public final class ParallelFluidEqualizer {
         FluidSectionDataCache captureCache = new FluidSectionDataCache(level, Math.max(32, representativeSources.size() * 8));
         List<Request> requests = new ArrayList<>(representativeSources.size());
         int snapshotCaptureBudget = getSnapshotCaptureBudget(
-            FluidPerformanceMonitor.getInstance().getLoadControlMspt(0.0), pendingAsyncCount);
+            FluidPerformanceMonitor.getInstance().getLoadControlMspt(0.0),
+            pendingAsyncCount,
+            loadReductionEnabled);
         for (ScanCandidate candidate : representativeSources) {
             long posKey = candidate.pos().asLong();
             if (requests.size() >= snapshotCaptureBudget) {
@@ -220,7 +224,8 @@ public final class ParallelFluidEqualizer {
 
         int processed = 0;
         Map<Fluid, LongOpenHashSet> mergedByFluid = new LinkedHashMap<>();
-        int applyBudget = getCompletedResultApplyBudget(pending.size());
+        boolean loadReductionEnabled = FlowingFluids.config == null || FlowingFluids.config.enableLoadReduction;
+        int applyBudget = getCompletedResultApplyBudget(pending.size(), loadReductionEnabled);
         Iterator<CompletableFuture<Result>> iterator = pending.iterator();
         while (iterator.hasNext() && processed < applyBudget) {
             CompletableFuture<Result> future = iterator.next();
@@ -270,6 +275,13 @@ public final class ParallelFluidEqualizer {
     }
 
     static int getCompletedResultApplyBudget(int pendingResults) {
+        return getCompletedResultApplyBudget(pendingResults, true);
+    }
+
+    static int getCompletedResultApplyBudget(int pendingResults, boolean loadReductionEnabled) {
+        if (!loadReductionEnabled) {
+            return MAX_COMPLETED_RESULT_APPLY_BUDGET;
+        }
         int backlogBoost = pendingResults >= 48 ? 24
             : pendingResults >= 24 ? 12
             : pendingResults >= 12 ? 6
@@ -294,6 +306,13 @@ public final class ParallelFluidEqualizer {
     }
 
     static int getQueuedSelectionBudget(int pendingAsyncResults) {
+        return getQueuedSelectionBudget(pendingAsyncResults, true);
+    }
+
+    static int getQueuedSelectionBudget(int pendingAsyncResults, boolean loadReductionEnabled) {
+        if (!loadReductionEnabled) {
+            return QUEUED_SELECTION_BUDGET_PER_TICK;
+        }
         int budget = QUEUED_SELECTION_BUDGET_PER_TICK;
         double mspt = FluidPerformanceMonitor.getInstance().getLoadControlMspt(0.0);
 
@@ -317,6 +336,13 @@ public final class ParallelFluidEqualizer {
     }
 
     static int getSnapshotCaptureBudget(double mspt, int pendingAsyncResults) {
+        return getSnapshotCaptureBudget(mspt, pendingAsyncResults, true);
+    }
+
+    static int getSnapshotCaptureBudget(double mspt, int pendingAsyncResults, boolean loadReductionEnabled) {
+        if (!loadReductionEnabled) {
+            return MAX_SNAPSHOT_CAPTURES_PER_TICK;
+        }
         if (pendingAsyncResults >= MAX_PENDING_ASYNC_RESULTS_PER_DIMENSION * 3 / 4 || mspt >= 250.0) {
             return 1;
         }
@@ -571,6 +597,7 @@ public final class ParallelFluidEqualizer {
                 continue;
             }
             if (!forcedRecheck
+                    && FlowingFluids.config.enableLoadReduction
                     && FlowingFluids.config.enableFluidComponentGraph
                     && FlowingFluids.config.fluidComponentGraphAssistEqualizer
                     && candidate.componentId() > 0

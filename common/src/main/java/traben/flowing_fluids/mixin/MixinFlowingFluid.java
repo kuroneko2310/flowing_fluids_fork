@@ -459,7 +459,8 @@ public abstract class MixinFlowingFluid extends Fluid {
                 ) {
                     waterProfile = flowing_fluids$getWaterFlowProfile(level, blockPos, fluidState, fluidState.getAmount());
                     distanceManager = HierarchicalDistanceManager.getInstance();
-                    rangeTier = FlowingFluids.config.enableDistanceBasedOptimization
+                    rangeTier = FlowingFluids.config.enableLoadReduction
+                            && FlowingFluids.config.enableDistanceBasedOptimization
                             ? distanceManager.getSimulationTier(blockPos, level)
                             : HierarchicalDistanceManager.RangeTier.NEAR;
                     boolean forcedRecheck = AdaptiveTickScheduler.hasForcedRecheck(level, blockPos);

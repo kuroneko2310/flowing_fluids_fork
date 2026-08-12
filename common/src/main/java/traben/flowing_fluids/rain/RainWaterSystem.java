@@ -631,6 +631,9 @@ public final class RainWaterSystem {
     }
 
     private static float computeRainLoadMultiplier(ServerLevel level) {
+        if (!FlowingFluids.config.enableLoadReduction) {
+            return 1.0f;
+        }
         float multiplier = 1.0f;
         double avgMspt = FluidPerformanceMonitor.getInstance().getLoadControlMspt(0.0);
         if (avgMspt > RAIN_LOAD_SHED_SOFT_MSPT) {

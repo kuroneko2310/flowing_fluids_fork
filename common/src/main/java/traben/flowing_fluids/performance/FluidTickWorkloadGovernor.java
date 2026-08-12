@@ -29,7 +29,7 @@ public final class FluidTickWorkloadGovernor {
         if (!(level instanceof ServerLevel) || pos == null || fluid == null) {
             return false;
         }
-        if (!FlowingFluids.config.enableFluidWorkloadGovernor) {
+        if (!isEnabled()) {
             return false;
         }
 
@@ -68,7 +68,7 @@ public final class FluidTickWorkloadGovernor {
         if (!(level instanceof ServerLevel) || pos == null || fluid == null) {
             return delay;
         }
-        if (!FlowingFluids.config.enableFluidWorkloadGovernor
+        if (!isEnabled()
                 || !FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay) {
             return delay;
         }
@@ -84,6 +84,9 @@ public final class FluidTickWorkloadGovernor {
     }
 
     public static int getBulkWakeFlushBudget(Level level, int queuedWakeTicks) {
+        if (!isEnabled()) {
+            return Math.max(0, queuedWakeTicks);
+        }
         int configured = FlowingFluids.config.activeWakeFlushBudgetPerTick;
         if (configured <= 0) {
             return Math.max(0, queuedWakeTicks);
@@ -100,7 +103,7 @@ public final class FluidTickWorkloadGovernor {
     }
 
     public static int getBulkWakeMaxDelay(Level level, int queuedWakeTicks) {
-        if (!FlowingFluids.config.enableFluidWorkloadGovernor
+        if (!isEnabled()
                 || !FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay) {
             return FlowingFluids.config.activeWakeMaxDelayTicks;
         }
@@ -188,7 +191,7 @@ public final class FluidTickWorkloadGovernor {
     }
 
     private static int getBaseDeferredDelay(Level level, int flowDistance) {
-        if (!FlowingFluids.config.enableFluidWorkloadGovernor) {
+        if (!isEnabled()) {
             return 1;
         }
         double mspt = getMspt(level);
@@ -212,6 +215,12 @@ public final class FluidTickWorkloadGovernor {
             mspt = serverLevel.getServer().getAverageTickTime();
         }
         return mspt;
+    }
+
+    private static boolean isEnabled() {
+        return FlowingFluids.config != null
+            && FlowingFluids.config.enableLoadReduction
+            && FlowingFluids.config.enableFluidWorkloadGovernor;
     }
 
     private static long mix(long posKey, Fluid fluid, long tick) {

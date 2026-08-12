@@ -21,7 +21,9 @@ public final class FluidAutoTickDelay {
             return;
         }
 
-        if (!FlowingFluids.config.enableMod || !FlowingFluids.config.enableAutoTickDelay) {
+        if (!FlowingFluids.config.enableMod
+                || !FlowingFluids.config.enableLoadReduction
+                || !FlowingFluids.config.enableAutoTickDelay) {
             resetRuntime();
             return;
         }
@@ -72,7 +74,9 @@ public final class FluidAutoTickDelay {
     }
 
     public static void reloadConfig() {
-        if (!FlowingFluids.config.enableMod || !FlowingFluids.config.enableAutoTickDelay) {
+        if (!FlowingFluids.config.enableMod
+                || !FlowingFluids.config.enableLoadReduction
+                || !FlowingFluids.config.enableAutoTickDelay) {
             resetRuntime();
             return;
         }
@@ -92,7 +96,7 @@ public final class FluidAutoTickDelay {
 
     public static String describeStatus() {
         return "Auto tick delay status"
-                + "\nEnabled: " + FlowingFluids.config.enableAutoTickDelay
+                + "\nEnabled: " + (FlowingFluids.config.enableLoadReduction && FlowingFluids.config.enableAutoTickDelay)
                 + "\nWater extra delay: +" + waterExtraDelay + " (base "
                 + FluidFineTickDelay.describeBaseDelay(FlowingFluids.config.waterTickDelay) + ", effective "
                 + FluidFineTickDelay.describeEffectiveDelay(getAdjustedWaterTickDelay(FlowingFluids.config.waterTickDelay)) + ")"

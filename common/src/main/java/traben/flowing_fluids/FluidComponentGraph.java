@@ -237,6 +237,7 @@ public final class FluidComponentGraph {
     private static boolean isEnabled() {
         return FlowingFluids.config != null
             && FlowingFluids.config.enableMod
+            && FlowingFluids.config.enableLoadReduction
             && FlowingFluids.config.enableFluidComponentGraph;
     }
 
