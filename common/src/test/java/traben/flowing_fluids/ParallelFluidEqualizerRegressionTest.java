@@ -123,5 +123,6 @@ class ParallelFluidEqualizerRegressionTest {
         assertEquals(2, ParallelFluidEqualizer.getSnapshotCaptureBudget(150.0, 0));
         assertEquals(1, ParallelFluidEqualizer.getSnapshotCaptureBudget(300.0, 0));
         assertEquals(1, ParallelFluidEqualizer.getSnapshotCaptureBudget(20.0, 48));
+        assertEquals(16, ParallelFluidEqualizer.getSnapshotCaptureBudget(300.0, 48, false));
     }
 }

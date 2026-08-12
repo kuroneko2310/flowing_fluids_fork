@@ -44,6 +44,7 @@ import traben.flowing_fluids.flood.FloodEventSystem;
 import traben.flowing_fluids.performance.FluidAutoTickDelay;
 import traben.flowing_fluids.performance.FluidFineTickDelay;
 import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
+import traben.flowing_fluids.performance.InfiniteBiomeRefillFallbackController;
 import traben.flowing_fluids.rain.RainWaterSystem;
 import traben.flowing_fluids.water.WaterPressureSystem;
 
@@ -449,6 +450,7 @@ public class FFCommands {
                 + "\n用途: 水の計算を止めるためではなく、ScheduledTick が暴走した時だけワールドtickを守ります。"
                 + "\n"
                 + "\n処理:"
+                + "\n- load_reduction_master: " + onOff(FlowingFluids.config.enableLoadReduction)
                 + "\n- governor: " + onOff(FlowingFluids.config.enableFluidWorkloadGovernor)
                 + "\n- spatial_deferral: " + onOff(FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral)
                 + "\n- queue_pressure_delay: " + onOff(FlowingFluids.config.fluidWorkloadGovernorQueuePressureDelay)
@@ -2508,7 +2510,21 @@ public class FFCommands {
                                         )
                                 ).then(Commands.literal("performance_monitoring")
                                         .executes(cont -> message(cont, "パフォーマンスモニタリングツール - 流体フローのパフォーマンスを分析します。\nこれらを使用して設定を最適化し、パフォーマンス問題をデバッグできます。"))
-                                        .then(booleanCommand("enable_performance_monitoring",
+                                        .then(booleanCommand("enable_load_reduction",
+                                                "負荷に応じた自動tick遅延、ScheduledTick governor、遠距離更新間引き、component graph、非同期均等化の動的予算縮小をまとめて切り替えるマスター設定です。\nOFFでは水の応答を優先しますが、大量の水を同時に動かすとサーバー負荷が大きくなります。個別設定値は保持されます。",
+                                                "負荷軽減を有効にしました。サーバー負荷に応じて流体処理量を調整します。",
+                                                "負荷軽減を無効にしました。水の応答を優先し、動的な延期・間引き・予算縮小を行いません。",
+                                                a -> {
+                                                    FlowingFluids.config.enableLoadReduction = a;
+                                                    FluidAutoTickDelay.resetRuntime();
+                                                    FluidTickWorkloadGovernor.clearAll();
+                                                    InfiniteBiomeRefillFallbackController.resetRuntime();
+                                                    if (!a) {
+                                                        FluidComponentGraph.clearAll();
+                                                    }
+                                                },
+                                                () -> FlowingFluids.config.enableLoadReduction)
+                                        ).then(booleanCommand("enable_performance_monitoring",
                                                 "流体システムの詳細なパフォーマンス追跡を有効にします。\ntick時間、BFS操作、キャッシュヒット率などを追跡します。\n注意: 有効時のパフォーマンスオーバーヘッドは最小限です。",
                                                 "パフォーマンスモニタリングが有効になりました。詳細なメトリクスが収集され、ログに記録されます。",
                                                 "パフォーマンスモニタリングが無効になりました。パフォーマンスデータは収集されません。",

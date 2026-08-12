@@ -27,7 +27,9 @@ public final class InfiniteBiomeRefillFallbackController {
     }
 
     public static void onServerTick(MinecraftServer server) {
-        if (server == null || !FlowingFluids.config.enableMod) {
+        if (server == null
+                || !FlowingFluids.config.enableMod
+                || !FlowingFluids.config.enableLoadReduction) {
             resetRuntime();
             return;
         }

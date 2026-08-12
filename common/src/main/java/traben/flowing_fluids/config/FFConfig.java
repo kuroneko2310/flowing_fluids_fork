@@ -120,6 +120,7 @@ public class FFConfig {
     // Performance monitoring settings
     public boolean enablePerformanceMonitoring = false; // Enable detailed performance tracking
     public int performanceLogInterval = 200; // Log performance data every N ticks (20 ticks = 1 second)
+    public boolean enableLoadReduction = true; // Master switch for behavior-changing fluid load reductions
     public boolean enableDistanceBasedOptimization = true; // Apply optimizations based on flow distance
     public boolean enableAutoTickDelay = true; // Relax fluid tick delay when the server is struggling
     public int autoTickDelayUpdateRateTicks = 200; // How often to sample MSPT and adjust runtime delay
@@ -555,6 +556,7 @@ public class FFConfig {
         // Performance monitoring settings
         enablePerformanceMonitoring = buffer.readBoolean();
         performanceLogInterval = buffer.readVarInt();
+        enableLoadReduction = buffer.readBoolean();
         enableDistanceBasedOptimization = buffer.readBoolean();
         enableAutoTickDelay = buffer.readBoolean();
         autoTickDelayUpdateRateTicks = buffer.readVarInt();
@@ -859,6 +861,7 @@ public class FFConfig {
         // Performance monitoring settings
         buffer.writeBoolean(enablePerformanceMonitoring);
         buffer.writeVarInt(performanceLogInterval);
+        buffer.writeBoolean(enableLoadReduction);
         buffer.writeBoolean(enableDistanceBasedOptimization);
         buffer.writeBoolean(enableAutoTickDelay);
         buffer.writeVarInt(autoTickDelayUpdateRateTicks);

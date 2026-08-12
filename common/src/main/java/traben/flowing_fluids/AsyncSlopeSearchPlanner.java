@@ -52,7 +52,8 @@ public final class AsyncSlopeSearchPlanner {
         if (level == null || sourcePos == null || sourceState == null || directionCount <= 0) {
             return false;
         }
-        if (!FlowingFluids.config.enableDistanceBasedOptimization) {
+        if (!FlowingFluids.config.enableLoadReduction
+                || !FlowingFluids.config.enableDistanceBasedOptimization) {
             return false;
         }
         if (FFFluidUtils.canStoreVirtualFluidState(level, sourceState)) {

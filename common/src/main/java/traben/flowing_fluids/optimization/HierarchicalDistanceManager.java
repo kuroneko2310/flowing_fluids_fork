@@ -75,7 +75,7 @@ public class HierarchicalDistanceManager {
      */
     public boolean shouldTickThisTick(BlockPos pos, Level level, long currentTick, int flowDistance, FFConfig config) {
         // Always tick if distance-based optimization is disabled
-        if (!config.enableDistanceBasedOptimization) {
+        if (!config.enableLoadReduction || !config.enableDistanceBasedOptimization) {
             return true;
         }
 
@@ -94,7 +94,7 @@ public class HierarchicalDistanceManager {
     public int alignDelayToUpdateInterval(BlockPos pos, Level level, long currentTick, int flowDistance,
                                           int desiredDelay, FFConfig config) {
         int safeDelay = Math.max(1, desiredDelay);
-        if (!config.enableDistanceBasedOptimization || isPlayerNearby(pos, level)) {
+        if (!config.enableLoadReduction || !config.enableDistanceBasedOptimization || isPlayerNearby(pos, level)) {
             return safeDelay;
         }
 

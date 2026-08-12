@@ -15,11 +15,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Equalizer utilities for the natural hybrid fluid system.
  */
 public class EnhancedFluidBFS {
+    private static final AtomicBoolean QUANTIZATION_FAILURE_REPORTED = new AtomicBoolean();
     private static final int MIN_INTERNAL_DRY_FILL = Math.max(8, FluidAmountConverter.scaleLegacyInternal(64));
     private static final int CLUSTER_PARTITION_THRESHOLD = 96;
 
@@ -290,15 +292,26 @@ public class EnhancedFluidBFS {
         for (int amount : validAmounts) {
             originalBlockTotal += FluidAmountConverter.toBlockState(amount);
         }
-        int[] resolvedBlockAmounts = quantizeInternalAmountsPreservingBlockTotal(
-            resolvedAmounts,
-            originalBlockTotal
-        );
-        int[] resolvedInternalAmounts = fitInternalAmountsToBlockBucketsPreservingTotal(
-            resolvedAmounts,
-            resolvedBlockAmounts,
-            totalAmount
-        );
+        int[] resolvedBlockAmounts;
+        int[] resolvedInternalAmounts;
+        try {
+            resolvedBlockAmounts = quantizeInternalAmountsPreservingBlockTotal(
+                resolvedAmounts,
+                originalBlockTotal
+            );
+            resolvedInternalAmounts = fitInternalAmountsToBlockBucketsPreservingTotal(
+                resolvedAmounts,
+                resolvedBlockAmounts,
+                totalAmount
+            );
+        } catch (IllegalArgumentException | IllegalStateException exception) {
+            // Reject a stale or modded result before either the world or the internal
+            // buffer changes. An invalid async snapshot must never stop the server tick.
+            if (QUANTIZATION_FAILURE_REPORTED.compareAndSet(false, true)) {
+                FlowingFluids.warn("Rejected an equalizer result whose visible and internal fluid totals could not both be preserved.", exception);
+            }
+            return;
+        }
         FluidMutationBatch worldMutations = new FluidMutationBatch(level);
         Fluid[] writeFluids = new Fluid[validPos.size()];
 
@@ -368,6 +381,9 @@ public class EnhancedFluidBFS {
         while (currentTotal > targetBlockTotal) {
             int best = findLeastCostQuantizationStep(internalAmounts, blockAmounts, -1);
             if (best < 0) {
+                if (redistributeQuantizedCapacity(internalAmounts, blockAmounts, -1)) {
+                    continue;
+                }
                 throw new IllegalStateException("Unable to reduce quantized fluid total");
             }
             blockAmounts[best]--;
@@ -376,12 +392,73 @@ public class EnhancedFluidBFS {
         while (currentTotal < targetBlockTotal) {
             int best = findLeastCostQuantizationStep(internalAmounts, blockAmounts, 1);
             if (best < 0) {
+                if (redistributeQuantizedCapacity(internalAmounts, blockAmounts, 1)) {
+                    continue;
+                }
                 throw new IllegalStateException("Unable to increase quantized fluid total");
             }
             blockAmounts[best]++;
             currentTotal++;
         }
         return blockAmounts;
+    }
+
+    /**
+     * Moves one visible level between two cells without changing the visible total.
+     * This opens a valid path when a direct step would temporarily make the preserved
+     * internal total impossible, notably with multiple 57-63 source buckets.
+     */
+    private static boolean redistributeQuantizedCapacity(int[] internalAmounts, int[] blockAmounts, int direction) {
+        int donor = -1;
+        int receiver = -1;
+        int donorPenalty = Integer.MAX_VALUE;
+        int receiverPenalty = Integer.MAX_VALUE;
+
+        for (int i = 0; i < blockAmounts.length; i++) {
+            int blockAmount = blockAmounts[i];
+            if (direction < 0) {
+                if (blockAmount == FluidAmountConverter.getMaxBlockState()) {
+                    int penalty = quantizationStepPenalty(internalAmounts[i], blockAmount, -1);
+                    if (penalty < donorPenalty) {
+                        donorPenalty = penalty;
+                        donor = i;
+                    }
+                } else if (blockAmount <= FluidAmountConverter.getMaxBlockState() - 2) {
+                    int penalty = quantizationStepPenalty(internalAmounts[i], blockAmount, 1);
+                    if (penalty < receiverPenalty) {
+                        receiverPenalty = penalty;
+                        receiver = i;
+                    }
+                }
+            } else {
+                if (blockAmount >= 2) {
+                    int penalty = quantizationStepPenalty(internalAmounts[i], blockAmount, -1);
+                    if (penalty < donorPenalty) {
+                        donorPenalty = penalty;
+                        donor = i;
+                    }
+                } else if (blockAmount == 0) {
+                    int penalty = quantizationStepPenalty(internalAmounts[i], blockAmount, 1);
+                    if (penalty < receiverPenalty) {
+                        receiverPenalty = penalty;
+                        receiver = i;
+                    }
+                }
+            }
+        }
+
+        if (donor < 0 || receiver < 0) {
+            return false;
+        }
+        blockAmounts[donor]--;
+        blockAmounts[receiver]++;
+        return true;
+    }
+
+    private static int quantizationStepPenalty(int internalAmount, int blockAmount, int delta) {
+        int currentError = Math.abs(FluidAmountConverter.toInternal(blockAmount) - internalAmount);
+        int candidateError = Math.abs(FluidAmountConverter.toInternal(blockAmount + delta) - internalAmount);
+        return candidateError - currentError;
     }
 
     static int[] fitInternalAmountsToBlockBucketsPreservingTotal(int[] preferredInternalAmounts,
