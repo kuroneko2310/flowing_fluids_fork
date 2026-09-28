@@ -1028,10 +1028,13 @@ public final class ParallelFluidEqualizer {
 
                 visited.add(neighbor);
                 visitedOrder.add(neighbor);
-                queue.enqueue(neighbor);
-                depthQueue.enqueue(nextDepth);
-
                 int neighborAmount = request.snapshot().amount(nx, ny, nz);
+                // Empty destinations terminate the search. Expanding them scans air
+                // volumes and can reach another pool without a connecting water cell.
+                if (request.snapshot().hasSameFluid(nx, ny, nz) && neighborAmount > 0) {
+                    queue.enqueue(neighbor);
+                    depthQueue.enqueue(nextDepth);
+                }
                 minVisitedAmount = Math.min(minVisitedAmount, neighborAmount);
                 maxVisitedAmount = Math.max(maxVisitedAmount, neighborAmount);
 
@@ -1116,6 +1119,9 @@ public final class ParallelFluidEqualizer {
             if (shouldEqualize(lastAmount, amount, context) || i == 0) {
                 addTarget(targets, targetKeys, key);
                 addTarget(targets, targetKeys, request.startPos().asLong());
+            }
+            if (!request.snapshot().hasSameFluid(x, y, z) || amount <= 0) {
+                break;
             }
             lastAmount = amount;
         }
@@ -1289,7 +1295,8 @@ public final class ParallelFluidEqualizer {
                         if ((cellFlags & LOADED) == 0) {
                             continue;
                         }
-                        if (captureCache.fluidType(x, y, z) == sourceFluid) {
+                        Fluid present = captureCache.fluidType(x, y, z);
+                        if (present != null && present.isSame(sourceFluid)) {
                             cellFlags |= SAME_FLUID;
                         }
                         flags[index] = cellFlags;
@@ -1442,7 +1449,8 @@ public final class ParallelFluidEqualizer {
             if ((cellFlags & LOADED) == 0) {
                 return;
             }
-            if (captureCache.fluidType(x, y, z) == sourceFluid) {
+            Fluid present = captureCache.fluidType(x, y, z);
+            if (present != null && present.isSame(sourceFluid)) {
                 cellFlags |= SAME_FLUID;
             }
             flags[index] = cellFlags;
