@@ -5,6 +5,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.material.Fluid;
+import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.util.DimensionKey;
 
@@ -34,8 +35,10 @@ public final class FluidTickWorkloadGovernor {
         }
 
         double mspt = getMspt(level);
+        boolean activeFlow = AdaptiveTickScheduler.isFlowActiveNow(level, pos);
         if (FlowingFluids.config.fluidWorkloadGovernorSpatialDeferral
                 && shouldSpatiallyDefer(pos, fluid, level.getGameTime(), mspt, flowDistance)) {
+            recordDecision(activeFlow, true);
             return true;
         }
 
@@ -43,14 +46,24 @@ public final class FluidTickWorkloadGovernor {
         long gameTime = level.getGameTime();
         if (budget.tick != gameTime) {
             budget.tick = gameTime;
-            budget.used = 0;
             budget.limit = computeBudgetForMspt(mspt, flowDistance);
+            budget.activeLimit = computeActiveFlowBudget(budget.limit);
+            budget.backgroundLimit = computeBackgroundBudget(budget.limit);
+            budget.activeUsed = 0;
+            budget.backgroundUsed = 0;
         }
 
-        if (budget.used < budget.limit) {
-            budget.used++;
+        if (shouldAdmitWithinLane(activeFlow, budget.activeUsed, budget.backgroundUsed,
+                budget.activeLimit, budget.backgroundLimit)) {
+            if (activeFlow) {
+                budget.activeUsed++;
+            } else {
+                budget.backgroundUsed++;
+            }
+            recordDecision(activeFlow, false);
             return false;
         }
+        recordDecision(activeFlow, true);
         return true;
     }
 
@@ -138,6 +151,26 @@ public final class FluidTickWorkloadGovernor {
         return Math.max(256, budget - distancePenalty);
     }
 
+    static int computeActiveFlowBudget(int totalBudget) {
+        int total = Math.max(1, totalBudget);
+        return total - computeBackgroundBudget(total);
+    }
+
+    static int computeBackgroundBudget(int totalBudget) {
+        int total = Math.max(1, totalBudget);
+        if (total == 1) {
+            return 0;
+        }
+        return Math.max(1, total / 4);
+    }
+
+    static boolean shouldAdmitWithinLane(boolean activeFlow, int activeUsed, int backgroundUsed,
+                                         int activeLimit, int backgroundLimit) {
+        return activeFlow
+            ? activeUsed < Math.max(0, activeLimit)
+            : backgroundUsed < Math.max(0, backgroundLimit);
+    }
+
     static boolean shouldSpatiallyDefer(BlockPos pos, Fluid fluid, long gameTime, double mspt, int flowDistance) {
         int stride = computeSpatialStrideForMspt(mspt, flowDistance);
         if (stride <= 1) {
@@ -223,6 +256,12 @@ public final class FluidTickWorkloadGovernor {
             && FlowingFluids.config.enableFluidWorkloadGovernor;
     }
 
+    private static void recordDecision(boolean activeFlow, boolean deferred) {
+        if (FlowingFluids.config != null && FlowingFluids.config.enablePerformanceMonitoring) {
+            FluidPerformanceMonitor.getInstance().recordGovernorDecision(activeFlow, deferred);
+        }
+    }
+
     private static long mix(long posKey, Fluid fluid, long tick) {
         long fluidHash = System.identityHashCode(fluid);
         long z = posKey ^ Long.rotateLeft(tick * 0x9E3779B97F4A7C15L, 13) ^ fluidHash * DEFER_SALT;
@@ -233,7 +272,10 @@ public final class FluidTickWorkloadGovernor {
 
     private static final class TickBudget {
         long tick = Long.MIN_VALUE;
-        int used;
         int limit = HEALTHY_BUDGET;
+        int activeLimit = computeActiveFlowBudget(HEALTHY_BUDGET);
+        int backgroundLimit = computeBackgroundBudget(HEALTHY_BUDGET);
+        int activeUsed;
+        int backgroundUsed;
     }
 }

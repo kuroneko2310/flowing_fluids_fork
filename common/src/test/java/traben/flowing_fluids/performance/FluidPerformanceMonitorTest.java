@@ -8,6 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FluidPerformanceMonitorTest {
 
     @Test
+    void reportsLocalSettledAndDeepWaterTemplatesSeparately() {
+        assertTrue(FluidPerformanceMonitor.formatWaterHorizontalTemplates(1, 2, 3)
+            .equals("Water horizontal templates: local 1, settled 2, deep edge 3"));
+    }
+
+    @Test
     void detectsPauseLikeWallClockGapWhenServerTickBarelyAdvanced() {
         assertTrue(FluidPerformanceMonitor.isPauseLikeWallClockGap(1_500_000_000L, 1));
         assertTrue(FluidPerformanceMonitor.isPauseLikeWallClockGap(1_500_000_000L, 0));

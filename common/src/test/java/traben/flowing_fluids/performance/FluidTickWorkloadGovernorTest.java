@@ -36,6 +36,32 @@ class FluidTickWorkloadGovernorTest {
     }
 
     @Test
+    void overloadedBudgetReservesMostWorkForTheMovingFront() {
+        int total = FluidTickWorkloadGovernor.computeBudgetForMspt(300.0, 4);
+        int active = FluidTickWorkloadGovernor.computeActiveFlowBudget(total);
+        int background = FluidTickWorkloadGovernor.computeBackgroundBudget(total);
+
+        assertEquals(total, active + background);
+        assertTrue(active > background);
+        assertEquals(192, active);
+        assertEquals(64, background);
+    }
+
+    @Test
+    void backgroundSaturationCannotConsumeTheActiveFlowReservation() {
+        int total = 256;
+        int backgroundLimit = FluidTickWorkloadGovernor.computeBackgroundBudget(total);
+        int activeLimit = FluidTickWorkloadGovernor.computeActiveFlowBudget(total);
+
+        assertFalse(FluidTickWorkloadGovernor.shouldAdmitWithinLane(
+            false, 0, backgroundLimit, activeLimit, backgroundLimit));
+        assertTrue(FluidTickWorkloadGovernor.shouldAdmitWithinLane(
+            true, 0, backgroundLimit, activeLimit, backgroundLimit));
+        assertFalse(FluidTickWorkloadGovernor.shouldAdmitWithinLane(
+            true, activeLimit, backgroundLimit, activeLimit, backgroundLimit));
+    }
+
+    @Test
     void longerFlowDistanceGetsSmallerBudget() {
         int shortRange = FluidTickWorkloadGovernor.computeBudgetForMspt(55.0, 2);
         int longRange = FluidTickWorkloadGovernor.computeBudgetForMspt(55.0, 5);
