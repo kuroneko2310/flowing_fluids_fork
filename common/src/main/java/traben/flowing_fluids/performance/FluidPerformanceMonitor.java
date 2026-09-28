@@ -2,6 +2,7 @@ package traben.flowing_fluids.performance;
 
 import net.minecraft.server.MinecraftServer;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.WaterFlowTemplate;
 
 import javax.management.InstanceAlreadyExistsException;
 import javax.management.MBeanRegistrationException;
@@ -44,6 +45,13 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
     private final AtomicLong cacheMisses = new AtomicLong();
     private final AtomicLong fluidTickSchedulesAccepted = new AtomicLong();
     private final AtomicLong fluidTickSchedulesCoalesced = new AtomicLong();
+    private final AtomicLong activeFlowTicksAdmitted = new AtomicLong();
+    private final AtomicLong activeFlowTicksDeferred = new AtomicLong();
+    private final AtomicLong backgroundFluidTicksAdmitted = new AtomicLong();
+    private final AtomicLong backgroundFluidTicksDeferred = new AtomicLong();
+    private final AtomicLong waterLocalLevelTemplates = new AtomicLong();
+    private final AtomicLong waterSettledTemplates = new AtomicLong();
+    private final AtomicLong waterDeepEdgeSearches = new AtomicLong();
     private final AtomicInteger lastPendingChunkInitializations = new AtomicInteger();
     private final AtomicInteger lastPendingFrontierRebuilds = new AtomicInteger();
     private final AtomicInteger lastQueuedActiveWakeTicks = new AtomicInteger();
@@ -148,6 +156,25 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         fluidTickSchedulesCoalesced.incrementAndGet();
     }
 
+    public void recordGovernorDecision(boolean activeFlow, boolean deferred) {
+        if (activeFlow) {
+            (deferred ? activeFlowTicksDeferred : activeFlowTicksAdmitted).incrementAndGet();
+        } else {
+            (deferred ? backgroundFluidTicksDeferred : backgroundFluidTicksAdmitted).incrementAndGet();
+        }
+    }
+
+    public void recordWaterHorizontalTemplate(WaterFlowTemplate.HorizontalMode mode) {
+        if (mode == null) {
+            return;
+        }
+        switch (mode) {
+            case LOCAL_LEVEL_TRANSFER -> waterLocalLevelTemplates.incrementAndGet();
+            case SETTLED -> waterSettledTemplates.incrementAndGet();
+            case DEEP_EDGE_SEARCH -> waterDeepEdgeSearches.incrementAndGet();
+        }
+    }
+
     public void recordTickBacklog(int pendingChunkInitializations, int pendingFrontierRebuilds,
                                   int queuedActiveWakeTicks, int queuedDistantStableTicks,
                                   int bufferedFluidChanges) {
@@ -210,6 +237,13 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         cacheMisses.set(0L);
         fluidTickSchedulesAccepted.set(0L);
         fluidTickSchedulesCoalesced.set(0L);
+        activeFlowTicksAdmitted.set(0L);
+        activeFlowTicksDeferred.set(0L);
+        backgroundFluidTicksAdmitted.set(0L);
+        backgroundFluidTicksDeferred.set(0L);
+        waterLocalLevelTemplates.set(0L);
+        waterSettledTemplates.set(0L);
+        waterDeepEdgeSearches.set(0L);
         lastPendingChunkInitializations.set(0);
         lastPendingFrontierRebuilds.set(0);
         lastQueuedActiveWakeTicks.set(0);
@@ -241,6 +275,12 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         report.append(String.format("Fluid ticks: %,d%n", ticks));
         report.append(String.format("Fluid tick schedules: accepted %,d, coalesced %,d%n",
                 getFluidTickSchedulesAccepted(), getFluidTickSchedulesCoalesced()));
+        report.append(String.format("Governor: active admitted %,d, deferred %,d; background admitted %,d, deferred %,d%n",
+                activeFlowTicksAdmitted.get(), activeFlowTicksDeferred.get(),
+                backgroundFluidTicksAdmitted.get(), backgroundFluidTicksDeferred.get()));
+        report.append(formatWaterHorizontalTemplates(
+                waterLocalLevelTemplates.get(), waterSettledTemplates.get(), waterDeepEdgeSearches.get()));
+        report.append('\n');
         report.append(String.format("Tick backlog: chunk init %,d, frontier rebuild %,d, active wake %,d, stable wake %,d, buffered changes %,d%n",
                 getLastPendingChunkInitializations(),
                 getLastPendingFrontierRebuilds(),
@@ -330,6 +370,11 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
         synchronized (msptLock) {
             return msptSampleCount > 0 ? msptSampleTotal / msptSampleCount : 0.0;
         }
+    }
+
+    static String formatWaterHorizontalTemplates(long local, long settled, long deepEdge) {
+        return String.format("Water horizontal templates: local %,d, settled %,d, deep edge %,d",
+            Math.max(0L, local), Math.max(0L, settled), Math.max(0L, deepEdge));
     }
 
     public boolean isPauseRecoveryActive() {

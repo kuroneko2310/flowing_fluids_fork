@@ -106,6 +106,21 @@ class MixinFlowingFluidRegressionTest {
                 "Flow ticks must use the stored virtual fluid amount so non-full blocks do not behave like infinite sources.");
     }
 
+    @Test
+    void legacyAndModernHorizontalRoutingShareTheLocalWaterTemplate() throws IOException {
+        String source = Files.readString(sourcePath("common/src/main/java/traben/flowing_fluids/mixin/MixinFlowingFluid.java"));
+        String legacyRouting = methodBody(source, "private @Nullable Direction ff$legacyGetLowestSpreadableLookingFor4BlockDrops");
+        String modernRouting = methodBody(source, "private @Nullable Direction flowing_fluids$getLowestSpreadableLookingFor4BlockDrops");
+
+        assertTrue(legacyRouting.contains("WaterFlowTemplate.chooseHorizontalMode")
+                && legacyRouting.contains("HorizontalMode.SETTLED")
+                && legacyRouting.contains("immediateDropDirection"),
+            "HYBRID active water must avoid the legacy deep search when local levels are already settled.");
+        assertTrue(modernRouting.contains("WaterFlowTemplate.chooseHorizontalMode")
+                && modernRouting.contains("HorizontalMode.SETTLED"),
+            "Modern water must use the same local-level template before deep edge search.");
+    }
+
     private static String methodBody(String source, String signature) {
         int signatureStart = source.indexOf(signature);
         assertTrue(signatureStart >= 0, "Missing method signature: " + signature);

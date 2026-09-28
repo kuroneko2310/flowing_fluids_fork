@@ -57,6 +57,7 @@ import traben.flowing_fluids.FluidActivityTracker;
 import traben.flowing_fluids.ParallelFluidEqualizer;
 import traben.flowing_fluids.ParallelFluidTickManager;
 import traben.flowing_fluids.SiphonFlowSystem;
+import traben.flowing_fluids.WaterFlowTemplate;
 import traben.flowing_fluids.config.FFConfig;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.optimization.HierarchicalDistanceManager;
@@ -740,6 +741,16 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Unique
+    private static void ff$recordWaterHorizontalTemplate(FluidState fluidState,
+                                                          WaterFlowTemplate.HorizontalMode mode) {
+        if (FlowingFluids.config.enablePerformanceMonitoring
+                && fluidState != null
+                && fluidState.is(FluidTags.WATER)) {
+            FluidPerformanceMonitor.getInstance().recordWaterHorizontalTemplate(mode);
+        }
+    }
+
+    @Unique
     private boolean flowing_fluids$trySeaLevelOverflowEvaporationTick(final Level level,
                                                                       final BlockPos blockPos,
                                                                       final BlockState thisState,
@@ -982,12 +993,16 @@ public abstract class MixinFlowingFluid extends Fluid {
     private @Nullable Direction ff$legacyGetLowestSpreadableLookingFor4BlockDrops(
             Level level, BlockPos blockPos, FluidState fluidState, int amount, final boolean requiresSlope) {
         Short2ObjectMap<Pair<BlockState, FluidState>> statesAtPos = ff$getStateCache();
+        Short2BooleanMap quickFlowDown = ff$getFlowDownCache();
+        quickFlowDown.clear();
         try {
             Direction[] directionsCanSpreadToSortedByAmount = ff$SPREAD_DIRECTION_BUFFER.get();
             int[] directionAmounts = ff$SPREAD_AMOUNT_BUFFER.get();
             int directionCount = 0;
             boolean anyFlowableNeighbours2LevelsLowerOrMore = requiresSlope;
             BlockState sourceState = level.getBlockState(blockPos);
+            Direction immediateDropDirection = null;
+            int immediateDropAmount = Integer.MAX_VALUE;
 
             for (Direction dir : FFFluidUtils.getCardinalsShuffle(level.random)) {
                 BlockPos posDir = blockPos.relative(dir);
@@ -997,6 +1012,12 @@ public abstract class MixinFlowingFluid extends Fluid {
                 boolean canFlow = flowing_fluids$canSpreadToOptionallySameOrEmpty(fluidState.getType(), amount, level, blockPos,
                         sourceState, dir, posDir, statesDir.getFirst(), statesDir.getSecond(), requiresSlope);
                 if (canFlow) {
+                    if (flowing_fluids$getSetFlowDownCache(key, level, quickFlowDown, posDir,
+                            fluidState.getType(), amount, requiresSlope)
+                            && amountDir < immediateDropAmount) {
+                        immediateDropDirection = dir;
+                        immediateDropAmount = amountDir;
+                    }
                     if (!anyFlowableNeighbours2LevelsLowerOrMore) {
                         anyFlowableNeighbours2LevelsLowerOrMore = amountDir < amount - 1;
                     }
@@ -1014,6 +1035,23 @@ public abstract class MixinFlowingFluid extends Fluid {
             if (directionCount == 0) {
                 return null;
             }
+            if (immediateDropDirection != null) {
+                ff$recordWaterHorizontalTemplate(fluidState, WaterFlowTemplate.HorizontalMode.LOCAL_LEVEL_TRANSFER);
+                return immediateDropDirection;
+            }
+
+            WaterFlowTemplate.HorizontalMode horizontalMode = WaterFlowTemplate.chooseHorizontalMode(
+                    fluidState.is(FluidTags.WATER),
+                    requiresSlope,
+                    amount,
+                    directionAmounts[0]);
+            ff$recordWaterHorizontalTemplate(fluidState, horizontalMode);
+            if (horizontalMode == WaterFlowTemplate.HorizontalMode.LOCAL_LEVEL_TRANSFER) {
+                return directionsCanSpreadToSortedByAmount[0];
+            }
+            if (horizontalMode == WaterFlowTemplate.HorizontalMode.SETTLED) {
+                return null;
+            }
 
             boolean requiresSlopeWithOverride = requiresSlope || !anyFlowableNeighbours2LevelsLowerOrMore;
             Direction spreadDirection = ff$legacyGetValidDirectionFromDeepSpreadSearch(level, blockPos, fluidState, amount,
@@ -1024,6 +1062,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             return spreadDirection;
         } finally {
             statesAtPos.clear();
+            quickFlowDown.clear();
         }
     }
 
@@ -1720,11 +1759,7 @@ public abstract class MixinFlowingFluid extends Fluid {
             BlockState sourceState = level.getBlockState(blockPos);
             BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos(blockPos.getX(), blockPos.getY(), blockPos.getZ());
             Direction immediateLowDir = null;
-
-            int forcedDifference = 2;
-            if (fluidState.is(FluidTags.WATER) && FlowingFluids.config.forceFlowLevelDifference > 0) {
-                forcedDifference = FlowingFluids.config.forceFlowLevelDifference;
-            }
+            int immediateLowAmount = Integer.MAX_VALUE;
 
             for (Direction direction : shuffled) {
                 mutablePos.set(blockPos.getX(), blockPos.getY(), blockPos.getZ());
@@ -1737,17 +1772,14 @@ public abstract class MixinFlowingFluid extends Fluid {
                 boolean canFlow = flowing_fluids$canSpreadToOptionallySameOrEmpty(fluidState.getType(), amount, level, blockPos,
                         sourceState, direction, mutablePos, stateDir, fluidStateDir, requiresSlope);
                 if (canFlow) {
-                    if (flowing_fluids$getSetFlowDownCache(key, level, quickFlowDown, mutablePos.immutable(), fluidState.getType(), amount, requiresSlope)) {
+                    if (flowing_fluids$getSetFlowDownCache(key, level, quickFlowDown, mutablePos.immutable(),
+                            fluidState.getType(), amount, requiresSlope)
+                            && amountDir < immediateLowAmount) {
                         immediateLowDir = direction;
-                        break;
+                        immediateLowAmount = amountDir;
                     }
                     if (!anyFlowableNeighbours2LevelsLowerOrMore) {
                         anyFlowableNeighbours2LevelsLowerOrMore = amountDir < amount - 1;
-                    }
-                    // Early fast-path: if we already found a neighbour 2+ levels lower, flow there without deep search.
-                    if (amountDir <= amount - forcedDifference) {
-                        immediateLowDir = direction;
-                        break;
                     }
                     validDirections[validCount] = direction;
                     neighbourAmounts[validCount] = amountDir;
@@ -1756,16 +1788,13 @@ public abstract class MixinFlowingFluid extends Fluid {
             }
 
             if (immediateLowDir != null) {
+                ff$recordWaterHorizontalTemplate(fluidState, WaterFlowTemplate.HorizontalMode.LOCAL_LEVEL_TRANSFER);
                 return immediateLowDir;
             }
 
             if (validCount == 0) {
                 return null;
             }
-            if (validCount == 1) {
-                return validDirections[0];
-            }
-
             for (int i = 0; i < validCount - 1; i++) {
                 int minIndex = i;
                 for (int j = i + 1; j < validCount; j++) {
@@ -1781,6 +1810,22 @@ public abstract class MixinFlowingFluid extends Fluid {
                     validDirections[i] = validDirections[minIndex];
                     validDirections[minIndex] = tmpDirection;
                 }
+            }
+
+            WaterFlowTemplate.HorizontalMode horizontalMode = WaterFlowTemplate.chooseHorizontalMode(
+                    fluidState.is(FluidTags.WATER),
+                    requiresSlope,
+                    amount,
+                    neighbourAmounts[0]);
+            ff$recordWaterHorizontalTemplate(fluidState, horizontalMode);
+            if (horizontalMode == WaterFlowTemplate.HorizontalMode.LOCAL_LEVEL_TRANSFER) {
+                return validDirections[0];
+            }
+            if (horizontalMode == WaterFlowTemplate.HorizontalMode.SETTLED) {
+                return null;
+            }
+            if (validCount == 1) {
+                return validDirections[0];
             }
 
             boolean requiresSlopeWithOverride = requiresSlope || !anyFlowableNeighbours2LevelsLowerOrMore;
