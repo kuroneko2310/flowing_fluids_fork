@@ -1,13 +1,14 @@
 package traben.flowing_fluids;
 
-import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 
@@ -23,7 +24,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class EnhancedFluidBFS {
     private static final AtomicBoolean QUANTIZATION_FAILURE_REPORTED = new AtomicBoolean();
     private static final int MIN_INTERNAL_DRY_FILL = Math.max(8, FluidAmountConverter.scaleLegacyInternal(64));
-    private static final int CLUSTER_PARTITION_THRESHOLD = 96;
 
     // Depth configurations for different terrain types
     private static final int DEPTH_GENTLE = 60;      // Gentle slopes (reduced for perf)
@@ -128,32 +128,36 @@ public class EnhancedFluidBFS {
     }
 
     static void equalizePositionKeys(Level level, LongOpenHashSet positionKeys, Fluid fallbackFluid, FluidSectionDataCache cache) {
-        if (positionKeys.isEmpty()) {
+        if (positionKeys.size() < 2 || !(fallbackFluid instanceof FlowingFluid flowingFluid)) {
             return;
         }
-        if (positionKeys.size() < CLUSTER_PARTITION_THRESHOLD) {
-            List<BlockPos> positions = new ArrayList<>(positionKeys.size());
-            for (long key : positionKeys) {
-                positions.add(BlockPos.of(key));
-            }
-            equalizePositionsInternal(level, positions, fallbackFluid, cache);
-            return;
-        }
+        // Keep cache invalidations and wake notifications coalesced across clusters.
+        FFFluidUtils.runWithBulkFluidChanges(level,
+                () -> equalizeConnectedClusters(level, positionKeys, flowingFluid, cache));
+    }
 
+    private static void equalizeConnectedClusters(Level level, LongOpenHashSet positionKeys,
+                                                   FlowingFluid fallbackFluid, FluidSectionDataCache cache) {
         LongOpenHashSet visited = new LongOpenHashSet(positionKeys.size());
         LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
-        LongArrayList cluster = new LongArrayList(Math.min(positionKeys.size(), 256));
+        List<BlockPos> cluster = new ArrayList<>(Math.min(positionKeys.size(), 256));
 
         for (long seed : positionKeys) {
+            BlockPos seedPos = BlockPos.of(seed);
+            if (!isSameWetFluid(cache, seedPos, fallbackFluid)) {
+                continue;
+            }
             if (!visited.add(seed)) {
                 continue;
             }
             cluster.clear();
             queue.enqueue(seed);
-            cluster.add(seed);
+            cluster.add(seedPos);
 
             while (!queue.isEmpty()) {
                 long current = queue.dequeueLong();
+                BlockPos currentPos = BlockPos.of(current);
+                BlockState currentState = null;
                 int currentX = BlockPos.getX(current);
                 int currentY = BlockPos.getY(current);
                 int currentZ = BlockPos.getZ(current);
@@ -164,20 +168,41 @@ public class EnhancedFluidBFS {
                         currentY + direction.getStepY(),
                         currentZ + direction.getStepZ()
                     );
-                    if (!positionKeys.contains(neighbor) || !visited.add(neighbor)) {
+                    if (!positionKeys.contains(neighbor) || visited.contains(neighbor)) {
                         continue;
                     }
-                    queue.enqueue(neighbor);
-                    cluster.add(neighbor);
+                    BlockPos neighborPos = BlockPos.of(neighbor);
+                    Fluid neighborFluid = cache.fluidType(neighborPos);
+                    if (neighborFluid != null && !neighborFluid.isSame(fallbackFluid)) {
+                        continue;
+                    }
+                    boolean wet = isSameWetFluid(cache, neighborPos, fallbackFluid);
+                    if (!wet && !cache.canAcceptFluid(neighborPos)) {
+                        continue;
+                    }
+                    if (currentState == null) {
+                        currentState = level.getBlockState(currentPos);
+                    }
+                    BlockState neighborState = level.getBlockState(neighborPos);
+                    if (!FFFluidUtils.canTraverseFluidAdjacency(level, currentPos, currentState, null,
+                            direction, neighborPos, neighborState, null, fallbackFluid)) {
+                        continue;
+                    }
+                    visited.add(neighbor);
+                    // Dry cells are destinations, never bridges between separate pools.
+                    if (wet) {
+                        queue.enqueue(neighbor);
+                    }
+                    cluster.add(neighborPos);
                 }
             }
-
-            List<BlockPos> clusterPositions = new ArrayList<>(cluster.size());
-            for (int i = 0; i < cluster.size(); i++) {
-                clusterPositions.add(BlockPos.of(cluster.getLong(i)));
-            }
-            equalizePositionsInternal(level, clusterPositions, fallbackFluid, cache);
+            equalizePositionsInternal(level, cluster, fallbackFluid, cache);
         }
+    }
+
+    private static boolean isSameWetFluid(FluidSectionDataCache cache, BlockPos pos, Fluid fluid) {
+        Fluid present = cache.fluidType(pos);
+        return present != null && present.isSame(fluid) && cache.internalAmount(pos) > 0;
     }
 
     private static void equalizePositions(Level level, List<BlockPos> positions, Fluid fallbackFluid, FluidSectionDataCache cache) {
@@ -185,15 +210,11 @@ public class EnhancedFluidBFS {
             return;
         }
 
-        if (positions.size() >= CLUSTER_PARTITION_THRESHOLD) {
-            LongOpenHashSet positionKeys = new LongOpenHashSet(Math.max(positions.size(), 16));
-            for (BlockPos pos : positions) {
-                positionKeys.add(pos.asLong());
-            }
-            equalizePositionKeys(level, positionKeys, fallbackFluid, cache);
-            return;
+        LongOpenHashSet positionKeys = new LongOpenHashSet(Math.max(positions.size(), 16));
+        for (BlockPos pos : positions) {
+            positionKeys.add(pos.asLong());
         }
-        equalizePositionsInternal(level, positions, fallbackFluid, cache);
+        equalizePositionKeys(level, positionKeys, fallbackFluid, cache);
     }
 
     static void equalizePositionKeys(Level level, LongOpenHashSet positionKeys, Fluid fallbackFluid) {
@@ -202,7 +223,7 @@ public class EnhancedFluidBFS {
     }
 
     private static void equalizePositionsInternal(Level level, List<BlockPos> positions, Fluid fallbackFluid, FluidSectionDataCache cache) {
-        if (positions.isEmpty()) {
+        if (positions.size() < 2) {
             return;
         }
 
@@ -212,6 +233,10 @@ public class EnhancedFluidBFS {
         List<Integer> validAmounts = new ArrayList<>();
 
         for (BlockPos pos : positions) {
+            Fluid present = cache.fluidType(pos);
+            if (present != null && !present.isSame(fallbackFluid)) {
+                return;
+            }
             int amount = cache.internalAmount(pos);
             boolean supportsPartialAmount = !cache.isBinaryFluidStorage(pos);
             if (supportsPartialAmount && (amount > 0 || cache.canAcceptFluid(pos))) {
@@ -221,7 +246,20 @@ public class EnhancedFluidBFS {
             }
         }
 
-        if (validPos.isEmpty()) {
+        if (validPos.size() < 2 || totalAmount <= 0) {
+            return;
+        }
+        // Common quiet-pool case: no support scans, sort, solver or quantization.
+        boolean uniform = true;
+        int firstAmount = validAmounts.get(0);
+        int firstY = validPos.get(0).getY();
+        for (int i = 1; i < validPos.size(); i++) {
+            if (validAmounts.get(i) != firstAmount || validPos.get(i).getY() != firstY) {
+                uniform = false;
+                break;
+            }
+        }
+        if (uniform) {
             return;
         }
 
@@ -249,8 +287,7 @@ public class EnhancedFluidBFS {
             }
         }
 
-        Fluid orderingFluid = fallbackFluid != null ? fallbackFluid : findFirstFluidType(validPos, cache);
-        boolean preferWaterSurfacePotential = orderingFluid == Fluids.WATER || orderingFluid == Fluids.FLOWING_WATER;
+        boolean preferWaterSurfacePotential = fallbackFluid.isSame(Fluids.WATER);
         wetOrder.sort((a, b) -> FluidRegressionLogic.compareEqualizerFillOrder(
             finalAmounts[a], yLevels[a], supportScores[a], distances[a], validPos.get(a).asLong(),
             finalAmounts[b], yLevels[b], supportScores[b], distances[b], validPos.get(b).asLong(),
@@ -313,26 +350,23 @@ public class EnhancedFluidBFS {
             return;
         }
         FluidMutationBatch worldMutations = new FluidMutationBatch(level);
-        Fluid[] writeFluids = new Fluid[validPos.size()];
 
         // Build one validated world mutation before changing the simulation authority.
         for (int index = 0; index < validPos.size(); index++) {
             BlockPos pos = validPos.get(index);
             int originalAmount = validAmounts.get(index);
-            Fluid fluidType = cache.fluidType(pos);
-            if (fluidType == null) {
-                fluidType = fallbackFluid;
-            }
-            writeFluids[index] = fluidType;
             int originalBlockAmount = FluidAmountConverter.toBlockState(originalAmount);
             int resolvedBlockAmount = resolvedBlockAmounts[index];
-            if (fluidType != null && originalBlockAmount != resolvedBlockAmount) {
-                worldMutations.set(pos, fluidType, originalBlockAmount, resolvedBlockAmount);
+            if (originalBlockAmount != resolvedBlockAmount) {
+                worldMutations.set(pos, fallbackFluid, originalBlockAmount, resolvedBlockAmount);
             }
         }
 
         FluidMutationBatch.ApplyResult worldResult = worldMutations.apply();
         if (!worldResult.applied()) {
+            for (BlockPos pos : validPos) {
+                cache.invalidate(pos);
+            }
             return;
         }
 
@@ -340,13 +374,12 @@ public class EnhancedFluidBFS {
         for (int index = 0; index < validPos.size(); index++) {
             int originalAmount = validAmounts.get(index);
             int newAmount = resolvedInternalAmounts[index];
-            Fluid fluidType = writeFluids[index];
-            if (fluidType == null || newAmount == originalAmount) {
+            if (newAmount == originalAmount) {
                 continue;
             }
             changedCells++;
             BlockPos pos = validPos.get(index);
-            FluidTickBuffer.bufferFluidChange(level, pos, newAmount, newAmount > 0, fluidType);
+            FluidTickBuffer.bufferFluidChange(level, pos, newAmount, newAmount > 0, fallbackFluid);
             cache.invalidate(pos);
         }
 

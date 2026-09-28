@@ -6,7 +6,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 
 /**
  * Plans related fluid writes against one world snapshot and applies their cache effects once.
@@ -63,36 +65,72 @@ public final class FluidMutationBatch {
         if (mutations.isEmpty()) {
             return new ApplyResult(true, 0, false);
         }
+        List<Snapshot> snapshots = new ArrayList<>(mutations.size());
         for (Mutation mutation : mutations.values()) {
-            if (!matchesExpectedState(mutation)) {
+            BlockState blockState = level.getBlockState(mutation.pos());
+            FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, mutation.pos(), blockState);
+            if (!matchesExpectedState(mutation, fluidState)) {
                 return new ApplyResult(false, 0, false);
             }
+            snapshots.add(new Snapshot(mutation, blockState, ExtendedWaterlogStore.get(level, mutation.pos())));
         }
-
-        int changed = 0;
-        for (Mutation mutation : mutations.values()) {
-            if (mutation.expectedAmount() != mutation.newAmount()) {
-                changed++;
-            }
-        }
-        if (changed == 0) {
-            return new ApplyResult(true, 0, false);
-        }
-
         boolean[] applied = {true};
         FFFluidUtils.runWithBulkFluidChanges(level, () -> {
-            for (Mutation mutation : mutations.values()) {
-                if (mutation.expectedAmount() == mutation.newAmount()) {
-                    continue;
+            for (int index = 0; index < snapshots.size(); index++) {
+                Mutation mutation = snapshots.get(index).mutation();
+                try {
+                    // Neighbor callbacks from an earlier write may have changed a
+                    // later destination, even though this batch runs on one thread.
+                    if (index > 0) {
+                        BlockState current = level.getBlockState(mutation.pos());
+                        if (!current.equals(snapshots.get(index).blockState())
+                                || !matchesExpectedState(mutation,
+                                FFFluidUtils.getEffectiveFluidState(level, mutation.pos(), current))) {
+                            applied[0] = false;
+                            break;
+                        }
+                    }
+                    if (FFFluidUtils.setFluidStateAtPosToNewAmount(
+                            level, mutation.pos(), mutation.fluid(), mutation.newAmount())) {
+                        continue;
+                    }
+                } catch (RuntimeException failure) {
+                    try {
+                        restore(snapshots);
+                    } catch (RuntimeException restoreFailure) {
+                        failure.addSuppressed(restoreFailure);
+                    }
+                    throw failure;
                 }
-                if (!FFFluidUtils.setFluidStateAtPosToNewAmount(
-                        level, mutation.pos(), mutation.fluid(), mutation.newAmount())) {
-                    applied[0] = false;
-                    break;
-                }
+                applied[0] = false;
+                break;
+            }
+            if (!applied[0]) {
+                restore(snapshots);
             }
         });
-        return new ApplyResult(applied[0], applied[0] ? changed : 0, true);
+        return new ApplyResult(applied[0], applied[0] ? snapshots.size() : 0, true);
+    }
+
+    private void restore(List<Snapshot> snapshots) {
+        RuntimeException failure = null;
+        for (int index = snapshots.size() - 1; index >= 0; index--) {
+            Snapshot snapshot = snapshots.get(index);
+            Mutation mutation = snapshot.mutation();
+            try {
+                FFFluidUtils.restoreFluidMutation(level, mutation.pos(), snapshot.blockState(),
+                        snapshot.storedFluid(), mutation.fluid(), mutation.expectedAmount());
+            } catch (RuntimeException exception) {
+                if (failure == null) {
+                    failure = exception;
+                } else {
+                    failure.addSuppressed(exception);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
     }
 
     public int size() {
@@ -121,9 +159,7 @@ public final class FluidMutationBatch {
         return sourceBefore + destinationBefore == sourceAfter + destinationAfter;
     }
 
-    private boolean matchesExpectedState(Mutation mutation) {
-        BlockState blockState = level.getBlockState(mutation.pos());
-        FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, mutation.pos(), blockState);
+    private boolean matchesExpectedState(Mutation mutation, FluidState fluidState) {
         if (mutation.expectedAmount() <= 0) {
             return fluidState.isEmpty() || fluidState.getAmount() <= 0;
         }
@@ -143,6 +179,9 @@ public final class FluidMutationBatch {
     }
 
     private record Mutation(BlockPos pos, Fluid fluid, int expectedAmount, int newAmount) {
+    }
+
+    private record Snapshot(Mutation mutation, BlockState blockState, FluidState storedFluid) {
     }
 
     public record ApplyResult(boolean applied, int changedCells, boolean writesStarted) {

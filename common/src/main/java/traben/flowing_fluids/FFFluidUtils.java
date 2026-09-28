@@ -1577,6 +1577,32 @@ public class FFFluidUtils {
         return result;
     }
 
+    // Rollback uses the original block as well as the virtual fluid: a normal fluid
+    // write cannot restore a waterlogged block which broke when its water was removed.
+    static void restoreFluidMutation(LevelAccessor level, BlockPos pos, BlockState originalBlock,
+                                     FluidState storedFluid, Fluid fluid, int amount) {
+        if (!level.getBlockState(pos).equals(originalBlock)) {
+            level.setBlock(pos, originalBlock, 3);
+        }
+        if (!storedFluid.isEmpty()) {
+            ExtendedWaterlogStore.set(level, pos, storedFluid.getType(), storedFluid.getAmount());
+        } else {
+            ExtendedWaterlogStore.remove(level, pos);
+        }
+        if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+            FlowingFluidsPlatform.syncVirtualFluidState(serverLevel, pos);
+        }
+        FluidState restored = getEffectiveFluidState(level, pos);
+        boolean matches = amount == 0 ? restored.isEmpty()
+                : restored.getType().isSame(fluid) && restored.getAmount() == amount;
+        // Overwrite pending cache notifications from the failed writes before the
+        // surrounding bulk context flushes them.
+        recordFluidCacheChange(level, pos, fluid, restored.isEmpty() ? 0 : restored.getAmount(), true);
+        if (!level.getBlockState(pos).equals(originalBlock) || !matches) {
+            throw new IllegalStateException("Could not restore fluid mutation at " + pos);
+        }
+    }
+
     static boolean shouldSuppressDecorativePlantDropsForFluidReplacement(BlockState blockState, Fluid fluid) {
         if (blockState == null || fluid == null || blockState.isAir() || !fluid.isSame(Fluids.WATER)) {
             return false;
