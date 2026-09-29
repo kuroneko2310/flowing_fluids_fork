@@ -96,7 +96,7 @@ public class MixinWaterPushing {
         }
         // Forge resolves fluid current strength through an inherited default helper, so
         // boost the call site instead of targeting the method directly on Entity.
-        return ff$shouldBoostFlowingWaterCurrent() ? original * FFFluidUtils.getFlowingWaterCurrentPushMultiplier() : original;
+        return ff$shouldBoostFlowingWaterCurrent() ? original * FFFluidUtils.getFlowingWaterCurrentPushMultiplier((Entity) (Object) this) : original;
     }
 
     @ModifyVariable(method = "moveRelative", at = @At("HEAD"), ordinal = 0, argsOnly = true)

@@ -29,6 +29,7 @@ import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.FlowingFluidsPlatform;
 import traben.flowing_fluids.api.FlowingFluidsAPI;
+import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.flood.FloodEventSystem;
 import traben.flowing_fluids.performance.FluidPerformanceMonitor;
 
@@ -188,6 +189,8 @@ public final class RainWaterSystem {
         final BlockPos.MutableBlockPos mPos = new BlockPos.MutableBlockPos();
         final BlockPos.MutableBlockPos mAbove = new BlockPos.MutableBlockPos();
         final BlockPos.MutableBlockPos mCursor = new BlockPos.MutableBlockPos();
+        // Parched ground soaks up the first rain after a drought before anything can pool.
+        final float droughtMultiplier = DryingEventSystem.getDroughtRainMultiplier(level);
 
         for (ChunkProcessingData chunkData : chunksToProcess) {
             final int cx = ChunkPos.getX(chunkData.packedPos);
@@ -200,9 +203,14 @@ public final class RainWaterSystem {
                     level.getSeed()
             );
             final float intensityMultiplier = getRainIntensityMultiplier(intensityStage);
+            // A passing downpour cell adds drop attempts; more water on the same ground saturates it faster, so the
+            // existing wetness/absorption model turns the extra rain into runoff on its own.
+            final float cellMultiplier = HeavyRainCellSystem.getRainMultiplier(level, (cx << 4) + 8.0, (cz << 4) + 8.0);
             final int attempts = Math.max(1, Math.round(FlowingFluids.config.rainAttemptsPerChunk
                     * chunkData.cache.precipMul
                     * intensityMultiplier
+                    * cellMultiplier
+                    * droughtMultiplier
                     * loadMultiplier));
             spawnRainWaterInChunk(level, random, cx, cz, attempts, chunkData.cache.precipMul, intensityStage,
                     intensityMultiplier, loadMultiplier, currentTime, mPos, mAbove, mCursor, minBuildY);
@@ -290,6 +298,7 @@ public final class RainWaterSystem {
                 + "\nCandidate amount: " + context.candidateAmount()
                 + "\nEffective amount: " + context.effectiveAmount()
                 + "\nAbsorbed wetness add: " + String.format(Locale.ROOT, "%.2f", context.absorbedWetness())
+                + "\nHeavy rain cell multiplier: x" + String.format(Locale.ROOT, "%.2f", HeavyRainCellSystem.getRainMultiplier(level, x + 0.5, z + 0.5))
                 + "\nRaised from puddle: " + raisedFromPuddle
                 + "\nRaining here: " + level.isRainingAt(landingPos);
     }

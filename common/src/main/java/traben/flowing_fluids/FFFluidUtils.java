@@ -1182,6 +1182,14 @@ public class FFFluidUtils {
         return FLOWING_WATER_CURRENT_PUSH_MULTIPLIER;
     }
 
+    /**
+     * Push multiplier for a specific entity, including the extra drag of a river in spate.
+     */
+    public static double getFlowingWaterCurrentPushMultiplier(Entity entity) {
+        return FLOWING_WATER_CURRENT_PUSH_MULTIPLIER
+                * traben.flowing_fluids.water.RiverFloodStage.getCurrentPushMultiplier(entity.level(), entity.blockPosition());
+    }
+
     public static float getFlowingWaterCurrentMoveInputMultiplier() {
         return FLOWING_WATER_CURRENT_MOVE_INPUT_MULTIPLIER;
     }
@@ -3251,6 +3259,9 @@ public class FFFluidUtils {
         }
         int seaLevel = seaLevel(world);
         if (amount <= 0 || amount >= 8 || amount > 4 || pos.getY() != seaLevel) {
+            return 0;
+        }
+        if (traben.flowing_fluids.water.RiverFloodStage.isHighWater(world)) {
             return 0;
         }
         if (fluid.isSame(Fluids.WATER) && isNearFlowingFluidsWaterSpringSource(level, pos)) {

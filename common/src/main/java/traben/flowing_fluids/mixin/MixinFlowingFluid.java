@@ -740,7 +740,7 @@ public abstract class MixinFlowingFluid extends Fluid {
         if (!DryingEventSystem.shouldEvaporateSeaLevelOverflow(level, blockPos, flowingFluid, amount)) {
             return false;
         }
-        if (FlowingFluids.config.seaLevelOverflowEvaporationInstant) {
+        if (DryingEventSystem.isSeaLevelOverflowInstant(level)) {
             if (FFFluidUtils.applyLocalFluidAmountDelta(level, blockPos, flowingFluid, -amount)) {
                 FluidState remaining = FFFluidUtils.getEffectiveFluidState(level, blockPos);
                 if (remaining.isEmpty() && level.getBlockState(blockPos.below()).is(Blocks.MUD)) {
