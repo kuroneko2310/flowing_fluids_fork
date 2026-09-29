@@ -55,6 +55,7 @@ class EntityWaterDisplacementTest {
             lent += EntityWaterDisplacement.stepToward(lent, target, EntityWaterDisplacement.MAX_LEVEL_STEP_PER_UPDATE);
         }
         double physical = base / (1.0 - share);
-        assertEquals(physical, lent, 1.0);
+        // The hysteresis band stops the feedback early; it can rest up to band / (1 - share) levels from the exact rise.
+        assertEquals(physical, lent, EntityWaterDisplacement.HYSTERESIS_BAND / (1.0 - share) + 1.0E-9);
     }
 }

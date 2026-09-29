@@ -42,8 +42,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *     <li>Lent water only enters genuinely open cells (never waterloggable blocks) and never spreads downwards.</li>
  * </ul>
  * In a narrow hole the lent water also rises around the player, which increases the submerged volume again. That
- * feedback converges (each level adds at most the player's share of a cell) and its fixed point is the physically
- * expected rise {@code V / (A_hole - A_player)}.</p>
+ * feedback converges (each level adds at most the player's share of a cell) towards the physically expected rise
+ * {@code V / (A_hole - A_player)}; the hysteresis band lets it settle within {@code band / (1 - share)} levels of it.</p>
  */
 public final class EntityWaterDisplacement {
     static final int UPDATE_INTERVAL_TICKS = 4;
