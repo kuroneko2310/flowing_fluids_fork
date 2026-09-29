@@ -2,14 +2,12 @@ package traben.flowing_fluids.water;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
-import net.minecraft.resources.ResourceKey;
+import net.minecraft.core.QuartPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
-
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Rain-driven high water ("増水") for rivers and seas.
@@ -24,20 +22,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * overflow-evaporation chances, so high water recedes over a few minutes.</p>
  */
 public final class RiverFloodStage {
-    private static final ConcurrentHashMap<ResourceKey<Level>, Long> LAST_RAIN_TICK = new ConcurrentHashMap<>();
-
     private RiverFloodStage() {
     }
 
     public static void onLevelTick(ServerLevel level) {
         if (level.isRaining()) {
-            LAST_RAIN_TICK.put(level.dimension(), level.getGameTime());
-        }
-    }
-
-    public static void clearDimension(Level level) {
-        if (level != null) {
-            LAST_RAIN_TICK.remove(level.dimension());
+            // Persisted, so a restart during the recession keeps the flood receding instead of snapping back.
+            WeatherWaterSavedData.get(level).setLastRainTick(level.getGameTime());
         }
     }
 
@@ -66,8 +57,11 @@ public final class RiverFloodStage {
         if (level.isRaining()) {
             return 0.0f;
         }
-        Long lastRain = LAST_RAIN_TICK.get(level.dimension());
-        if (lastRain == null) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return 1.0f;
+        }
+        long lastRain = WeatherWaterSavedData.get(serverLevel).lastRainTick();
+        if (lastRain == Long.MIN_VALUE) {
             return 1.0f;
         }
         return recessionFactor(level.getGameTime() - lastRain, FlowingFluids.config.riverFloodRecessionTicks);
@@ -92,8 +86,16 @@ public final class RiverFloodStage {
         if (!isHighWater(level) || pos.getY() < FFFluidUtils.seaLevel(level) - 1) {
             return false;
         }
-        Holder<Biome> biome = level.getBiome(pos);
+        Holder<Biome> biome = coarseBiome(level, pos);
         return FFFluidUtils.isRiverBiome(biome) || FFFluidUtils.isOceanBiome(biome);
+    }
+
+    /**
+     * This runs for every water tick while it rains, so it reads the stored 4x4x4 noise biome directly instead of
+     * {@code Level.getBiome}, which applies the fuzzy biome zoom (a hash and up to eight cell lookups per call).
+     */
+    private static Holder<Biome> coarseBiome(Level level, BlockPos pos) {
+        return level.getNoiseBiome(QuartPos.fromBlock(pos.getX()), QuartPos.fromBlock(pos.getY()), QuartPos.fromBlock(pos.getZ()));
     }
 
     /**
@@ -110,7 +112,7 @@ public final class RiverFloodStage {
      */
     public static double getCurrentPushMultiplier(Level level, BlockPos pos) {
         if (!isHighWater(level) || pos.getY() < FFFluidUtils.seaLevel(level) - 1
-                || !FFFluidUtils.isRiverBiome(level.getBiome(pos))) {
+                || !FFFluidUtils.isRiverBiome(coarseBiome(level, pos))) {
             return 1.0;
         }
         return Math.max(1.0, FlowingFluids.config.riverFloodCurrentPushMultiplier);

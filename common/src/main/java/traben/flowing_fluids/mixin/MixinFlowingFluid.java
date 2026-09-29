@@ -391,6 +391,16 @@ public abstract class MixinFlowingFluid extends Fluid {
                 return; // kill this update
             }
 
+            if (fluidState.is(FluidTags.WATER)) {
+                int primedHold = SiphonFlowSystem.getPrimedTubeHoldTicks(level, blockPos);
+                if (primedHold > 0) {
+                    // A running siphon's tube stays full; look again once the hold would expire.
+                    AdaptiveTickScheduler.scheduleFluidTick(level, blockPos, this, primedHold + 1);
+                    ff$recordFluidTickSample(monitorEnabled, monitor, monitorStartNanos, monitorStartAllocatedBytes, monitorFlowDistance);
+                    return;
+                }
+            }
+
             FlowingFluids.setManeuveringFluids(true);
             ff$getConnectedHeadCache().clear();
             ff$getSectionSampleContext().begin(level);
