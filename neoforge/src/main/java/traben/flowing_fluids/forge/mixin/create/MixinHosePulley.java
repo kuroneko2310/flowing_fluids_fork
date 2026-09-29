@@ -216,7 +216,12 @@ public abstract class MixinHosePulley {
             if (fluidState.isEmpty()) return false;
 
             if (FlowingFluids.config.isFluidAllowed(fluidState) && fluidState.getType() instanceof FlowingFluid flowing) {
-                if (FlowingFluids.config.create_infinitePipes || drainer.isInfinite()) {
+                // Create calls any big connected body infinite. Only the sea itself is: water standing above sea level
+                // (a swollen river, a flood, a mountain lake) is finite, so pumping it out really lowers it.
+                boolean infiniteBody = drainer.isInfinite()
+                        && !(flowing.isSame(net.minecraft.world.level.material.Fluids.WATER)
+                            && blockPos.getY() > FFFluidUtils.seaLevel(world));
+                if (FlowingFluids.config.create_infinitePipes || infiniteBody) {
                     if (!simulate) {
                         ((FluidManipulationBehaviourAccessor) drainer).ff$PlayEffect(world, blockPos, flowing, true);
                         drainer.blockEntity.award(AllAdvancements.HOSE_PULLEY);

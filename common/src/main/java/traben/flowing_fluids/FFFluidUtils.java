@@ -2487,6 +2487,33 @@ public class FFFluidUtils {
         return 0;
     }
 
+    /**
+     * Collects exactly {@code amount} levels of connected fluid for an intake whose own cell is dry, starting from the
+     * wet neighbour below it or, failing that, beside it. Pumps use this so a drained intake keeps pulling from the
+     * shallow water around it instead of stalling until flow refills the intake cell. Returns {@code null} when fewer
+     * than {@code amount} connected levels are reachable, so the caller never reports water it cannot remove.
+     */
+    public static Runnable collectAroundDryIntake(final LevelAccessor levelAccessor, final BlockPos intakePos,
+                                                  final FlowingFluid fluid, final int amount, final int depth) {
+        Direction[] order = {Direction.DOWN, Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST};
+        BlockState intakeState = levelAccessor.getBlockState(intakePos);
+        for (Direction direction : order) {
+            BlockPos start = intakePos.relative(direction);
+            BlockState startState = levelAccessor.getBlockState(start);
+            FluidState startFluid = getEffectiveFluidState(levelAccessor, start, startState);
+            if (!startFluid.getType().isSame(fluid) || startFluid.getAmount() <= 0
+                    || !canTraverseFluidAdjacency(levelAccessor, intakePos, intakeState, Fluids.EMPTY.defaultFluidState(),
+                    direction, start, startState, startFluid, fluid)) {
+                continue;
+            }
+            Pair<Integer, Runnable> data = collectConnectedFluidAmountAndRemoveAction(levelAccessor, start, amount, amount, fluid, depth);
+            if (data.first() == amount && data.second() != null) {
+                return data.second();
+            }
+        }
+        return null;
+    }
+
     public static Pair<Integer, Runnable> collectConnectedFluidAmountAndRemoveAction(final LevelAccessor levelAccessor, final BlockPos blockPos, final int minAmountRequired, final int maxAmountToFind, final FlowingFluid fluid) {
         return collectConnectedFluidAmountAndRemoveAction(levelAccessor, blockPos, minAmountRequired, maxAmountToFind, fluid, DEFAULT_CONNECTED_FLUID_SEARCH_DEPTH);
     }
@@ -2676,6 +2703,26 @@ public class FFFluidUtils {
                         (pair.first() == Fluids.EMPTY || pair.first().isSame(fluid)) && state.is(pair.second()));
     }
 
+    private static final ThreadLocal<int[]> CONTRAPTION_PLACEMENT_DEPTH = ThreadLocal.withInitial(() -> new int[1]);
+
+    /**
+     * Marks block writes made while a moving contraption (for example a Create gate) settles back into the world.
+     * Those writes carry the piston-move flag, which normally skips displacement so vanilla piston pumps keep working;
+     * a contraption closing onto water must still push that water aside instead of deleting it.
+     */
+    public static void beginContraptionPlacement() {
+        CONTRAPTION_PLACEMENT_DEPTH.get()[0]++;
+    }
+
+    public static void endContraptionPlacement() {
+        int[] depth = CONTRAPTION_PLACEMENT_DEPTH.get();
+        depth[0] = Math.max(0, depth[0] - 1);
+    }
+
+    public static boolean isContraptionPlacement() {
+        return CONTRAPTION_PLACEMENT_DEPTH.get()[0] > 0;
+    }
+
     public static void displaceFluids(final Level level, final BlockPos pos, final BlockState state, final int flags, final LevelChunk levelChunk, final BlockState originalState) {
         // oof, this is a big one
         // try and order in most likely to least likely to avoid unnecessary checks
@@ -2689,7 +2736,7 @@ public class FFFluidUtils {
                 && FlowingFluids.config.isFluidAllowed(flowSource) // check if the fluid is not in the ignored list
                 && !state.isAir() // covers most block breaking updates
                 && state.getFluidState().isEmpty()// not placing a waterlogged or fluid block
-                && !((flags & 64) == 64) //Piston moved flag
+                && (!((flags & 64) == 64) || isContraptionPlacement()) //Piston moved flag, except contraptions settling
                 && !(state.getBlock() instanceof LiquidBlockContainer && originalState.getBlock() instanceof BucketPickup)
                 && !checkBlockIsNonDisplacer(flowSource, state) // check if the block is a displacer
                ) {

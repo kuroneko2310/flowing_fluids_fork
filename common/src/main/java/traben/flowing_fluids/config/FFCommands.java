@@ -3031,6 +3031,48 @@ public class FFCommands {
                                                 "chance", 0.0f, 1.0f,
                                                 a -> FlowingFluids.config.depositionChance = a,
                                                 () -> FlowingFluids.config.depositionChance)))
+                                .then(Commands.literal("groundwater")
+                                        .executes(cont -> message(cont, traben.flowing_fluids.water.GroundwaterSystem.describe(
+                                                cont.getSource().getLevel(), BlockPos.containing(cont.getSource().getPosition()))))
+                                        .then(booleanCommand("enable",
+                                                "地面にしみ込んだ雨を64x64の地域ごとの地下水として貯めます。地下水位より深く掘った穴（井戸）には地下水がしみ出し、Create のホースプーリーやポンプで汲み上げると地下水が減ります。湧き水の勢いも地下水の量に連動します。",
+                                                "地下水を有効にしました。",
+                                                "地下水を無効にしました。井戸へのしみ出しと湧き水の連動が止まります。",
+                                                a -> FlowingFluids.config.enableGroundwater = a,
+                                                () -> FlowingFluids.config.enableGroundwater))
+                                        .then(Commands.literal("set_here")
+                                                .then(Commands.argument("saturation", com.mojang.brigadier.arguments.FloatArgumentType.floatArg(0.0f, 1.0f))
+                                                        .executes(cont -> {
+                                                            BlockPos pos = BlockPos.containing(cont.getSource().getPosition());
+                                                            traben.flowing_fluids.water.GroundwaterSystem.setSaturation(cont.getSource().getLevel(), pos,
+                                                                    cont.getArgument("saturation", Float.class));
+                                                            return message(cont, traben.flowing_fluids.water.GroundwaterSystem.describe(cont.getSource().getLevel(), pos));
+                                                        })))
+                                        .then(intCommand("capacity",
+                                                "64x64の地域ごとの地下水の容量（水レベル）です。",
+                                                "levels", 64, 1_000_000,
+                                                a -> FlowingFluids.config.groundwaterCapacity = a,
+                                                () -> FlowingFluids.config.groundwaterCapacity))
+                                        .then(intCommand("min_depth",
+                                                "地下水が満杯の時、地下水位が地表から何ブロック下にあるかです。",
+                                                "blocks", 1, 64,
+                                                a -> FlowingFluids.config.groundwaterMinDepth = a,
+                                                () -> FlowingFluids.config.groundwaterMinDepth))
+                                        .then(intCommand("max_depth",
+                                                "地下水が空の時、地下水位が地表から何ブロック下にあるかです。",
+                                                "blocks", 1, 96,
+                                                a -> FlowingFluids.config.groundwaterMaxDepth = a,
+                                                () -> FlowingFluids.config.groundwaterMaxDepth))
+                                        .then(floatCommand("drain_per_day",
+                                                "1日あたりに蒸発散で失われる地下水の割合です。干ばつと夏は速く、冬はほぼ止まります。",
+                                                "rate", 0.0f, 5.0f,
+                                                a -> FlowingFluids.config.groundwaterDrainPerDay = a,
+                                                () -> FlowingFluids.config.groundwaterDrainPerDay))
+                                        .then(floatCommand("recharge_efficiency",
+                                                "地面にしみ込んだ雨のうち、地下水に届く割合です。",
+                                                "efficiency", 0.0f, 4.0f,
+                                                a -> FlowingFluids.config.groundwaterRechargeEfficiency = a,
+                                                () -> FlowingFluids.config.groundwaterRechargeEfficiency)))
                                 .then(Commands.literal("seasons")
                                         .executes(cont -> message(cont, describeSeasonClimate(cont.getSource().getLevel())))
                                         .then(booleanCommand("enable",

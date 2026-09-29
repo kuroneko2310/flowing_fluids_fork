@@ -13,6 +13,7 @@ import traben.flowing_fluids.rain.RainWaterSystem;
 import traben.flowing_fluids.snow.SnowmeltWaterSystem;
 import traben.flowing_fluids.util.DimensionKey;
 import traben.flowing_fluids.water.EntityWaterDisplacement;
+import traben.flowing_fluids.water.GroundwaterSystem;
 import traben.flowing_fluids.water.RiverFloodStage;
 import traben.flowing_fluids.water.WaterPressureSystem;
 
@@ -48,6 +49,7 @@ public final class FlowingFluidsTick {
         SiphonFlowSystem.onLevelTick(level);
         EntityWaterDisplacement.onLevelTick(level);
         RiverFloodStage.onLevelTick(level);
+        GroundwaterSystem.onLevelTick(level);
 
         FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
         double mspt = FlowingFluids.config.enableLoadReduction
@@ -165,6 +167,7 @@ public final class FlowingFluidsTick {
         FloodEventSystem.onLevelUnload(level);
         RainWaterSystem.onLevelUnload(level);
         HeavyRainCellSystem.onLevelUnload(level);
+        GroundwaterSystem.clearDimension(level);
         DryingEventSystem.onLevelUnload(level);
         SnowmeltWaterSystem.onLevelUnload(level);
         WaterPressureSystem.onLevelUnload(level);

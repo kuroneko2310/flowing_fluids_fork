@@ -32,6 +32,36 @@ public abstract class MixinPipe{
 
     @Shadow(remap = false) private BlockPos outputPos;
 
+    /**
+     * Create only drains the intake cell itself, so once that cell is pumped dry a pump stalls until water flows back
+     * in. For a dry, open intake, gather a full bucket from the connected water around it instead, so pumps keep
+     * draining shallow flood water. Exactly 8 levels or nothing: Create's drain handler always reports a full 1000 mB
+     * for any non-empty world drain, so returning a partial bucket would create water.
+     */
+    @Inject(method = "removeFluidFromSpace", at = @At("HEAD"), cancellable = true, remap = false)
+    private void ff$pullAroundDryIntake(final boolean simulate, final CallbackInfoReturnable<FluidStack> cir) {
+        if (world == null
+                || world.isClientSide()
+                || !FlowingFluids.config.enableMod
+                || FlowingFluids.config.create_infinitePipes
+                || !FlowingFluids.config.isWaterAllowed()
+                || !world.isLoaded(outputPos)) {
+            return;
+        }
+        BlockState intake = world.getBlockState(outputPos);
+        if (!intake.isAir() || !intake.getFluidState().isEmpty()) {
+            return;
+        }
+        Runnable apply = FFFluidUtils.collectAroundDryIntake(world, outputPos, Fluids.WATER, 8, 40);
+        if (apply == null) {
+            return;
+        }
+        if (!simulate) {
+            apply.run();
+        }
+        cir.setReturnValue(new FluidStack(Fluids.WATER, 1000));
+    }
+
     @ModifyArg(method = "removeFluidFromSpace",
             at = @At(value = "INVOKE",
                     target = "Lnet/minecraft/world/level/Level;setBlock(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;I)Z"
