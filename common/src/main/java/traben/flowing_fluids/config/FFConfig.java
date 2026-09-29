@@ -206,7 +206,13 @@ public class FFConfig {
     public int riverFloodRecessionTicks = 20 * 180; // After rain, the sea-level cap returns gradually over this many ticks
     public float riverFloodFlowDelayMultiplier = 0.5f; // Tick delay multiplier for swollen river/sea water (lower = faster)
     public float riverFloodCurrentPushMultiplier = 1.8f; // Extra current push in a river in spate
-    public boolean enableFloodWarnings = true; // Action-bar warning when a nearby river or sea stands above sea level in rain
+    public boolean enableFloodWarnings = true; // Escalating river warning levels (1-5) for players near a swollen river or sea
+    public int riverFloodMaxStage = 6; // River stage in blocks above sea level at the top of a thunderstorm flood
+    public float riverFloodRainStage = 0.45f; // Share of the maximum stage that ordinary rain drives rivers to (thunder: 100%)
+    public float riverFloodRisePerDay = 8.0f; // How fast the river stage approaches its weather target, per in-game day
+    public int riverFloodInflowSamples = 24; // River columns sampled per player every 5 ticks to feed upstream inflow
+    public int riverFloodInflowAmount = 8; // Maximum water levels added per inflow placement
+    public boolean riverFloodTriggersFloodEvents = true; // At warning level 5 a flood event starts on a nearby river
     public boolean waterLevelSensorDepthGauge = true; // A down-facing water level sensor acts as a flood gauge
     public boolean enableGroundwater = true; // Rain recharges regional aquifers; holes dug below the water table fill by seepage
     public int groundwaterCapacity = 8192; // Aquifer capacity per 64x64 region, in water levels
@@ -676,6 +682,12 @@ public class FFConfig {
         riverFloodFlowDelayMultiplier = buffer.readFloat();
         riverFloodCurrentPushMultiplier = buffer.readFloat();
         enableFloodWarnings = buffer.readBoolean();
+        riverFloodMaxStage = buffer.readVarInt();
+        riverFloodRainStage = buffer.readFloat();
+        riverFloodRisePerDay = buffer.readFloat();
+        riverFloodInflowSamples = buffer.readVarInt();
+        riverFloodInflowAmount = buffer.readVarInt();
+        riverFloodTriggersFloodEvents = buffer.readBoolean();
         waterLevelSensorDepthGauge = buffer.readBoolean();
         enableGroundwater = buffer.readBoolean();
         groundwaterCapacity = buffer.readVarInt();
@@ -1026,6 +1038,12 @@ public class FFConfig {
         buffer.writeFloat(riverFloodFlowDelayMultiplier);
         buffer.writeFloat(riverFloodCurrentPushMultiplier);
         buffer.writeBoolean(enableFloodWarnings);
+        buffer.writeVarInt(riverFloodMaxStage);
+        buffer.writeFloat(riverFloodRainStage);
+        buffer.writeFloat(riverFloodRisePerDay);
+        buffer.writeVarInt(riverFloodInflowSamples);
+        buffer.writeVarInt(riverFloodInflowAmount);
+        buffer.writeBoolean(riverFloodTriggersFloodEvents);
         buffer.writeBoolean(waterLevelSensorDepthGauge);
         buffer.writeBoolean(enableGroundwater);
         buffer.writeVarInt(groundwaterCapacity);
@@ -1560,6 +1578,11 @@ public class FFConfig {
         murkyFloodWaterStrength = Float.isFinite(murkyFloodWaterStrength) ? Math.max(0.0f, Math.min(1.0f, murkyFloodWaterStrength)) : 0.65f;
         riverFloodFlowDelayMultiplier = Float.isFinite(riverFloodFlowDelayMultiplier) ? Math.max(0.1f, Math.min(1.0f, riverFloodFlowDelayMultiplier)) : 0.5f;
         riverFloodCurrentPushMultiplier = Float.isFinite(riverFloodCurrentPushMultiplier) ? Math.max(1.0f, Math.min(5.0f, riverFloodCurrentPushMultiplier)) : 1.8f;
+        riverFloodMaxStage = Math.max(1, Math.min(16, riverFloodMaxStage));
+        riverFloodRainStage = Float.isFinite(riverFloodRainStage) ? Math.max(0.0f, Math.min(1.0f, riverFloodRainStage)) : 0.45f;
+        riverFloodRisePerDay = Float.isFinite(riverFloodRisePerDay) ? Math.max(0.0f, Math.min(200.0f, riverFloodRisePerDay)) : 8.0f;
+        riverFloodInflowSamples = Math.max(0, Math.min(256, riverFloodInflowSamples));
+        riverFloodInflowAmount = Math.max(1, Math.min(8, riverFloodInflowAmount));
         entityWaterDisplacementScale = Float.isFinite(entityWaterDisplacementScale)
                 ? Math.max(0.0f, Math.min(4.0f, entityWaterDisplacementScale))
                 : 1.0f;

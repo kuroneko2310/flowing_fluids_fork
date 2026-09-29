@@ -168,6 +168,7 @@ public final class FlowingFluidsTick {
         RainWaterSystem.onLevelUnload(level);
         HeavyRainCellSystem.onLevelUnload(level);
         GroundwaterSystem.clearDimension(level);
+        RiverFloodStage.clearDimension(level);
         DryingEventSystem.onLevelUnload(level);
         SnowmeltWaterSystem.onLevelUnload(level);
         WaterPressureSystem.onLevelUnload(level);

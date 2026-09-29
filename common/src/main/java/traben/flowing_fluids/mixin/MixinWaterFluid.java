@@ -101,32 +101,34 @@ public abstract class MixinWaterFluid extends FlowingFluid {
                         + DryingEventSystem.getSeaLevelOverflowEvaporationChance(level, blockPos));
             return;
         }
-        if (amount < 8) {
-            if (ff$tryBiomeFillOrDrain(level, blockPos, amount, level.random.nextFloat(),
-                    isWithinInfBiomeHeights, isInfBiome, hasInfiniteBiomeAmbientAccess)) {
-                if (FlowingFluids.config.printRandomTicks)
-                    FlowingFluids.info("--- Water was filled by biome at "+blockPos+". Chance: "+ FlowingFluids.config.oceanRiverSwampRefillChance);
-                return;
-            }
-            if (ff$tryRainFill(level, blockPos, level.random.nextFloat(), isWithinInfBiomeHeights, isInfBiome)) {
-                if (FlowingFluids.config.printRandomTicks)
-                    FlowingFluids.info("--- Water was filled by rain at "+blockPos+". Chance: "+ FlowingFluids.config.rainRefillChance);
-                return;
-            }
-            if (ff$tryHeatSourceEvaporate(level, blockPos, amount, level.random.nextFloat())) {
-                if (FlowingFluids.config.printRandomTicks)
-                    FlowingFluids.info("--- Water was evaporated by nearby heat at " + blockPos + ". Chance: " + FlowingFluids.config.hotBlockEvaporationChance);
-                return;
-            }
-            if (ff$tryEvaporate(level, blockPos, amount, level.random.nextFloat())) {
-                if (FlowingFluids.config.printRandomTicks)
-                    FlowingFluids.info("--- Water was evaporated - non Nether at "+blockPos+". Chance: "+ FlowingFluids.config.evaporationChanceV2);
-            }
-        } else {
-            if (ff$tryRainFill(level, blockPos, level.random.nextFloat(), isWithinInfBiomeHeights, isInfBiome)) {
-                if (FlowingFluids.config.printRandomTicks)
-                    FlowingFluids.info("--- Water was filled by rain at "+blockPos+". Chance: "+ FlowingFluids.config.rainRefillChance);
-            }
+        if (amount < 8 && ff$tryBiomeFillOrDrain(level, blockPos, amount, level.random.nextFloat(),
+                isWithinInfBiomeHeights, isInfBiome, hasInfiniteBiomeAmbientAccess)) {
+            if (FlowingFluids.config.printRandomTicks)
+                FlowingFluids.info("--- Water was filled by biome at "+blockPos+". Chance: "+ FlowingFluids.config.oceanRiverSwampRefillChance);
+            return;
+        }
+        if (ff$tryRainFill(level, blockPos, level.random.nextFloat(), isWithinInfBiomeHeights, isInfBiome)) {
+            if (FlowingFluids.config.printRandomTicks)
+                FlowingFluids.info("--- Water was filled by rain at "+blockPos+". Chance: "+ FlowingFluids.config.rainRefillChance);
+            return;
+        }
+        // Full (level 8) surfaces used to skip every drying rule below, so drought never drew down a pond or lake
+        // whose top layer is full, and lava or fire next to full water never boiled any of it off.
+        if (ff$tryHeatSourceEvaporate(level, blockPos, amount, level.random.nextFloat())) {
+            if (FlowingFluids.config.printRandomTicks)
+                FlowingFluids.info("--- Water was evaporated by nearby heat at " + blockPos + ". Chance: " + FlowingFluids.config.hotBlockEvaporationChance);
+            return;
+        }
+        if (ff$tryEvaporate(level, blockPos, amount, level.random.nextFloat())) {
+            if (FlowingFluids.config.printRandomTicks)
+                FlowingFluids.info("--- Water was evaporated - non Nether at "+blockPos+". Chance: "+ FlowingFluids.config.evaporationChanceV2);
+            return;
+        }
+        // Rolled separately: sharing the surface-evaporation roll meant drawdown could only fire below
+        // min(evaporation chance, drawdown chance), and every early exit of the surface rule skipped it entirely.
+        if (ff$tryDroughtDrawdown(level, blockPos, amount, level.random.nextFloat())) {
+            if (FlowingFluids.config.printRandomTicks)
+                FlowingFluids.info("--- Pond surface drawn down by drought at " + blockPos + ". Chance: " + DryingEventSystem.getDroughtPondDrawdownChance(level));
         }
     }
 
@@ -238,6 +240,8 @@ public abstract class MixinWaterFluid extends FlowingFluid {
             return false;
         }
         int evaporationMaxLevel = DryingEventSystem.getSurfaceEvaporationMaxLevel(level);
+        // Only thin water can dry here; bail out before any world reads (full water now reaches this rule too).
+        if (amount > evaporationMaxLevel) return false;
         float evaporationChance = DryingEventSystem.getSurfaceEvaporationChance(level);
         if (chance < evaporationChance) {
             if (FFFluidUtils.isProtectedInfiniteBiomeWater(level, blockPos, this, amount)) return false;
@@ -265,15 +269,15 @@ public abstract class MixinWaterFluid extends FlowingFluid {
                     && FFFluidUtils.canFluidFlowToNeighbourFromPos(level, blockPos, sourceState, this, amount)) {
                 return false;
             }
-            // Let exposed 1-level puddles on solid ground dry too; they are already
-            // stable thin clusters and otherwise linger because "below is empty"
-            // only catches hanging water.
+            // Thin water dries when nothing but a block or air is below it (a puddle or film on the ground, or
+            // hanging water), or when it is a small thin cap resting on deeper water. A thin top layer of a larger
+            // pond is left to the drought drawdown instead.
             if (amount <= evaporationMaxLevel
                     && (FFFluidUtils.getEffectiveFluidState(level, blockPos.below()).isEmpty() || supportedThinPuddle)) {
                 return ff$applyLocalDrainAndMaybeRestoreMud(level, blockPos, amount, true);
             }
         }
-        return ff$tryDroughtDrawdown(level, blockPos, amount, chance);
+        return false;
     }
 
     /**
@@ -283,12 +287,13 @@ public abstract class MixinWaterFluid extends FlowingFluid {
     @Unique
     private boolean ff$tryDroughtDrawdown(final Level level, final BlockPos blockPos, int amount, float chance) {
         if (amount <= 0 || chance >= DryingEventSystem.getDroughtPondDrawdownChance(level)) return false;
+        if (!DryingEventSystem.shouldRunEvaporationTick(level, blockPos, FlowingFluids.config.evaporationIntervalTicks)) return false;
+        FluidState aboveFluid = FFFluidUtils.getEffectiveFluidState(level, blockPos.above());
+        if (aboveFluid != null && aboveFluid.getType().isSame(this)) return false;
         if (FFFluidUtils.isProtectedInfiniteBiomeWater(level, blockPos, this, amount)) return false;
         if (AdaptiveTickScheduler.isFlowActiveNow(level, blockPos)) return false;
         if (FlowingFluids.config.evaporationDaytimeOnly && !level.isDay()) return false;
         if (level.isRainingAt(blockPos.above())) return false;
-        FluidState aboveFluid = FFFluidUtils.getEffectiveFluidState(level, blockPos.above());
-        if (aboveFluid != null && aboveFluid.getType().isSame(this)) return false;
         if (DryingEventSystem.isShadeProtected(level, blockPos)) return false;
         if (!DryingEventSystem.hasEvaporationSkyAccess(level, blockPos)) return false;
         return ff$applyLocalDrainAndMaybeRestoreMud(level, blockPos, 1, false);
@@ -296,14 +301,19 @@ public abstract class MixinWaterFluid extends FlowingFluid {
 
     @Unique
     private boolean ff$tryHeatSourceEvaporate(final Level level, final BlockPos blockPos, int amount, float chance) {
-        if (!DryingEventSystem.hasNearbyHeatSource(level, blockPos)) return false;
+        // Cheap gates first: the heat source scan reads up to 75 blocks and used to run on every random tick.
+        if (!FlowingFluids.config.enableHotBlockEvaporation) return false;
         if (!DryingEventSystem.shouldRunEvaporationTick(level, blockPos, FlowingFluids.config.hotBlockEvaporationIntervalTicks)) return false;
-        int evaporationMaxLevel = DryingEventSystem.getSurfaceEvaporationMaxLevel(level);
-        if (FFFluidUtils.isProtectedInfiniteBiomeWater(level, blockPos, this, amount)) return false;
-        if (AdaptiveTickScheduler.isFlowActiveNow(level, blockPos) && amount > evaporationMaxLevel) return false;
+        if (chance >= DryingEventSystem.getHotBlockEvaporationChance(level)) return false;
         BlockPos abovePos = blockPos.above();
         FluidState aboveFluid = FFFluidUtils.getEffectiveFluidState(level, abovePos);
         boolean hasSameFluidAbove = aboveFluid != null && aboveFluid.getType().isSame(this);
+        // Submerged water never boils off; checked before the scan since most random ticks land inside a body.
+        if (hasSameFluidAbove) return false;
+        if (!DryingEventSystem.hasNearbyHeatSource(level, blockPos)) return false;
+        int evaporationMaxLevel = DryingEventSystem.getSurfaceEvaporationMaxLevel(level);
+        if (FFFluidUtils.isProtectedInfiniteBiomeWater(level, blockPos, this, amount)) return false;
+        if (AdaptiveTickScheduler.isFlowActiveNow(level, blockPos) && amount > evaporationMaxLevel) return false;
         if (!FluidRegressionLogic.shouldHeatSourceEvaporateSurfaceWater(
                 hasSameFluidAbove,
                 DryingEventSystem.hasEvaporationSkyAccess(level, blockPos),
@@ -321,8 +331,6 @@ public abstract class MixinWaterFluid extends FlowingFluid {
                 && FFFluidUtils.canFluidFlowToNeighbourFromPos(level, blockPos, sourceState, this, amount)) {
             return false;
         }
-        float heatChance = DryingEventSystem.getHotBlockEvaporationChance(level);
-        if (chance >= heatChance) return false;
         int drainAmount = Mth.clamp(FlowingFluids.config.hotBlockEvaporationDrainAmount, 1, amount);
         return ff$applyLocalDrainAndMaybeRestoreMud(level, blockPos, drainAmount, true);
     }

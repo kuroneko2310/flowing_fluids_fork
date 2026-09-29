@@ -15,12 +15,13 @@ import java.util.UUID;
 /**
  * Per-dimension persistent state for the weather and displacement systems, so a server restart neither resets a
  * drought, nor forgets water lent by players standing in a pool (which would otherwise stay in the world for good),
- * nor snaps a receding flood back to the sea-level cap.
+ * nor snaps a receding flood back to the sea-level cap, nor resets the river stage.
  */
 public final class WeatherWaterSavedData extends SavedData {
     private static final String DATA_NAME = "flowing_fluids_weather_water";
     private static final String DROUGHT_INDEX_KEY = "drought_index";
     private static final String LAST_RAIN_TICK_KEY = "last_rain_tick";
+    private static final String RIVER_STAGE_KEY = "river_stage";
     private static final String LEDGERS_KEY = "displacement_ledgers";
     private static final String UUID_KEY = "uuid";
     private static final String LENT_KEY = "lent";
@@ -36,6 +37,7 @@ public final class WeatherWaterSavedData extends SavedData {
 
     private double droughtIndex;
     private long lastRainTick = Long.MIN_VALUE;
+    private double riverStage;
     private final Map<UUID, DisplacementLedger> ledgers = new HashMap<>();
     /** Sediment carried by the water in each chunk, indexed by {@link ErosionMath} sediment type. */
     private final Long2ObjectOpenHashMap<int[]> sediment = new Long2ObjectOpenHashMap<>();
@@ -70,6 +72,17 @@ public final class WeatherWaterSavedData extends SavedData {
     public void setLastRainTick(long tick) {
         if (tick != lastRainTick) {
             lastRainTick = tick;
+            setDirty();
+        }
+    }
+
+    public double riverStage() {
+        return riverStage;
+    }
+
+    public void setRiverStage(double stage) {
+        if (Math.abs(stage - riverStage) > 1.0E-4 || (stage == 0.0 && riverStage != 0.0)) {
+            riverStage = stage;
             setDirty();
         }
     }
@@ -116,6 +129,8 @@ public final class WeatherWaterSavedData extends SavedData {
         double index = tag.getDouble(DROUGHT_INDEX_KEY);
         data.droughtIndex = Double.isFinite(index) ? Math.max(0.0, Math.min(1.0, index)) : 0.0;
         data.lastRainTick = tag.contains(LAST_RAIN_TICK_KEY) ? tag.getLong(LAST_RAIN_TICK_KEY) : Long.MIN_VALUE;
+        double stage = tag.getDouble(RIVER_STAGE_KEY);
+        data.riverStage = Double.isFinite(stage) ? Math.max(0.0, Math.min(1.0, stage)) : 0.0;
         ListTag entries = tag.getList(LEDGERS_KEY, Tag.TAG_COMPOUND);
         for (int i = 0; i < entries.size(); i++) {
             CompoundTag entry = entries.getCompound(i);
@@ -167,6 +182,7 @@ public final class WeatherWaterSavedData extends SavedData {
         if (lastRainTick != Long.MIN_VALUE) {
             tag.putLong(LAST_RAIN_TICK_KEY, lastRainTick);
         }
+        tag.putDouble(RIVER_STAGE_KEY, riverStage);
         ListTag entries = new ListTag();
         for (Map.Entry<UUID, DisplacementLedger> entry : ledgers.entrySet()) {
             DisplacementLedger ledger = entry.getValue();

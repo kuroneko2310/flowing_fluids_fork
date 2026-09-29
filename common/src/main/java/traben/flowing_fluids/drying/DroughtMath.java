@@ -58,6 +58,17 @@ public final class DroughtMath {
     }
 
     /**
+     * Extra thin-water evaporation levels from an evaporation rate above 1 (a chance cannot exceed 1): one level per
+     * doubling, so x2 dries one level deeper and x4 two.
+     */
+    public static int surplusEvaporationLevels(double rate) {
+        if (!(rate > 1.0)) {
+            return 0;
+        }
+        return Math.min(7, (int) Math.floor(Math.log(rate) / Math.log(2.0) + 1.0E-9));
+    }
+
+    /**
      * Chance that an exposed pond surface loses one level, only in serious droughts.
      */
     public static double pondDrawdownChance(double baseChance, double index) {

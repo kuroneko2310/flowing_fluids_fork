@@ -778,8 +778,11 @@ public abstract class MixinFlowingFluid extends Fluid {
                 if (remaining.isEmpty() && level.getBlockState(blockPos.below()).is(Blocks.MUD)) {
                     level.setBlock(blockPos.below(), Blocks.DIRT.defaultBlockState(), 3);
                 }
+                return true;
             }
-            return true;
+            // The removal was refused (for example spring-protected water). Returning true here used to skip the
+            // flow tick every time, freezing that water in place for good; let it flow normally instead.
+            return false;
         }
         if (FFFluidUtils.canFluidFlowToNeighbourFromPos(level, blockPos, thisState, flowingFluid, amount)) {
             return false;
@@ -790,11 +793,12 @@ public abstract class MixinFlowingFluid extends Fluid {
             return false;
         }
         if (level.random.nextFloat() < evaporationChance) {
-            if (FFFluidUtils.applyLocalFluidAmountDelta(level, blockPos, flowingFluid, -amount)) {
-                FluidState remaining = FFFluidUtils.getEffectiveFluidState(level, blockPos);
-                if (remaining.isEmpty() && level.getBlockState(blockPos.below()).is(Blocks.MUD)) {
-                    level.setBlock(blockPos.below(), Blocks.DIRT.defaultBlockState(), 3);
-                }
+            if (!FFFluidUtils.applyLocalFluidAmountDelta(level, blockPos, flowingFluid, -amount)) {
+                return false;
+            }
+            FluidState remaining = FFFluidUtils.getEffectiveFluidState(level, blockPos);
+            if (remaining.isEmpty() && level.getBlockState(blockPos.below()).is(Blocks.MUD)) {
+                level.setBlock(blockPos.below(), Blocks.DIRT.defaultBlockState(), 3);
             }
         } else {
             // Keep overflow cleanup on a slow local retry instead of running the full

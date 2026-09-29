@@ -15,6 +15,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CampfireBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluids;
@@ -152,7 +153,10 @@ public final class DryingEventSystem {
      * Chance that an exposed pond surface loses one level to drought evaporation.
      */
     public static float getDroughtPondDrawdownChance(Level level) {
-        return (float) DroughtMath.pondDrawdownChance(FlowingFluids.config.droughtPondDrawdownChance, getDroughtIndex(level));
+        // Heatwaves, dry seasons and summer speed the drawdown up; winter slows it down.
+        double chance = DroughtMath.pondDrawdownChance(FlowingFluids.config.droughtPondDrawdownChance, getDroughtIndex(level))
+                * getClimateEvaporationMultiplier(level);
+        return (float) Math.max(0.0, Math.min(1.0, chance));
     }
 
     /**
@@ -166,22 +170,31 @@ public final class DryingEventSystem {
         if (level == null || level.isClientSide()) {
             return 1.0f;
         }
+        float multiplier = (float) DroughtMath.evaporationMultiplier(getDroughtIndex(level),
+                FlowingFluids.config.droughtEvaporationBoost) * getClimateEvaporationMultiplier(level);
+        return Math.max(0.0f, multiplier);
+    }
 
-        DryingState state = ACTIVE_STATES.get(level.dimension());
-        if (state == null) {
+    /**
+     * Weather part of the evaporation multiplier (season, dry season, heatwave), without the drought index. The
+     * season applies even when the drying events are switched off (it used to be dropped together with them).
+     */
+    public static float getClimateEvaporationMultiplier(Level level) {
+        if (level == null || level.isClientSide()) {
             return 1.0f;
         }
-
-        long now = level.getGameTime();
-        float multiplier = (float) (DroughtMath.evaporationMultiplier(getDroughtIndex(level),
-                FlowingFluids.config.droughtEvaporationBoost) * SeasonClimate.evaporationMultiplier(level));
-        if (FlowingFluids.config.enableDrySeasonEvents && state.isDrySeasonActive(now)) {
-            multiplier *= Math.max(0.0f, FlowingFluids.config.drySeasonEvaporationMultiplier);
-        }
-        if (FlowingFluids.config.enableHeatwaveEvents
-                && state.isHeatwaveActive(now)
-                && (!FlowingFluids.config.heatwaveDaytimeOnly || level.isDay())) {
-            multiplier *= Math.max(0.0f, FlowingFluids.config.heatwaveEvaporationMultiplier);
+        float multiplier = (float) SeasonClimate.evaporationMultiplier(level);
+        DryingState state = ACTIVE_STATES.get(level.dimension());
+        if (state != null) {
+            long now = level.getGameTime();
+            if (FlowingFluids.config.enableDrySeasonEvents && state.isDrySeasonActive(now)) {
+                multiplier *= Math.max(0.0f, FlowingFluids.config.drySeasonEvaporationMultiplier);
+            }
+            if (FlowingFluids.config.enableHeatwaveEvents
+                    && state.isHeatwaveActive(now)
+                    && (!FlowingFluids.config.heatwaveDaytimeOnly || level.isDay())) {
+                multiplier *= Math.max(0.0f, FlowingFluids.config.heatwaveEvaporationMultiplier);
+            }
         }
         return Math.max(0.0f, multiplier);
     }
@@ -212,8 +225,15 @@ public final class DryingEventSystem {
      * Thin-water level cap including drought: severe droughts let deeper puddles dry out in one go.
      */
     public static int getSurfaceEvaporationMaxLevel(Level level) {
-        return DroughtMath.evaporationMaxLevel(getSurfaceEvaporationMaxLevel(),
+        int droughtLevel = DroughtMath.evaporationMaxLevel(getSurfaceEvaporationMaxLevel(),
                 FlowingFluids.config.droughtMaxEvaporationLevel, getDroughtIndex(level));
+        // The evaporation chance is a probability and saturates at 1 (the default base chance already is 1), so a
+        // heatwave or dry-season multiplier above that used to be clamped away without any effect. The surplus now
+        // lets deeper puddles dry instead: one extra level per doubling.
+        double climateRate = FlowingFluids.config.evaporationChanceV2
+                * FlowingFluids.config.evaporationChanceMultiplier
+                * getClimateEvaporationMultiplier(level);
+        return Math.min(8, droughtLevel + DroughtMath.surplusEvaporationLevels(climateRate));
     }
 
     public static float getNetherEvaporationChance(Level level) {
@@ -320,6 +340,11 @@ public final class DryingEventSystem {
         if (level == null) {
             return false;
         }
+        // Fast path: nothing but air above the column's top block. This runs for most exposed water on every
+        // evaporation roll, and the scan below reads every block up to the build limit.
+        if (pos.getY() + 1 >= level.getHeight(Heightmap.Types.WORLD_SURFACE, pos.getX(), pos.getZ())) {
+            return true;
+        }
         BlockPos.MutableBlockPos cursor = pos.above().mutable();
         while (cursor.getY() < level.getMaxBuildHeight()) {
             BlockState state = level.getBlockState(cursor);
@@ -422,7 +447,7 @@ public final class DryingEventSystem {
                 + "\nSurface evaporation: base=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.evaporationChanceV2)
                 + " / multiplier=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.evaporationChanceMultiplier)
                 + " / interval=" + FlowingFluids.config.evaporationIntervalTicks + " ticks"
-                + " / max_level=" + getSurfaceEvaporationMaxLevel()
+                + " / max_level=" + getSurfaceEvaporationMaxLevel() + " (now " + getSurfaceEvaporationMaxLevel(level) + ")"
                 + " / effective=" + String.format(Locale.ROOT, "%.2f", getSurfaceEvaporationChance(level))
                 + "\nNether evaporation: base=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.evaporationNetherChance)
                 + " / multiplier=" + String.format(Locale.ROOT, "%.2f", FlowingFluids.config.evaporationNetherChanceMultiplier)
@@ -442,6 +467,7 @@ public final class DryingEventSystem {
                 + " / radius=" + FlowingFluids.config.hotBlockEvaporationRadius
                 + "\nShade roof protection: " + FlowingFluids.config.enableShadeProtection
                 + " / search_height=" + FlowingFluids.config.shadeRoofSearchHeight
+                + "\nClimate evaporation multiplier now: " + String.format(Locale.ROOT, "%.2f", getClimateEvaporationMultiplier(level))
                 + "\nAmbient evaporation multiplier now: " + String.format(Locale.ROOT, "%.2f", getAmbientEvaporationMultiplier(level))
                 + "\nRain refill multiplier now: " + String.format(Locale.ROOT, "%.2f", getRainRefillMultiplier(level));
     }
@@ -576,8 +602,15 @@ public final class DryingEventSystem {
         if (excess < minExcess || excess > maxExcess) {
             return false;
         }
+        if (excess < RiverFloodStage.getStageBlocks(level)) {
+            // Still below the falling river stage: this water recedes later, together with the stage line.
+            return false;
+        }
         boolean instant = isSeaLevelOverflowInstant(level);
-        if (!instant && FlowingFluids.config.evaporationDaytimeOnly && !level.isDay()) {
+        // The post-rain recession is the river draining away, not sunlight evaporation. Gating it on daytime let a
+        // flood that ended at night skip its whole recession and then be deleted in one go by the instant path.
+        boolean receding = RiverFloodStage.getCapFactor(level) < 1.0f;
+        if (!instant && !receding && FlowingFluids.config.evaporationDaytimeOnly && !level.isDay()) {
             return false;
         }
         if ((instant || FlowingFluids.config.evaporationRequiresSky) && !hasEvaporationSkyAccess(level, pos)) {

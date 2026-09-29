@@ -152,6 +152,10 @@ public final class FloodEventSystem {
         return level.getSharedSpawnPos();
     }
 
+    public static boolean hasActiveFlood(ServerLevel level) {
+        return ACTIVE_FLOODS.containsKey(level.dimension());
+    }
+
     public static boolean stopFlood(ServerLevel level) {
         return ACTIVE_FLOODS.remove(level.dimension()) != null;
     }

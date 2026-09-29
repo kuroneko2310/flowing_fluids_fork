@@ -54,4 +54,14 @@ class DroughtMathTest {
         assertTrue(DroughtMath.step(-3.0, 100, 0.1, 6.0, false) >= 0.0);
         assertTrue(DroughtMath.step(7.0, 100, 0.1, 6.0, true) <= 1.0);
     }
+
+    @Test
+    void evaporationSurplusDriesOneLevelDeeperPerDoubling() {
+        assertEquals(0, DroughtMath.surplusEvaporationLevels(0.5));
+        assertEquals(0, DroughtMath.surplusEvaporationLevels(1.0));
+        assertEquals(0, DroughtMath.surplusEvaporationLevels(1.9));
+        assertEquals(1, DroughtMath.surplusEvaporationLevels(2.0));
+        assertEquals(2, DroughtMath.surplusEvaporationLevels(4.5));
+        assertEquals(7, DroughtMath.surplusEvaporationLevels(1.0E9));
+    }
 }

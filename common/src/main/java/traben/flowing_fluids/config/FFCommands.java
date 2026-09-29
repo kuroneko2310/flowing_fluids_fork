@@ -8,6 +8,8 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
+import com.mojang.brigadier.tree.CommandNode;
+import com.mojang.brigadier.tree.LiteralCommandNode;
 import com.mojang.datafixers.util.Pair;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.booleans.BooleanConsumer;
@@ -41,6 +43,7 @@ import traben.flowing_fluids.ParallelFluidTickManager;
 import traben.flowing_fluids.PlugWaterFeature;
 import traben.flowing_fluids.drying.DryingEventSystem;
 import traben.flowing_fluids.flood.FloodEventSystem;
+import traben.flowing_fluids.water.RiverFloodStage;
 import traben.flowing_fluids.performance.FluidAutoTickDelay;
 import traben.flowing_fluids.performance.FluidFineTickDelay;
 import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
@@ -91,31 +94,36 @@ public class FFCommands {
     }
 
     private static String describeSettingsGuide() {
-        return "Flowing Fluids 設定ガイド"
-                + "\n設定が多いので、まず目的別に見るのがおすすめです。各カテゴリ名だけ実行すると、用途と現在値が表示されます。"
+        return "Flowing Fluids コマンドガイド（/ff は /flowing_fluids の短縮形）"
+                + "\n各項目は名前だけ実行すると説明と現在値が出ます。値を付けると変更します。"
                 + "\n"
-                + "\nよく使う入口:"
-                + "\n- /flowing_fluids settings guide : この一覧"
-                + "\n- /flowing_fluids settings behaviour guide : 水の動き・速度・圧力系"
-                + "\n- /flowing_fluids siphons status : サイフォン/水圧経路の要約"
-                + "\n- /flowing_fluids settings rain status : 雨・水たまり・雨補給"
-                + "\n- /flowing_fluids settings snowmelt status : 雪解け水"
-                + "\n- /flowing_fluids settings drying status : 蒸発・熱波・乾季"
-                + "\n- /flowing_fluids settings flood status : 洪水イベント"
-                + "\n- /flowing_fluids settings springs status : 湧き水/溶岩泉"
-                + "\n- /flowing_fluids settings waterlogging status : 水没ブロック/仮想waterlogの扱い"
-                + "\n- /flowing_fluids settings water_pressure status : ドア/柵などへの水圧破壊"
-                + "\n- /flowing_fluids settings component_graph status : 平衡化・経路ソルバー・局所グラフ"
+                + "\nまず見る:"
+                + "\n- /ff status : 天気・干ばつ・河川水位・洪水などの現在状況まとめ"
+                + "\n- /ff help : このガイド"
                 + "\n"
-                + "\n調整の目安:"
-                + "\n- 見た目や遊び心を変えたい: behaviour, siphons, springs, flood"
-                + "\n- 重さを抑えたい: component_graph, tick_delays__aka__flow_speeds, rain, snowmelt"
-                + "\n- ワールド生成や海/川の無限水を調整したい: sea_level_override, infinite_biomes, springs"
-                + "\n- 原因調査や実験をしたい: status, inspect_here, runtime_status, ~debug"
+                + "\n天気と水の環境（/ff weather ...）:"
+                + "\n- weather : 天気まわりの状況まとめ"
+                + "\n- weather rain : 雨水・水たまり・雨補給"
+                + "\n- weather heavy_rain : 移動する豪雨セル"
+                + "\n- weather high_water : 増水・氾濫（河川水位と警戒レベル1〜5、流入、警報）"
+                + "\n- weather flood : 洪水イベント（手動 start_here / stop）"
+                + "\n- weather drying : 蒸発・干ばつ・熱波・乾季"
+                + "\n- weather snowmelt / seasons / groundwater : 雪解け・季節・地下水"
                 + "\n"
-                + "\n注意:"
-                + "\n- 互換性のため古いコマンド名も残しています。迷ったらカテゴリの status/guide を見てください。"
-                + "\n- route_solver や component_graph は実験・高度設定です。まず OFF の既定値で遊び、必要な時だけ ON にすると戻しやすいです。";
+                + "\n水の動き:"
+                + "\n- flow : 流れ全般（距離・速度・圧力・押し流し）"
+                + "\n- speed : tick間隔プリセット（surge_fast〜emergency）"
+                + "\n- evaporation : 蒸発・補給・無限水バイオームの確率"
+                + "\n- siphons / pressure / springs / waterlogging : サイフォン・水圧破壊・湧き水・水没ブロック"
+                + "\n"
+                + "\n全体:"
+                + "\n- enable_mod on|off / playstyle : MOD の有効化と遊び方プリセット"
+                + "\n- performance : 負荷軽減と統計"
+                + "\n- debug : 調査用（通常は不要）"
+                + "\n- create : Create 連携（導入時のみ）"
+                + "\n"
+                + "\n全設定の一覧は /ff settings 以下にあります（従来のパスもそのまま使えます）。"
+                + "\n迷ったら: status を見る → preset を使う → 数値は少しずつ変える → おかしくなったら enable を off。";
     }
 
     private static String describeBehaviourGuide() {
@@ -149,32 +157,6 @@ public class FFCommands {
                 + "\n4. 水が変になったら対象カテゴリの enable を OFF に戻す";
     }
 
-    private static String describeCommandAudit() {
-        return "コマンド整理メモ"
-                + "\n現在の方針: 既存ワールドと手癖を壊さないため、古いコマンドは消さず、用途別の guide/status で案内します。"
-                + "\n"
-                + "\n普段使い:"
-                + "\n- settings guide : 入口"
-                + "\n- settings behaviour guide : 水の動き"
-                + "\n- rain/snowmelt/drying/flood/springs status : 環境イベント"
-                + "\n- siphons status : 水圧・地形サイフォン"
-                + "\n"
-                + "\n高度設定:"
-                + "\n- advanced_flow_distances : 探索距離やBFS距離。広げるほど重くなりやすいです。"
-                + "\n- component_graph : 局所グラフ、平衡化補助、route_solver。挙動比較しながら使う実験寄りです。"
-                + "\n- auto_tick_delay : サーバー負荷に応じて流体tickを緩めます。見た目より安定優先の時に使います。"
-                + "\n- water_pressure : ドアや柵などを水圧で壊す演出。ワールド影響が大きいのでOFF確認が大事です。"
-                + "\n"
-                + "\n互換/古い入口:"
-                + "\n- behavior と behaviour は両方残します。中身は同じ案内へ寄せています。"
-                + "\n- siphons はトップにも behaviour 内にもあります。探しやすさのための重複です。"
-                + "\n- ~debug は調査用です。通常プレイの調整ではまず触らなくて大丈夫です。"
-                + "\n"
-                + "\n足りていないもの:"
-                + "\n- すべての古い個別説明文の完全な日本語化はまだ途中です。今は共通表示と guide/status で迷子を減らしています。"
-                + "\n- 次にやるなら、文字化けしている個別説明をカテゴリごとに置き換えるのがよさそうです。";
-    }
-
     private static int settingsGuide(CommandContext<CommandSourceStack> context) {
         return message(context, describeSettingsGuide());
     }
@@ -183,8 +165,36 @@ public class FFCommands {
         return message(context, describeBehaviourGuide());
     }
 
-    private static int commandAudit(CommandContext<CommandSourceStack> context) {
-        return message(context, describeCommandAudit());
+    private static int overviewStatus(CommandContext<CommandSourceStack> context) {
+        var level = context.getSource().getLevel();
+        BlockPos pos = BlockPos.containing(context.getSource().getPosition());
+        return message(context, "Flowing Fluids 現在の状況"
+                + "\nMOD: " + onOff(FlowingFluids.config.enableMod)
+                + " / ディメンション: " + level.dimension().location()
+                + "\n天気: " + describeWeather(level)
+                + "\n干ばつ指数: " + String.format(java.util.Locale.ROOT, "%.2f", DryingEventSystem.getDroughtIndex(level))
+                + " / 蒸発倍率: " + String.format(java.util.Locale.ROOT, "%.2f", DryingEventSystem.getAmbientEvaporationMultiplier(level))
+                + " / 蒸発する水の深さ上限: " + DryingEventSystem.getSurfaceEvaporationMaxLevel(level)
+                + "\n河川水位: 海面+" + String.format(java.util.Locale.ROOT, "%.1f", RiverFloodStage.getStageBlocks(level))
+                + " / 警戒レベル" + RiverFloodStage.getWarningLevel(level)
+                + "\n" + FloodEventSystem.describeFlood(level, pos)
+                + "\n"
+                + "\n詳しく: /ff weather（天気）, /ff weather high_water（増水）, /ff weather drying（蒸発）, /ff performance（負荷）");
+    }
+
+    private static int weatherStatus(CommandContext<CommandSourceStack> context) {
+        var level = context.getSource().getLevel();
+        BlockPos pos = BlockPos.containing(context.getSource().getPosition());
+        return message(context, "天気と水の環境"
+                + "\n天気: " + describeWeather(level)
+                + "\n\n" + RiverFloodStage.describe(level)
+                + "\n\n" + FloodEventSystem.describeFlood(level, pos)
+                + "\n\n" + DryingEventSystem.describeStatus(level)
+                + "\n\n項目: rain, heavy_rain, high_water, flood, drying, snowmelt, seasons, groundwater");
+    }
+
+    private static String describeWeather(net.minecraft.server.level.ServerLevel level) {
+        return level.isThundering() ? "雷雨" : level.isRaining() ? "雨" : "晴れ";
     }
 
     private static String describeWaterlogFlowMode(FFConfig.WaterLogFlowMode mode) {
@@ -433,7 +443,8 @@ public class FFCommands {
                 + "\n雷雨倍率: " + FlowingFluids.config.floodThunderstormChanceMultiplier
                 + "\n告知: " + onOff(FlowingFluids.config.announceFloodEvents)
                 + "\n調整先: start_chance_per_day, default_radius, duration, pulse_interval, placements_per_pulse"
-                + "\n" + FloodEventSystem.describeFlood(context.getSource().getLevel(), pos));
+                + "\n" + FloodEventSystem.describeFlood(context.getSource().getLevel(), pos)
+                + "\n\n" + RiverFloodStage.describe(context.getSource().getLevel()));
     }
 
     private static int waterPressureStatus(CommandContext<CommandSourceStack> context) {
@@ -2125,6 +2136,60 @@ public class FFCommands {
                 : "このディメンションでは豪雨セルを発生させられません。");
     }
 
+    /**
+     * River stage (増水・氾濫) status and tuning, added to the {@code high_water} node.
+     */
+    private static LiteralArgumentBuilder<CommandSourceStack> highWaterStageCommands(LiteralArgumentBuilder<CommandSourceStack> node) {
+        return node
+                .executes(FFCommands::riverStageStatus)
+                .then(Commands.literal("status")
+                        .executes(FFCommands::riverStageStatus))
+                .then(Commands.literal("stage")
+                        .executes(FFCommands::riverStageStatus)
+                        .then(Commands.argument("percent", IntegerArgumentType.integer(0, 100))
+                                .executes(cont -> {
+                                    RiverFloodStage.setStage(cont.getSource().getLevel(),
+                                            cont.getArgument("percent", Integer.class) / 100.0);
+                                    return message(cont, "河川水位を設定しました。天候に応じてここから上下します。\n\n"
+                                            + RiverFloodStage.describe(cont.getSource().getLevel()));
+                                })))
+                .then(intCommand("max_stage",
+                        "雷雨の氾濫で川が海面から何ブロック上まで上がるかです。警戒レベルはこの高さに対する割合で決まります（レベル1: 8%、2: 25%、3: 42%、4: 58%、5: 75%）。",
+                        "blocks", 1, 16,
+                        a -> FlowingFluids.config.riverFloodMaxStage = a,
+                        () -> FlowingFluids.config.riverFloodMaxStage))
+                .then(floatCommand("rain_stage",
+                        "普通の雨で川がどこまで上がるか（最大水位に対する割合）です。0.45で警戒レベル3（避難判断）付近。雷雨は常に100%を目指します。",
+                        "share", 0.0f, 1.0f,
+                        a -> FlowingFluids.config.riverFloodRainStage = a,
+                        () -> FlowingFluids.config.riverFloodRainStage))
+                .then(floatCommand("rise_per_day",
+                        "河川水位が目標へ近づく速さ（1日あたり）です。8なら雷雨開始から約3〜4分で氾濫発生に達します。",
+                        "rate", 0.0f, 200.0f,
+                        a -> FlowingFluids.config.riverFloodRisePerDay = a,
+                        () -> FlowingFluids.config.riverFloodRisePerDay))
+                .then(intCommand("inflow_samples",
+                        "上流からの流入として、各プレイヤーの周囲40ブロックで5tickごとに調べる川の列の数です。多いほど川が早く上がりますが重くなります。0で流入なし。",
+                        "samples", 0, 256,
+                        a -> FlowingFluids.config.riverFloodInflowSamples = a,
+                        () -> FlowingFluids.config.riverFloodInflowSamples))
+                .then(intCommand("inflow_amount",
+                        "流入1回で足す水の最大量（1/8ブロック単位）です。",
+                        "levels", 1, 8,
+                        a -> FlowingFluids.config.riverFloodInflowAmount = a,
+                        () -> FlowingFluids.config.riverFloodInflowAmount))
+                .then(booleanCommand("triggers_flood_events",
+                        "警戒レベル5（氾濫発生）に達したら、プレイヤーの近くの川を中心に洪水イベントを起こし、川沿いの低地へ水をあふれさせます。",
+                        "氾濫発生時の洪水イベントを有効にしました。",
+                        "氾濫発生時の洪水イベントを無効にしました。川の増水だけが起こります。",
+                        a -> FlowingFluids.config.riverFloodTriggersFloodEvents = a,
+                        () -> FlowingFluids.config.riverFloodTriggersFloodEvents));
+    }
+
+    private static int riverStageStatus(CommandContext<CommandSourceStack> context) {
+        return message(context, RiverFloodStage.describe(context.getSource().getLevel()));
+    }
+
     private static LiteralArgumentBuilder<CommandSourceStack> floodCommand() {
         return Commands.literal("flood")
                 .executes(FFCommands::floodStatus)
@@ -2375,16 +2440,17 @@ public class FFCommands {
         var notFluidException = new SimpleCommandExceptionType(new LiteralMessage("The block you provided is not a fluid block, or is not a fluid block that can flow."));
 
         var commands = Commands.literal("flowing_fluids")
-                .requires(source -> source.hasPermission(4) || (source.getServer().isSingleplayer() && source.getPlayer() != null && source.getServer().isSingleplayerOwner(source.getPlayer().getGameProfile()))
-                ).then(Commands.literal("help")
+                .requires(FFCommands::canUseCommands)
+                .executes(FFCommands::settingsGuide)
+                .then(Commands.literal("help")
                         .executes(FFCommands::settingsGuide)
+                ).then(Commands.literal("status")
+                        .executes(FFCommands::overviewStatus)
                 ).then(siphonsCommand()
                 ).then(Commands.literal("settings")
                         .executes(FFCommands::settingsGuide)
                         .then(Commands.literal("guide")
                                 .executes(FFCommands::settingsGuide))
-                        .then(Commands.literal("command_audit")
-                                .executes(FFCommands::commandAudit))
                         .then(booleanCommand("plug_fluids_during_world_gen",
                                         "Enables or disables plugging all fluids that are generated with air beside or below them.\nThis is an IMMENSE reduction in lag during world generation.",
                                         "World gen fluid plugging is now enabled.",
@@ -2458,11 +2524,6 @@ public class FFCommands {
                                 a -> FlowingFluids.config.enableMod = a,
                                 () -> FlowingFluids.config.enableMod)
 
-                        ).then(Commands.literal("behavior")
-                                .executes(FFCommands::behaviourGuide)
-                                .then(Commands.literal("guide")
-                                        .executes(FFCommands::behaviourGuide))
-                                .then(siphonsCommand())
                         ).then(Commands.literal("behaviour")
                                 .executes(FFCommands::behaviourGuide)
                                 .then(Commands.literal("guide")
@@ -2993,7 +3054,7 @@ public class FFCommands {
                                 .then(Commands.literal("status")
                                         .executes(FFCommands::rainStatus))
                                 .then(heavyRainCommand())
-                                .then(Commands.literal("high_water")
+                                .then(highWaterStageCommands(Commands.literal("high_water"))
                                         .then(booleanCommand("enable",
                                                 "雨の間、川と海の海面上限を外し、周囲から流れ込む水で増水できるようにします。増水した川は流れが速く、押し流す力も強くなります。",
                                                 "増水を有効にしました。雨の間は川と海の水位上限がなくなります。",
@@ -3016,7 +3077,7 @@ public class FFCommands {
                                                 a -> FlowingFluids.config.riverFloodCurrentPushMultiplier = a,
                                                 () -> FlowingFluids.config.riverFloodCurrentPushMultiplier))
                                         .then(booleanCommand("warnings",
-                                                "雨の間、近くの川や海が海面より1ブロック以上高くなったらアクションバーで知らせます。",
+                                                "川や海の近くにいるプレイヤーへ、河川水位に応じた警戒レベル1〜5（水防団待機・氾濫注意・避難判断・氾濫危険・氾濫発生）をアクションバーで知らせます。レベル3以上はチャットでも告知し、レベル4以上は警報音が鳴ります。",
                                                 "増水警報を有効にしました。",
                                                 "増水警報を無効にしました。",
                                                 a -> FlowingFluids.config.enableFloodWarnings = a,
@@ -3585,7 +3646,101 @@ public class FFCommands {
             );
         }
 
-        dispatcher.register(commands);
+        LiteralCommandNode<CommandSourceStack> root = dispatcher.register(commands);
+        registerShortcuts(dispatcher, root);
+    }
+
+    private static boolean canUseCommands(CommandSourceStack source) {
+        return source.hasPermission(4) || (source.getServer().isSingleplayer() && source.getPlayer() != null
+                && source.getServer().isSingleplayerOwner(source.getPlayer().getGameProfile()));
+    }
+
+    /**
+     * Shortcuts over the full tree: the deep {@code settings ...} paths stay valid, but everyday topics are reachable
+     * one or two words below the root, and {@code /ff} is a short alias of {@code /flowing_fluids}.
+     */
+    private static void registerShortcuts(CommandDispatcher<CommandSourceStack> dispatcher, LiteralCommandNode<CommandSourceStack> root) {
+        CommandNode<CommandSourceStack> settings = root.getChild("settings");
+        CommandNode<CommandSourceStack> behaviour = findNode(root, "behaviour");
+        CommandNode<CommandSourceStack> rain = findNode(settings, "rain");
+
+        LiteralArgumentBuilder<CommandSourceStack> weather = Commands.literal("weather")
+                .executes(FFCommands::weatherStatus);
+        addAlias(weather, "rain", rain);
+        addAlias(weather, "heavy_rain", findNode(rain, "heavy"));
+        addAlias(weather, "high_water", findNode(rain, "high_water"));
+        addAlias(weather, "flood", findNode(root, "flood"));
+        addAlias(weather, "drying", findNode(root, "drying"));
+        addAlias(weather, "snowmelt", findNode(root, "snowmelt"));
+        addAlias(weather, "seasons", findNode(rain, "seasons"));
+        addAlias(weather, "groundwater", findNode(rain, "groundwater"));
+
+        LiteralArgumentBuilder<CommandSourceStack> shortcuts = Commands.literal("flowing_fluids");
+        shortcuts.then(weather);
+        addAlias(shortcuts, "flow", behaviour);
+        addAlias(shortcuts, "performance", findNode(behaviour, "performance_monitoring"));
+        addAlias(shortcuts, "speed", findNode(behaviour, "tick_delays__aka__flow_speeds"));
+        addAlias(shortcuts, "evaporation", findNode(settings, "draining_and_filling"));
+        addAlias(shortcuts, "springs", findNode(root, "springs"));
+        addAlias(shortcuts, "pressure", findNode(root, "water_pressure"));
+        addAlias(shortcuts, "waterlogging", findNode(root, "waterlogging"));
+        addAlias(shortcuts, "playstyle", findNode(root, "playstyle"));
+        addAlias(shortcuts, "enable_mod", findNode(settings, "enable_mod"));
+        addAlias(shortcuts, "debug", findNode(settings, "~debug"));
+        addAlias(shortcuts, "create", root.getChild("create_mod_compat"));
+        // Old spelling: kept as an alias instead of a second, partial copy of the tree.
+        addAlias(settings, "behavior", behaviour);
+        for (CommandNode<CommandSourceStack> child : shortcuts.build().getChildren()) {
+            if (root.getChild(child.getName()) == null) {
+                root.addChild(child);
+            }
+        }
+
+        dispatcher.register(Commands.literal("ff")
+                .requires(FFCommands::canUseCommands)
+                .executes(FFCommands::settingsGuide)
+                .redirect(root));
+    }
+
+    /**
+     * Breadth-first search for the shallowest literal with this name, so a shortcut keeps working when a group is
+     * moved inside the tree. Redirect (alias) nodes are not followed.
+     */
+    private static CommandNode<CommandSourceStack> findNode(CommandNode<CommandSourceStack> start, String name) {
+        if (start == null) {
+            return null;
+        }
+        java.util.ArrayDeque<CommandNode<CommandSourceStack>> queue = new java.util.ArrayDeque<>(start.getChildren());
+        while (!queue.isEmpty()) {
+            CommandNode<CommandSourceStack> node = queue.poll();
+            if (node instanceof LiteralCommandNode<CommandSourceStack> literal && literal.getLiteral().equals(name)) {
+                return node;
+            }
+            if (node.getRedirect() == null) {
+                queue.addAll(node.getChildren());
+            }
+        }
+        FlowingFluids.warn("Command shortcut target not found: " + name);
+        return null;
+    }
+
+    private static void addAlias(LiteralArgumentBuilder<CommandSourceStack> parent, String name, CommandNode<CommandSourceStack> target) {
+        if (target == null) {
+            return;
+        }
+        parent.then(Commands.literal(name)
+                .executes(target.getCommand())
+                .redirect(target));
+    }
+
+    private static void addAlias(CommandNode<CommandSourceStack> parent, String name, CommandNode<CommandSourceStack> target) {
+        if (target == null || parent == null || parent.getChild(name) != null) {
+            return;
+        }
+        parent.addChild(Commands.literal(name)
+                .executes(target.getCommand())
+                .redirect(target)
+                .build());
     }
 
     private static int superSponge(Level level, BlockPos pos, Fluid fluid) {
