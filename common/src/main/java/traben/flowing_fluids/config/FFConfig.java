@@ -194,6 +194,8 @@ public class FFConfig {
     public boolean naturalSiphonRequireEnclosedPath = true; // Require narrow or mostly enclosed natural paths
     public boolean naturalSiphonAllowOpenSurface = false; // Allow open-surface natural paths with heavy limits
     public boolean siphonSameLevelOutletsAnywhere = false; // Allow same-height low-water outlets without hydraulic support
+    public boolean enableEntityWaterDisplacement = true; // Players push their submerged volume up as a small, fully returned water rise
+    public float entityWaterDisplacementScale = 1.0f; // 1.0 = physical volume (a fully submerged player lends about 5 water levels)
 
     public float drinkWaterToBreedAnimalChance = 0.1f;
     public boolean encloseAllFluidOnWorldGen = true;
@@ -617,6 +619,8 @@ public class FFConfig {
         naturalSiphonRequireEnclosedPath = buffer.readBoolean();
         naturalSiphonAllowOpenSurface = buffer.readBoolean();
         siphonSameLevelOutletsAnywhere = buffer.readBoolean();
+        enableEntityWaterDisplacement = buffer.readBoolean();
+        entityWaterDisplacementScale = buffer.readFloat();
 
         drinkWaterToBreedAnimalChance = buffer.readFloat();
         encloseAllFluidOnWorldGen = buffer.readBoolean();
@@ -921,6 +925,8 @@ public class FFConfig {
         buffer.writeBoolean(naturalSiphonRequireEnclosedPath);
         buffer.writeBoolean(naturalSiphonAllowOpenSurface);
         buffer.writeBoolean(siphonSameLevelOutletsAnywhere);
+        buffer.writeBoolean(enableEntityWaterDisplacement);
+        buffer.writeFloat(entityWaterDisplacementScale);
 
         buffer.writeFloat(drinkWaterToBreedAnimalChance);
         buffer.writeBoolean(encloseAllFluidOnWorldGen);
@@ -1397,6 +1403,9 @@ public class FFConfig {
         naturalSiphonMinFilledAmount = Math.max(1, Math.min(8, naturalSiphonMinFilledAmount));
         naturalSiphonMaxTransferPerTick = Math.max(1, Math.min(8, naturalSiphonMaxTransferPerTick));
         naturalSiphonCooldownTicks = Math.max(1, Math.min(80, naturalSiphonCooldownTicks));
+        entityWaterDisplacementScale = Float.isFinite(entityWaterDisplacementScale)
+                ? Math.max(0.0f, Math.min(4.0f, entityWaterDisplacementScale))
+                : 1.0f;
         evaporationChanceMultiplier = Math.max(0.0f, Math.min(8.0f, evaporationChanceMultiplier));
         evaporationIntervalTicks = Math.max(1, Math.min(1200, evaporationIntervalTicks));
         evaporationThinWaterMaxLevel = Math.max(1, Math.min(8, evaporationThinWaterMaxLevel));

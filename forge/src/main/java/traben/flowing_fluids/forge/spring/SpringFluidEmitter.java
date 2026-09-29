@@ -24,7 +24,7 @@ final class SpringFluidEmitter {
     }
 
     private static boolean isOpenEmissionCell(BlockState state, FlowingFluid fluid) {
-        return state.isAir() || state.liquid() || state.canBeReplaced(fluid);
+        return FFFluidUtils.isOpenFluidCell(state, fluid);
     }
 
     static int emitFluid(ServerLevel level, BlockPos outputPos, int emitted, FlowingFluid sourceFluid, Direction growthDirection) {
@@ -62,7 +62,8 @@ final class SpringFluidEmitter {
                     sourceFluid,
                     remainder,
                     allowUpwardSpread,
-                    allowDownwardSpread
+                    allowDownwardSpread,
+                    true
             );
         }
 
@@ -76,7 +77,8 @@ final class SpringFluidEmitter {
                 sourceFluid,
                 emitted,
                 allowUpwardSpread,
-                allowDownwardSpread
+                allowDownwardSpread,
+                true
         );
     }
 }

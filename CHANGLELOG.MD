@@ -8,6 +8,11 @@
 - clarified water spring behavior as source-fed generation, retired the old nearby-water feedback helpers, and kept surface vent fountains strong with strength-based crests and partial side spray
 - protected water spring columns, crests, and nearby spray from infinite-biome thin surface draining so spring-fed water is no longer cleaned up as stray sea-level water
 - prevented spring-fed water from being replaced with air by zero-amount fluid writes or remove-all cleanup near water spring sources
+- 湧き水の縦坑をハーフブロック・階段などの水没可能ブロックで塞いでも、湧き水の先端からの連結拡散がそのブロックを貫通していた不具合を修正。湧き水由来の水は空気・置換可能ブロック・液体ブロックだけに広がるようにした
+- 地表噴出口の真上にブロックを置いても、飛沫がそのブロックの横や上に生成されていた不具合を修正。飛沫は実際に形成された水柱の頂点から出るようにした
+- プレイヤーによる水の押しのけを追加。水に入ると沈んだ体積ぶん水面が上がり（全身が沈んだプレイヤーで約5レベル）、水から出ると同じ量を回収するため水は増減しない（`behaviour entity_displacement enable|scale`）
+- サイフォンが自分の管内の水を抜いて止まっていた問題を修正し、水源側の水面から吸い出すようにした。流量は落差に比例する線形式から `sqrt(落差 / 損失)` と偏りのない確率的丸めに変更
+- 湧き水のtick負荷を削減。地表噴出口の判定を縦坑1回の走査にし、圧力水柱の走査をパルスごとに1回にし、満水の水柱セルを毎パルス書き込み・再起動しないようにした
 
 1.0.5
 - added fractional fluid tick delays for water and lava, including 0.5 tick style substeps and 1.5 tick average scheduling

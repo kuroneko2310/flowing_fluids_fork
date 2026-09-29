@@ -2378,6 +2378,18 @@ public class FFCommands {
                                                 a -> FlowingFluids.config.enableHydraulicBlocks = a,
                                                 () -> FlowingFluids.config.enableHydraulicBlocks))
                                 ).then(siphonsCommand()
+                                ).then(Commands.literal("entity_displacement")
+                                        .then(booleanCommand("enable",
+                                                "プレイヤーが水に入ると、水中に沈んだ体積ぶんだけ水面が少し上がります。\n上げた水は台帳で管理し、水から出ると同じ量を回収するので水は増えも減りもしません。",
+                                                "押しのけ水位を有効にしました。水に入ると水面が少し上がり、出ると元に戻ります。",
+                                                "押しのけ水位を無効にしました。貸し出し中の水は順次回収されます。",
+                                                a -> FlowingFluids.config.enableEntityWaterDisplacement = a,
+                                                () -> FlowingFluids.config.enableEntityWaterDisplacement))
+                                        .then(floatCommand("scale",
+                                                "押しのける水量の倍率です。1.0 が物理的な体積（全身が沈んだプレイヤーで約5レベル）です。",
+                                                "scale", 0.0f, 4.0f,
+                                                a -> FlowingFluids.config.entityWaterDisplacementScale = a,
+                                                () -> FlowingFluids.config.entityWaterDisplacementScale))
                                 ).then(Commands.literal("cavity_pressure")
                                         .executes(FFCommands::cavityPressureStatus)
                                         .then(Commands.literal("status")

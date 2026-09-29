@@ -11,6 +11,7 @@ import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
 import traben.flowing_fluids.rain.RainWaterSystem;
 import traben.flowing_fluids.snow.SnowmeltWaterSystem;
 import traben.flowing_fluids.util.DimensionKey;
+import traben.flowing_fluids.water.EntityWaterDisplacement;
 import traben.flowing_fluids.water.WaterPressureSystem;
 
 import java.util.Set;
@@ -41,6 +42,7 @@ public final class FlowingFluidsTick {
         RainWaterSystem.onLevelTick(level);
         DryingEventSystem.onLevelTick(level);
         SnowmeltWaterSystem.onLevelTick(level);
+        EntityWaterDisplacement.onLevelTick(level);
 
         FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
         double mspt = monitor.getLoadControlMspt(level.getServer().getAverageTickTime());
@@ -157,6 +159,7 @@ public final class FlowingFluidsTick {
         RainWaterSystem.onLevelUnload(level);
         DryingEventSystem.onLevelUnload(level);
         SnowmeltWaterSystem.onLevelUnload(level);
+        EntityWaterDisplacement.clearDimension(level);
         WaterPressureSystem.onLevelUnload(level);
         AsyncSlopeSearchPlanner.clearDimension(level);
         ParallelFluidEqualizer.clearDimension(level);
