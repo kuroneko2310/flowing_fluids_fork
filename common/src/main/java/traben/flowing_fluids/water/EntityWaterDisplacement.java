@@ -5,6 +5,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.animal.WaterAnimal;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.vehicle.Boat;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
@@ -21,7 +26,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Archimedes-style displacement for players standing or swimming in finite water.
+ * Archimedes-style displacement for players, boats and land mobs in finite water.
  *
  * <p>The submerged part of a player's bounding box is measured in water levels (one block = 8 levels) and that much
  * water is <em>lent</em> to the local water surface, so a bath or small pond visibly rises a little when someone gets
@@ -50,6 +55,8 @@ public final class EntityWaterDisplacement {
     static final int MAX_LENT_LEVELS = 16;
     private static final int SURFACE_SCAN_LIMIT = 24;
     private static final int PLACEMENT_SEARCH_DEPTH = 48;
+    private static final double NEARBY_ENTITY_RADIUS = 48.0;
+    private static final int MAX_NEARBY_ENTITIES_PER_PASS = 64;
 
     private EntityWaterDisplacement() {
     }
@@ -63,54 +70,105 @@ public final class EntityWaterDisplacement {
         }
 
         long now = level.getGameTime();
+        boolean changed = false;
         for (ServerPlayer player : level.players()) {
-            UUID id = player.getUUID();
-            if (Math.floorMod(now + player.getId(), UPDATE_INTERVAL_TICKS) != 0) {
-                continue;
-            }
-
-            DisplacementLedger ledger = ledgers.get(id);
-            double exactLevels = active && player.isAlive() && !player.isSpectator()
-                    ? submergedLevels(level, player.getBoundingBox()) * FlowingFluids.config.entityWaterDisplacementScale
-                    : 0.0;
-            int lent = ledger == null ? 0 : ledger.lent;
-            if (lent == 0 && exactLevels < HYSTERESIS_BAND) {
-                // Dry players cost one short column scan and no allocation.
-                continue;
-            }
-
-            int target = Math.min(MAX_LENT_LEVELS, quantizeWithHysteresis(exactLevels, lent));
-            int step = stepToward(lent, target, MAX_LEVEL_STEP_PER_UPDATE);
-            if (step == 0) {
-                continue;
-            }
-
-            if (ledger == null) {
-                ledger = new DisplacementLedger();
-                ledgers.put(id, ledger);
-            }
-            int before = ledger.lent;
-            BlockPos surface = findWaterSurface(level, player.getBoundingBox());
-            if (step > 0) {
-                if (surface != null) {
-                    ledger.lent += lend(level, surface, step);
-                    ledger.anchor = surface.asLong();
-                }
-            } else {
-                ledger.lent -= repay(level, surface, ledger, -step);
-            }
-            if (ledger.lent <= 0) {
-                ledgers.remove(id);
-            }
-            if (ledger.lent != before) {
-                saved.setDirty();
+            if (Math.floorMod(now + player.getId(), UPDATE_INTERVAL_TICKS) == 0) {
+                changed |= updateEntity(level, ledgers, player, active);
             }
         }
 
-        if (!ledgers.isEmpty() && Math.floorMod(now, UPDATE_INTERVAL_TICKS) == 0
-                && repayAbsentPlayers(level, ledgers)) {
+        if (Math.floorMod(now, UPDATE_INTERVAL_TICKS) == 0) {
+            Set<UUID> present = new HashSet<>();
+            for (ServerPlayer player : level.players()) {
+                present.add(player.getUUID());
+            }
+            if (active && (FlowingFluids.config.entityWaterDisplacementBoats || FlowingFluids.config.entityWaterDisplacementMobs)) {
+                changed |= updateNearbyEntities(level, ledgers, present);
+            }
+            if (!ledgers.isEmpty()) {
+                changed |= repayAbsentEntities(level, ledgers, present);
+            }
+        }
+        if (changed) {
             saved.setDirty();
         }
+    }
+
+    /**
+     * Boats and land mobs near players. Entities are only simulated where someone can see the water move, and a pass
+     * is capped so a crowded farm cannot turn this into a per-tick entity sweep.
+     */
+    private static boolean updateNearbyEntities(ServerLevel level, Map<UUID, DisplacementLedger> ledgers, Set<UUID> present) {
+        boolean changed = false;
+        int budget = MAX_NEARBY_ENTITIES_PER_PASS;
+        for (ServerPlayer player : level.players()) {
+            if (budget <= 0) {
+                break;
+            }
+            AABB area = player.getBoundingBox().inflate(NEARBY_ENTITY_RADIUS);
+            for (Entity entity : level.getEntities(player, area,
+                    candidate -> isDisplacingEntity(candidate) && (candidate.isInWater() || ledgers.containsKey(candidate.getUUID())))) {
+                if (budget <= 0) {
+                    break;
+                }
+                if (present.add(entity.getUUID())) {
+                    budget--;
+                    changed |= updateEntity(level, ledgers, entity, true);
+                }
+            }
+        }
+        return changed;
+    }
+
+    static boolean isDisplacingEntity(Entity entity) {
+        if (entity instanceof Player || entity.isSpectator() || !entity.isAlive() || entity.isPassenger()) {
+            return false;
+        }
+        if (entity instanceof Boat) {
+            return FlowingFluids.config.entityWaterDisplacementBoats;
+        }
+        // Fish, squid and other water animals are part of the sea they live in, not something lowered into it.
+        return entity instanceof LivingEntity
+                && !(entity instanceof WaterAnimal)
+                && FlowingFluids.config.entityWaterDisplacementMobs;
+    }
+
+    private static boolean updateEntity(ServerLevel level, Map<UUID, DisplacementLedger> ledgers, Entity entity, boolean active) {
+        UUID id = entity.getUUID();
+        DisplacementLedger ledger = ledgers.get(id);
+        double exactLevels = active && entity.isAlive() && !entity.isSpectator()
+                ? submergedLevels(level, entity.getBoundingBox()) * FlowingFluids.config.entityWaterDisplacementScale
+                : 0.0;
+        int lent = ledger == null ? 0 : ledger.lent;
+        if (lent == 0 && exactLevels < HYSTERESIS_BAND) {
+            // Dry entities cost one short column scan and no allocation.
+            return false;
+        }
+
+        int target = Math.min(MAX_LENT_LEVELS, quantizeWithHysteresis(exactLevels, lent));
+        int step = stepToward(lent, target, MAX_LEVEL_STEP_PER_UPDATE);
+        if (step == 0) {
+            return false;
+        }
+
+        if (ledger == null) {
+            ledger = new DisplacementLedger();
+            ledgers.put(id, ledger);
+        }
+        int before = ledger.lent;
+        BlockPos surface = findWaterSurface(level, entity.getBoundingBox());
+        if (step > 0) {
+            if (surface != null) {
+                ledger.lent += lend(level, surface, step);
+                ledger.anchor = surface.asLong();
+            }
+        } else {
+            ledger.lent -= repay(level, surface, ledger, -step);
+        }
+        if (ledger.lent <= 0) {
+            ledgers.remove(id);
+        }
+        return ledger.lent != before;
     }
 
     private static boolean isActive(ServerLevel level) {
@@ -121,14 +179,11 @@ public final class EntityWaterDisplacement {
     }
 
     /**
-     * Players who logged out, died and respawned elsewhere or changed dimension still owe their lent water here.
+     * Entities that logged out, died, despawned, changed dimension or wandered away from every player still owe their
+     * lent water here; it is repaid from where it was lent.
      */
-    private static boolean repayAbsentPlayers(ServerLevel level, Map<UUID, DisplacementLedger> ledgers) {
+    private static boolean repayAbsentEntities(ServerLevel level, Map<UUID, DisplacementLedger> ledgers, Set<UUID> present) {
         boolean changed = false;
-        Set<UUID> present = new HashSet<>();
-        for (ServerPlayer player : level.players()) {
-            present.add(player.getUUID());
-        }
         Iterator<Map.Entry<UUID, DisplacementLedger>> iterator = ledgers.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<UUID, DisplacementLedger> entry = iterator.next();

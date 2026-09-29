@@ -46,6 +46,7 @@
   "tooltip.flowing_fluids.pressure_nozzle.4": "Also pressurizes water touching its four side faces toward the facing direction.",
   "tooltip.flowing_fluids.water_level_sensor.1": "Reads the water level on its front face and updates continuously.",
   "tooltip.flowing_fluids.water_level_sensor.2": "Outputs 0-15 redstone power from the back, with full water at max signal.",
+  "tooltip.flowing_fluids.water_level_sensor.3": "Facing down: flood gauge, 15 minus the distance to the water surface below (up to 15 blocks).",
   "tooltip.flowing_fluids.rain_collector.1": "Catches open-sky rain and stores it inside the block.",
   "tooltip.flowing_fluids.rain_collector.2": "Right-click empty-handed to toggle RF absorption mode.",
   "tooltip.flowing_fluids.rain_collector.3": "When powered, it absorbs nearby rain water before it forms around it.",

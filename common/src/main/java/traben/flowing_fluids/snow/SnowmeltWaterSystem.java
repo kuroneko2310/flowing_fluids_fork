@@ -157,11 +157,19 @@ public final class SnowmeltWaterSystem {
         if (level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos.above()) < FlowingFluids.config.snowmeltMinSkyLight) {
             return;
         }
-        float temperature = level.getBiome(pos).value().getBaseTemperature();
-        if (temperature < FlowingFluids.config.snowmeltMinTemperature) {
-            return;
+        if (traben.flowing_fluids.season.SeasonClimate.isActive(level)) {
+            // Seasons move the freezing line through the year; melt wherever it is currently above freezing.
+            if (level.getBiome(pos).value().coldEnoughToSnow(pos)) {
+                return;
+            }
+        } else {
+            float temperature = level.getBiome(pos).value().getBaseTemperature();
+            if (temperature < FlowingFluids.config.snowmeltMinTemperature) {
+                return;
+            }
         }
-        float chance = FlowingFluids.config.snowmeltBaseChance;
+        float chance = FlowingFluids.config.snowmeltBaseChance
+                * (float) traben.flowing_fluids.season.SeasonClimate.snowmeltMultiplier(level);
         if (target == MeltTarget.ICE) {
             chance *= 0.8f;
         } else if (state.hasProperty(SnowLayerBlock.LAYERS)) {

@@ -204,8 +204,20 @@ public class FFConfig {
     public int riverFloodRecessionTicks = 20 * 180; // After rain, the sea-level cap returns gradually over this many ticks
     public float riverFloodFlowDelayMultiplier = 0.5f; // Tick delay multiplier for swollen river/sea water (lower = faster)
     public float riverFloodCurrentPushMultiplier = 1.8f; // Extra current push in a river in spate
+    public boolean enableFloodWarnings = true; // Action-bar warning when a nearby river or sea stands above sea level in rain
+    public boolean waterLevelSensorDepthGauge = true; // A down-facing water level sensor acts as a flood gauge
+    public boolean enableSeasonIntegration = true; // Use Serene Seasons (if installed) for drought, evaporation, downpours and snowmelt
+    public float seasonStrength = 1.0f; // Scales how far seasons push those rates away from normal (0 = no seasonal effect)
+    public boolean enableSpringFreshet = true; // Early/mid spring snowmelt lifts the river height cap like rain does
+    public boolean enableErosion = false; // Fast water erodes soil, sand, gravel and clay and deposits it where it slows
+    public float erosionChance = 0.25f; // Erosion chance per random tick at twice the material's critical stream power
+    public float depositionChance = 0.2f; // Chance per random tick that calm water settles one carried sediment block
+    public boolean enableMurkyFloodWater = true; // Client: river and sea water turns silty brown while it rains
+    public float murkyFloodWaterStrength = 0.65f; // How far flood water is blended towards the silt colour (0-1)
     public boolean enableEntityWaterDisplacement = true; // Players push their submerged volume up as a small, fully returned water rise
     public float entityWaterDisplacementScale = 1.0f; // 1.0 = physical volume (a fully submerged player lends about 5 water levels)
+    public boolean entityWaterDisplacementBoats = true; // Boats near players displace water too
+    public boolean entityWaterDisplacementMobs = true; // Land mobs near players displace water too (water animals never do)
 
     public float drinkWaterToBreedAnimalChance = 0.1f;
     public boolean encloseAllFluidOnWorldGen = true;
@@ -643,8 +655,20 @@ public class FFConfig {
         riverFloodRecessionTicks = buffer.readVarInt();
         riverFloodFlowDelayMultiplier = buffer.readFloat();
         riverFloodCurrentPushMultiplier = buffer.readFloat();
+        enableFloodWarnings = buffer.readBoolean();
+        waterLevelSensorDepthGauge = buffer.readBoolean();
+        enableSeasonIntegration = buffer.readBoolean();
+        seasonStrength = buffer.readFloat();
+        enableSpringFreshet = buffer.readBoolean();
+        enableErosion = buffer.readBoolean();
+        erosionChance = buffer.readFloat();
+        depositionChance = buffer.readFloat();
+        enableMurkyFloodWater = buffer.readBoolean();
+        murkyFloodWaterStrength = buffer.readFloat();
         enableEntityWaterDisplacement = buffer.readBoolean();
         entityWaterDisplacementScale = buffer.readFloat();
+        entityWaterDisplacementBoats = buffer.readBoolean();
+        entityWaterDisplacementMobs = buffer.readBoolean();
 
         drinkWaterToBreedAnimalChance = buffer.readFloat();
         encloseAllFluidOnWorldGen = buffer.readBoolean();
@@ -967,8 +991,20 @@ public class FFConfig {
         buffer.writeVarInt(riverFloodRecessionTicks);
         buffer.writeFloat(riverFloodFlowDelayMultiplier);
         buffer.writeFloat(riverFloodCurrentPushMultiplier);
+        buffer.writeBoolean(enableFloodWarnings);
+        buffer.writeBoolean(waterLevelSensorDepthGauge);
+        buffer.writeBoolean(enableSeasonIntegration);
+        buffer.writeFloat(seasonStrength);
+        buffer.writeBoolean(enableSpringFreshet);
+        buffer.writeBoolean(enableErosion);
+        buffer.writeFloat(erosionChance);
+        buffer.writeFloat(depositionChance);
+        buffer.writeBoolean(enableMurkyFloodWater);
+        buffer.writeFloat(murkyFloodWaterStrength);
         buffer.writeBoolean(enableEntityWaterDisplacement);
         buffer.writeFloat(entityWaterDisplacementScale);
+        buffer.writeBoolean(entityWaterDisplacementBoats);
+        buffer.writeBoolean(entityWaterDisplacementMobs);
 
         buffer.writeFloat(drinkWaterToBreedAnimalChance);
         buffer.writeBoolean(encloseAllFluidOnWorldGen);
@@ -1460,6 +1496,10 @@ public class FFConfig {
         naturalSiphonMaxTransferPerTick = Math.max(1, Math.min(8, naturalSiphonMaxTransferPerTick));
         naturalSiphonCooldownTicks = Math.max(1, Math.min(80, naturalSiphonCooldownTicks));
         riverFloodRecessionTicks = Math.max(0, Math.min(72000, riverFloodRecessionTicks));
+        seasonStrength = Float.isFinite(seasonStrength) ? Math.max(0.0f, Math.min(3.0f, seasonStrength)) : 1.0f;
+        erosionChance = Float.isFinite(erosionChance) ? Math.max(0.0f, Math.min(1.0f, erosionChance)) : 0.25f;
+        depositionChance = Float.isFinite(depositionChance) ? Math.max(0.0f, Math.min(1.0f, depositionChance)) : 0.2f;
+        murkyFloodWaterStrength = Float.isFinite(murkyFloodWaterStrength) ? Math.max(0.0f, Math.min(1.0f, murkyFloodWaterStrength)) : 0.65f;
         riverFloodFlowDelayMultiplier = Float.isFinite(riverFloodFlowDelayMultiplier) ? Math.max(0.1f, Math.min(1.0f, riverFloodFlowDelayMultiplier)) : 0.5f;
         riverFloodCurrentPushMultiplier = Float.isFinite(riverFloodCurrentPushMultiplier) ? Math.max(1.0f, Math.min(5.0f, riverFloodCurrentPushMultiplier)) : 1.8f;
         entityWaterDisplacementScale = Float.isFinite(entityWaterDisplacementScale)

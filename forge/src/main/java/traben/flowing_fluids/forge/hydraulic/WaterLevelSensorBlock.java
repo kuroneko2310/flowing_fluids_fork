@@ -22,12 +22,16 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.FFFluidUtils;
+import traben.flowing_fluids.FlowingFluids;
 
 public class WaterLevelSensorBlock extends DirectionalBlock {
     public static final DirectionProperty FACING = DirectionalBlock.FACING;
     public static final IntegerProperty POWER = BlockStateProperties.POWER;
     private static final int REFRESH_DELAY = 4;
+    private static final int DEPTH_GAUGE_REFRESH_DELAY = 20;
+    private static final int DEPTH_GAUGE_RANGE = 15;
 
     public WaterLevelSensorBlock() {
         super(BlockBehaviour.Properties.copy(Blocks.OBSERVER));
@@ -43,7 +47,7 @@ public class WaterLevelSensorBlock extends DirectionalBlock {
         BlockState observedState = context.getLevel().getBlockState(observedPos);
         return defaultBlockState()
             .setValue(FACING, facing)
-            .setValue(POWER, ff$getWaterSignal(context.getLevel(), observedPos, observedState));
+            .setValue(POWER, ff$getWaterSignal(context.getLevel(), context.getClickedPos(), facing, observedPos, observedState));
     }
 
     @Override
@@ -93,7 +97,7 @@ public class WaterLevelSensorBlock extends DirectionalBlock {
     public void tick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
         BlockPos observedPos = pos.relative(state.getValue(FACING));
         BlockState observedState = level.getBlockState(observedPos);
-        int signal = ff$getWaterSignal(level, observedPos, observedState);
+        int signal = ff$getWaterSignal(level, pos, state.getValue(FACING), observedPos, observedState);
         if (signal != state.getValue(POWER)) {
             BlockState updatedState = state.setValue(POWER, signal);
             level.setBlock(pos, updatedState, 2);
@@ -103,7 +107,10 @@ public class WaterLevelSensorBlock extends DirectionalBlock {
         }
 
         // Virtual waterlog cells do not always emit a normal neighbor update when only their stored amount changes.
-        if (ff$shouldKeepRefreshing(level, observedState, signal)) {
+        if (ff$isDepthGauge(state.getValue(FACING))) {
+            // A distant river surface sends no neighbour updates, so the gauge polls on a slow clock.
+            ff$scheduleRefresh(level, pos, DEPTH_GAUGE_REFRESH_DELAY);
+        } else if (ff$shouldKeepRefreshing(level, observedState, signal)) {
             ff$scheduleRefresh(level, pos, REFRESH_DELAY);
         }
     }
@@ -154,10 +161,41 @@ public class WaterLevelSensorBlock extends DirectionalBlock {
         builder.add(FACING, POWER);
     }
 
-    private int ff$getWaterSignal(LevelAccessor level, BlockPos observedPos, BlockState observedState) {
+    private int ff$getWaterSignal(LevelAccessor level, BlockPos sensorPos, Direction facing,
+                                  BlockPos observedPos, BlockState observedState) {
+        if (ff$isDepthGauge(facing)) {
+            return ff$getDepthGaugeSignal(level, sensorPos);
+        }
         FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, observedPos, observedState);
         int amount = fluidState.is(FluidTags.WATER) ? fluidState.getAmount() : 0;
         return amount <= 0 ? 0 : Math.min(15, (amount * 2) - 1);
+    }
+
+    private static boolean ff$isDepthGauge(Direction facing) {
+        return facing == Direction.DOWN && FlowingFluids.config.waterLevelSensorDepthGauge;
+    }
+
+    /**
+     * Flood gauge: a sensor mounted above a river, facing down, outputs {@code 15 - distance} to the water surface
+     * (up to 15 blocks below), so the signal climbs as the river rises. It looks through air and plants but not solid
+     * blocks, and reads partial water heights so a one-level rise is visible once it crosses a block boundary.
+     */
+    private static int ff$getDepthGaugeSignal(LevelAccessor level, BlockPos sensorPos) {
+        BlockPos.MutableBlockPos cursor = sensorPos.mutable();
+        for (int depth = 1; depth <= DEPTH_GAUGE_RANGE; depth++) {
+            cursor.setY(sensorPos.getY() - depth);
+            BlockState state = level.getBlockState(cursor);
+            FluidState fluid = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
+            if (fluid.is(FluidTags.WATER) && fluid.getAmount() > 0) {
+                double surface = cursor.getY() + fluid.getAmount() / 8.0;
+                double distance = Math.max(0.0, sensorPos.getY() - surface);
+                return Math.max(0, Math.min(15, (int) Math.floor(15.0 - distance)));
+            }
+            if (!state.isAir() && !state.canBeReplaced(Fluids.WATER)) {
+                return 0;
+            }
+        }
+        return 0;
     }
 
     private boolean ff$shouldKeepRefreshing(LevelAccessor level, BlockState observedState, int signal) {

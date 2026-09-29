@@ -3,11 +3,21 @@ package traben.flowing_fluids.water;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.material.FluidState;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.season.SeasonClimate;
+
+import java.util.Locale;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Rain-driven high water ("増水") for rivers and seas.
@@ -25,11 +35,67 @@ public final class RiverFloodStage {
     private RiverFloodStage() {
     }
 
+    private static final int WARNING_INTERVAL_TICKS = 100;
+    private static final int WARNING_REPEAT_TICKS = 600;
+    private static final int WARNING_SAMPLE_RADIUS = 16;
+    private static final double WARNING_MIN_EXCESS = 1.0;
+    private static final ConcurrentHashMap<UUID, Warning> LAST_WARNINGS = new ConcurrentHashMap<>();
+
     public static void onLevelTick(ServerLevel level) {
-        if (level.isRaining()) {
+        if (level.isRaining() || SeasonClimate.isSpringFreshet(level)) {
             // Persisted, so a restart during the recession keeps the flood receding instead of snapping back.
             WeatherWaterSavedData.get(level).setLastRainTick(level.getGameTime());
         }
+        if (FlowingFluids.config.enableFloodWarnings && isHighWater(level)) {
+            long now = level.getGameTime();
+            for (ServerPlayer player : level.players()) {
+                if (Math.floorMod(now + player.getId(), WARNING_INTERVAL_TICKS) == 0) {
+                    warnIfRising(level, player, now);
+                }
+            }
+        }
+    }
+
+    /**
+     * Samples the player's column and a ring around it for river/sea water standing above sea level. Only loaded
+     * chunks are read. A warning repeats at most every 30 seconds unless the water has risen another block since.
+     */
+    private static void warnIfRising(ServerLevel level, ServerPlayer player, long now) {
+        int seaLevel = FFFluidUtils.seaLevel(level);
+        double highest = Double.NEGATIVE_INFINITY;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int i = -1; i < 8; i++) {
+            double angle = i * (Math.PI / 4.0);
+            int x = player.getBlockX() + (i < 0 ? 0 : (int) Math.round(Math.cos(angle) * WARNING_SAMPLE_RADIUS));
+            int z = player.getBlockZ() + (i < 0 ? 0 : (int) Math.round(Math.sin(angle) * WARNING_SAMPLE_RADIUS));
+            if (!level.hasChunk(x >> 4, z >> 4)) {
+                continue;
+            }
+            int y = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+            cursor.set(x, y, z);
+            FluidState fluid = FFFluidUtils.getEffectiveFluidState(level, cursor);
+            if (!fluid.is(FluidTags.WATER) || fluid.getAmount() <= 0) {
+                continue;
+            }
+            Holder<Biome> biome = coarseBiome(level, cursor);
+            if (!FFFluidUtils.isRiverBiome(biome) && !FFFluidUtils.isOceanBiome(biome)) {
+                continue;
+            }
+            highest = Math.max(highest, y + fluid.getAmount() / 8.0 - seaLevel);
+        }
+        if (highest < WARNING_MIN_EXCESS) {
+            return;
+        }
+        Warning last = LAST_WARNINGS.get(player.getUUID());
+        if (last != null && now - last.tick < WARNING_REPEAT_TICKS && highest < last.excess + 1.0) {
+            return;
+        }
+        LAST_WARNINGS.put(player.getUUID(), new Warning(now, highest));
+        player.displayClientMessage(Component.literal(String.format(Locale.ROOT,
+                "近くの川や海が増水しています（海面より約%.1fブロック上）。低い場所に注意してください。", highest)), true);
+    }
+
+    private record Warning(long tick, double excess) {
     }
 
     private static boolean isEnabled(Level level) {
@@ -41,10 +107,10 @@ public final class RiverFloodStage {
     }
 
     /**
-     * True while it rains: the river/sea height cap is lifted entirely.
+     * True while it rains, or during the spring snowmelt freshet: the river/sea height cap is lifted entirely.
      */
     public static boolean isHighWater(Level level) {
-        return isEnabled(level) && level.isRaining();
+        return isEnabled(level) && (level.isRaining() || SeasonClimate.isSpringFreshet(level));
     }
 
     /**
@@ -54,7 +120,7 @@ public final class RiverFloodStage {
         if (!isEnabled(level)) {
             return 1.0f;
         }
-        if (level.isRaining()) {
+        if (level.isRaining() || SeasonClimate.isSpringFreshet(level)) {
             return 0.0f;
         }
         if (!(level instanceof ServerLevel serverLevel)) {

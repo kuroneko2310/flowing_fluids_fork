@@ -2081,6 +2081,22 @@ public class FFCommands {
                         () -> FlowingFluids.config.heavyRainDurationTicks / 20));
     }
 
+    private static String describeSeasonClimate(net.minecraft.server.level.ServerLevel level) {
+        int subSeason = traben.flowing_fluids.season.SeasonClimate.subSeason(level);
+        if (subSeason == traben.flowing_fluids.season.SeasonClimate.NO_SEASON) {
+            return "季節連携: 無効、または Serene Seasons が見つかりません（全ての倍率は 1.0）。";
+        }
+        String[] names = {"初春", "仲春", "晩春", "初夏", "盛夏", "晩夏", "初秋", "仲秋", "晩秋", "初冬", "真冬", "晩冬"};
+        return String.format(java.util.Locale.ROOT,
+                "季節: %s%n干ばつの進み x%.2f / 蒸発 x%.2f / 豪雨 x%.2f / 雪解け x%.2f / 雪解け増水=%s",
+                names[subSeason],
+                traben.flowing_fluids.season.SeasonClimate.droughtMultiplier(level),
+                traben.flowing_fluids.season.SeasonClimate.evaporationMultiplier(level),
+                traben.flowing_fluids.season.SeasonClimate.heavyRainMultiplier(level),
+                traben.flowing_fluids.season.SeasonClimate.snowmeltMultiplier(level),
+                traben.flowing_fluids.season.SeasonClimate.isSpringFreshet(level) ? "あり" : "なし");
+    }
+
     private static int startHeavyRainHere(CommandContext<CommandSourceStack> context, int radius, int durationSeconds) {
         boolean started = HeavyRainCellSystem.startCell(context.getSource().getLevel(),
                 BlockPos.containing(context.getSource().getPosition()), radius, durationSeconds * 20);
@@ -2490,6 +2506,18 @@ public class FFCommands {
                                                 "scale", 0.0f, 4.0f,
                                                 a -> FlowingFluids.config.entityWaterDisplacementScale = a,
                                                 () -> FlowingFluids.config.entityWaterDisplacementScale))
+                                        .then(booleanCommand("boats",
+                                                "プレイヤーの近く（48ブロック以内）のボートも水を押しのけます。",
+                                                "ボートの押しのけを有効にしました。",
+                                                "ボートの押しのけを無効にしました。",
+                                                a -> FlowingFluids.config.entityWaterDisplacementBoats = a,
+                                                () -> FlowingFluids.config.entityWaterDisplacementBoats))
+                                        .then(booleanCommand("mobs",
+                                                "プレイヤーの近く（48ブロック以内）の陸上モブも水を押しのけます。魚やイカなどの水生生物は対象外です。",
+                                                "モブの押しのけを有効にしました。",
+                                                "モブの押しのけを無効にしました。",
+                                                a -> FlowingFluids.config.entityWaterDisplacementMobs = a,
+                                                () -> FlowingFluids.config.entityWaterDisplacementMobs))
                                 ).then(Commands.literal("cavity_pressure")
                                         .executes(FFCommands::cavityPressureStatus)
                                         .then(Commands.literal("status")
@@ -2947,7 +2975,65 @@ public class FFCommands {
                                                 "増水中の川でプレイヤーやモブを押し流す力の倍率です。",
                                                 "multiplier", 1.0f, 5.0f,
                                                 a -> FlowingFluids.config.riverFloodCurrentPushMultiplier = a,
-                                                () -> FlowingFluids.config.riverFloodCurrentPushMultiplier)))
+                                                () -> FlowingFluids.config.riverFloodCurrentPushMultiplier))
+                                        .then(booleanCommand("warnings",
+                                                "雨の間、近くの川や海が海面より1ブロック以上高くなったらアクションバーで知らせます。",
+                                                "増水警報を有効にしました。",
+                                                "増水警報を無効にしました。",
+                                                a -> FlowingFluids.config.enableFloodWarnings = a,
+                                                () -> FlowingFluids.config.enableFloodWarnings))
+                                        .then(booleanCommand("sensor_depth_gauge",
+                                                "下向きに設置した水位センサーを水位計にします。下の水面までの距離（最大15ブロック）を 15 から引いた強さを出すので、川が上がるほど信号が強くなります。",
+                                                "水位センサーの水位計モードを有効にしました。",
+                                                "水位センサーの水位計モードを無効にしました。下向きでも正面1マスの水位を読みます。",
+                                                a -> FlowingFluids.config.waterLevelSensorDepthGauge = a,
+                                                () -> FlowingFluids.config.waterLevelSensorDepthGauge))
+                                        .then(booleanCommand("murky_water",
+                                                "雨の間、川と海の水を土砂で濁った茶色にします（見た目のみ）。雨の強さの段階が変わった時だけ描画を作り直します。",
+                                                "濁った洪水の見た目を有効にしました。",
+                                                "濁った洪水の見た目を無効にしました。",
+                                                a -> FlowingFluids.config.enableMurkyFloodWater = a,
+                                                () -> FlowingFluids.config.enableMurkyFloodWater))
+                                        .then(floatCommand("murky_strength",
+                                                "濁りの強さです。0で元の色、1で完全に土砂の色です。",
+                                                "strength", 0.0f, 1.0f,
+                                                a -> FlowingFluids.config.murkyFloodWaterStrength = a,
+                                                () -> FlowingFluids.config.murkyFloodWaterStrength))
+                                        .then(booleanCommand("erosion",
+                                                "速い流れが川底や川岸の土・砂・砂利・粘土を削り、流れが緩む下流へ泥・砂・砂利・粘土として堆積させます。土砂の量は保存されます。地形が変わるため既定はOFFです。海は対象外です。",
+                                                "浸食と堆積を有効にしました。増水した川ほど強く地形を削ります。",
+                                                "浸食と堆積を無効にしました。運搬中の土砂は保存されたまま止まります。",
+                                                a -> FlowingFluids.config.enableErosion = a,
+                                                () -> FlowingFluids.config.enableErosion))
+                                        .then(floatCommand("erosion_chance",
+                                                "削る強さです。流れの力が素材の限界の2倍のとき、ランダムtickごとにこの確率で1ブロック削ります。",
+                                                "chance", 0.0f, 1.0f,
+                                                a -> FlowingFluids.config.erosionChance = a,
+                                                () -> FlowingFluids.config.erosionChance))
+                                        .then(floatCommand("deposition_chance",
+                                                "流れの穏やかな水底に、運ばれてきた土砂が1ブロック積もる確率です（ランダムtickごと）。",
+                                                "chance", 0.0f, 1.0f,
+                                                a -> FlowingFluids.config.depositionChance = a,
+                                                () -> FlowingFluids.config.depositionChance)))
+                                .then(Commands.literal("seasons")
+                                        .executes(cont -> message(cont, describeSeasonClimate(cont.getSource().getLevel())))
+                                        .then(booleanCommand("enable",
+                                                "Serene Seasons が入っている場合、季節で干ばつ・蒸発・豪雨・雪解けを変えます。冬は凍結で蒸発と干ばつがほぼ止まり、春は雪解け水が増え、夏は乾燥と夕立、秋は長雨が増えます。",
+                                                "季節連携を有効にしました。",
+                                                "季節連携を無効にしました。",
+                                                a -> FlowingFluids.config.enableSeasonIntegration = a,
+                                                () -> FlowingFluids.config.enableSeasonIntegration))
+                                        .then(floatCommand("strength",
+                                                "季節の影響の強さです。0で季節の影響なし、1が標準、2で2倍の差になります。",
+                                                "strength", 0.0f, 3.0f,
+                                                a -> FlowingFluids.config.seasonStrength = a,
+                                                () -> FlowingFluids.config.seasonStrength))
+                                        .then(booleanCommand("spring_freshet",
+                                                "春先と春の中頃は、雨が降っていなくても雪解け水で川の水位上限を外して増水させます。",
+                                                "春の雪解け増水を有効にしました。",
+                                                "春の雪解け増水を無効にしました。",
+                                                a -> FlowingFluids.config.enableSpringFreshet = a,
+                                                () -> FlowingFluids.config.enableSpringFreshet)))
                                 .then(Commands.literal("runtime_status")
                                         .executes(FFCommands::rainRuntimeStatus))
                                 .then(Commands.literal("inspect_here")

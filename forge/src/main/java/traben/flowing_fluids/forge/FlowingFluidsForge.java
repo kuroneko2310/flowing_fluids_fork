@@ -174,7 +174,7 @@ public final class FlowingFluidsForge {
             return;
         }
         if (event.getItemStack().is(ForgeHydraulicBlockRegistry.WATER_LEVEL_SENSOR.get().asItem())) {
-            ff$appendTooltip(event, "tooltip.flowing_fluids.water_level_sensor.1", "tooltip.flowing_fluids.water_level_sensor.2");
+            ff$appendTooltip(event, "tooltip.flowing_fluids.water_level_sensor.1", "tooltip.flowing_fluids.water_level_sensor.2", "tooltip.flowing_fluids.water_level_sensor.3");
             return;
         }
         if (event.getItemStack().is(ForgeHydraulicBlockRegistry.RAIN_COLLECTOR.get().asItem())) {
@@ -207,8 +207,10 @@ public final class FlowingFluidsForge {
         }
     }
 
-    private static void ff$appendTooltip(ItemTooltipEvent event, String firstLineKey, String secondLineKey) {
+    private static void ff$appendTooltip(ItemTooltipEvent event, String firstLineKey, String... detailLineKeys) {
         event.getToolTip().add(Component.translatable(firstLineKey).withStyle(ChatFormatting.GRAY));
-        event.getToolTip().add(Component.translatable(secondLineKey).withStyle(ChatFormatting.DARK_GRAY));
+        for (String detailLineKey : detailLineKeys) {
+            event.getToolTip().add(Component.translatable(detailLineKey).withStyle(ChatFormatting.DARK_GRAY));
+        }
     }
 }

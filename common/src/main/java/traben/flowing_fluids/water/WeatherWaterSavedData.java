@@ -1,5 +1,7 @@
 package traben.flowing_fluids.water;
 
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
@@ -23,10 +25,15 @@ public final class WeatherWaterSavedData extends SavedData {
     private static final String UUID_KEY = "uuid";
     private static final String LENT_KEY = "lent";
     private static final String ANCHOR_KEY = "anchor";
+    private static final String SEDIMENT_KEY = "sediment";
+    private static final String CHUNK_KEY = "chunk";
+    private static final String COUNTS_KEY = "counts";
 
     private double droughtIndex;
     private long lastRainTick = Long.MIN_VALUE;
     private final Map<UUID, DisplacementLedger> ledgers = new HashMap<>();
+    /** Sediment carried by the water in each chunk, indexed by {@link ErosionMath} sediment type. */
+    private final Long2ObjectOpenHashMap<int[]> sediment = new Long2ObjectOpenHashMap<>();
 
     public static WeatherWaterSavedData get(ServerLevel level) {
         return level.getDataStorage().computeIfAbsent(WeatherWaterSavedData::load, WeatherWaterSavedData::new, DATA_NAME);
@@ -61,6 +68,29 @@ public final class WeatherWaterSavedData extends SavedData {
         return ledgers;
     }
 
+    /**
+     * Live sediment counts for a chunk, or {@code null} when it carries none; callers must {@link #setDirty()}.
+     */
+    int[] sediment(long chunkKey) {
+        return sediment.get(chunkKey);
+    }
+
+    int[] sedimentOrCreate(long chunkKey) {
+        return sediment.computeIfAbsent(chunkKey, ignored -> new int[ErosionMath.SEDIMENT_TYPES]);
+    }
+
+    void clearSedimentIfEmpty(long chunkKey) {
+        int[] counts = sediment.get(chunkKey);
+        if (counts != null) {
+            for (int count : counts) {
+                if (count > 0) {
+                    return;
+                }
+            }
+            sediment.remove(chunkKey);
+        }
+    }
+
     private static WeatherWaterSavedData load(CompoundTag tag) {
         WeatherWaterSavedData data = new WeatherWaterSavedData();
         double index = tag.getDouble(DROUGHT_INDEX_KEY);
@@ -80,6 +110,20 @@ public final class WeatherWaterSavedData extends SavedData {
             ledger.lent = Math.min(lent, EntityWaterDisplacement.MAX_LENT_LEVELS);
             ledger.anchor = entry.contains(ANCHOR_KEY) ? entry.getLong(ANCHOR_KEY) : Long.MIN_VALUE;
             data.ledgers.put(entry.getUUID(UUID_KEY), ledger);
+        }
+        ListTag sedimentEntries = tag.getList(SEDIMENT_KEY, Tag.TAG_COMPOUND);
+        for (int i = 0; i < sedimentEntries.size(); i++) {
+            CompoundTag entry = sedimentEntries.getCompound(i);
+            int[] stored = entry.getIntArray(COUNTS_KEY);
+            int[] counts = new int[ErosionMath.SEDIMENT_TYPES];
+            boolean any = false;
+            for (int type = 0; type < counts.length && type < stored.length; type++) {
+                counts[type] = Math.max(0, stored[type]);
+                any |= counts[type] > 0;
+            }
+            if (any) {
+                data.sediment.put(entry.getLong(CHUNK_KEY), counts);
+            }
         }
         return data;
     }
@@ -109,6 +153,14 @@ public final class WeatherWaterSavedData extends SavedData {
             entries.add(entryTag);
         }
         tag.put(LEDGERS_KEY, entries);
+        ListTag sedimentEntries = new ListTag();
+        for (Long2ObjectMap.Entry<int[]> entry : sediment.long2ObjectEntrySet()) {
+            CompoundTag entryTag = new CompoundTag();
+            entryTag.putLong(CHUNK_KEY, entry.getLongKey());
+            entryTag.putIntArray(COUNTS_KEY, entry.getValue().clone());
+            sedimentEntries.add(entryTag);
+        }
+        tag.put(SEDIMENT_KEY, sedimentEntries);
         return tag;
     }
 
