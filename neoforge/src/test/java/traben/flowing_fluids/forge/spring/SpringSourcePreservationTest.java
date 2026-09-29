@@ -67,7 +67,7 @@ class SpringSourcePreservationTest {
 
     @Test
     void springEmitterOnlyAddsFluid() throws IOException {
-        String source = Files.readString(springSourcePath("SpringFluidEmitter.java"));
+        String source = Files.readString(springSourcePath("SpringFluidEmitter.java")).replace("\r\n", "\n");
 
         assertFalse(source.contains("collectConnectedFluidAmount"),
                 "Spring emission must not collect or consume connected water.");
