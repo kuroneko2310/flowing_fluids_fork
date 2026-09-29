@@ -206,6 +206,14 @@ public class FFConfig {
     public float riverFloodCurrentPushMultiplier = 1.8f; // Extra current push in a river in spate
     public boolean enableFloodWarnings = true; // Action-bar warning when a nearby river or sea stands above sea level in rain
     public boolean waterLevelSensorDepthGauge = true; // A down-facing water level sensor acts as a flood gauge
+    public boolean enableGroundwater = true; // Rain recharges regional aquifers; holes dug below the water table fill by seepage
+    public int groundwaterCapacity = 8192; // Aquifer capacity per 64x64 region, in water levels
+    public float groundwaterInitialSaturation = 0.5f; // Fill level of a region's aquifer when it is first seen
+    public int groundwaterMinDepth = 2; // Water table depth below the reference surface when the aquifer is full
+    public int groundwaterMaxDepth = 20; // Water table depth below the reference surface when the aquifer is empty
+    public float groundwaterDrainPerDay = 0.05f; // Share of the aquifer lost per day to evapotranspiration (scaled by drought and season)
+    public float groundwaterRechargeEfficiency = 1.0f; // Share of soaked-in rain that reaches the aquifer
+    public int groundwaterSamplesPerTick = 8; // Columns checked per tick near players when looking for wells
     public boolean enableSeasonIntegration = true; // Use Serene Seasons (if installed) for drought, evaporation, downpours and snowmelt
     public float seasonStrength = 1.0f; // Scales how far seasons push those rates away from normal (0 = no seasonal effect)
     public boolean enableSpringFreshet = true; // Early/mid spring snowmelt lifts the river height cap like rain does
@@ -657,6 +665,14 @@ public class FFConfig {
         riverFloodCurrentPushMultiplier = buffer.readFloat();
         enableFloodWarnings = buffer.readBoolean();
         waterLevelSensorDepthGauge = buffer.readBoolean();
+        enableGroundwater = buffer.readBoolean();
+        groundwaterCapacity = buffer.readVarInt();
+        groundwaterInitialSaturation = buffer.readFloat();
+        groundwaterMinDepth = buffer.readVarInt();
+        groundwaterMaxDepth = buffer.readVarInt();
+        groundwaterDrainPerDay = buffer.readFloat();
+        groundwaterRechargeEfficiency = buffer.readFloat();
+        groundwaterSamplesPerTick = buffer.readVarInt();
         enableSeasonIntegration = buffer.readBoolean();
         seasonStrength = buffer.readFloat();
         enableSpringFreshet = buffer.readBoolean();
@@ -993,6 +1009,14 @@ public class FFConfig {
         buffer.writeFloat(riverFloodCurrentPushMultiplier);
         buffer.writeBoolean(enableFloodWarnings);
         buffer.writeBoolean(waterLevelSensorDepthGauge);
+        buffer.writeBoolean(enableGroundwater);
+        buffer.writeVarInt(groundwaterCapacity);
+        buffer.writeFloat(groundwaterInitialSaturation);
+        buffer.writeVarInt(groundwaterMinDepth);
+        buffer.writeVarInt(groundwaterMaxDepth);
+        buffer.writeFloat(groundwaterDrainPerDay);
+        buffer.writeFloat(groundwaterRechargeEfficiency);
+        buffer.writeVarInt(groundwaterSamplesPerTick);
         buffer.writeBoolean(enableSeasonIntegration);
         buffer.writeFloat(seasonStrength);
         buffer.writeBoolean(enableSpringFreshet);
@@ -1496,6 +1520,13 @@ public class FFConfig {
         naturalSiphonMaxTransferPerTick = Math.max(1, Math.min(8, naturalSiphonMaxTransferPerTick));
         naturalSiphonCooldownTicks = Math.max(1, Math.min(80, naturalSiphonCooldownTicks));
         riverFloodRecessionTicks = Math.max(0, Math.min(72000, riverFloodRecessionTicks));
+        groundwaterCapacity = Math.max(64, Math.min(1_000_000, groundwaterCapacity));
+        groundwaterInitialSaturation = Float.isFinite(groundwaterInitialSaturation) ? Math.max(0.0f, Math.min(1.0f, groundwaterInitialSaturation)) : 0.5f;
+        groundwaterMinDepth = Math.max(1, Math.min(64, groundwaterMinDepth));
+        groundwaterMaxDepth = Math.max(groundwaterMinDepth, Math.min(96, groundwaterMaxDepth));
+        groundwaterDrainPerDay = Float.isFinite(groundwaterDrainPerDay) ? Math.max(0.0f, Math.min(5.0f, groundwaterDrainPerDay)) : 0.05f;
+        groundwaterRechargeEfficiency = Float.isFinite(groundwaterRechargeEfficiency) ? Math.max(0.0f, Math.min(4.0f, groundwaterRechargeEfficiency)) : 1.0f;
+        groundwaterSamplesPerTick = Math.max(0, Math.min(128, groundwaterSamplesPerTick));
         seasonStrength = Float.isFinite(seasonStrength) ? Math.max(0.0f, Math.min(3.0f, seasonStrength)) : 1.0f;
         erosionChance = Float.isFinite(erosionChance) ? Math.max(0.0f, Math.min(1.0f, erosionChance)) : 0.25f;
         depositionChance = Float.isFinite(depositionChance) ? Math.max(0.0f, Math.min(1.0f, depositionChance)) : 0.2f;

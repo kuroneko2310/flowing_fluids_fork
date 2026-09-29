@@ -155,7 +155,7 @@ public class WallSpringBlock extends Block implements SimpleWaterloggedBlock {
             emitted += LavaSpringActivity.burstEmission(level, pos, outputPos, outputDirection, strength, random);
             emitted += NetherLavaEventSystem.getSpringEmissionBonus(level, pos, outputDirection, sourceFluid);
         }
-        emitted = SpringColumnPulseController.scaleEmission(sourceFluid, emitted);
+        emitted = SpringColumnPulseController.scaleEmission(level, pos, sourceFluid, emitted);
         int remainder = SpringFluidEmitter.emitFluid(level, outputPos, emitted, sourceFluid, outputDirection);
         int nextDelay = remainder < emitted
                 ? baseDelay

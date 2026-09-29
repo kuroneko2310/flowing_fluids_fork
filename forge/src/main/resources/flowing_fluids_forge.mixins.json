@@ -14,6 +14,7 @@
     "create.MixinBasinBlockEntity",
     "create.MixinBasinRecipe",
     "create.MixinCombinedTankWrapper",
+    "create.MixinContraptionPlacement",
     "create.FluidDrainingBehaviourAccessor",
     "create.FluidManipulationBehaviourAccessor",
     "create.MixinGenericItemEmptying_HandlesItemDrain",

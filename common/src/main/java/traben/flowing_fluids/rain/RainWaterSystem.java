@@ -364,6 +364,11 @@ public final class RainWaterSystem {
             if (!raisedFromPuddle && context.absorbedWetness() > 0.0f) {
                 WETNESS_CACHE.addWetness(level.dimension(), context.groundPos(), context.absorbedWetness(), currentTime);
             }
+            if (!raisedFromPuddle && context.candidateAmount() > context.effectiveAmount()) {
+                // The part of the rain the ground soaked up recharges the aquifer instead of vanishing.
+                traben.flowing_fluids.water.GroundwaterSystem.recharge(level, context.groundPos(),
+                        context.candidateAmount() - context.effectiveAmount());
+            }
 
             if (context.effectiveAmount() <= 0) {
                 continue;

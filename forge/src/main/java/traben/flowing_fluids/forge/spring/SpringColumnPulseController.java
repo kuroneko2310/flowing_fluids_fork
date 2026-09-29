@@ -66,7 +66,7 @@ final class SpringColumnPulseController {
                 emitted += LavaSpringActivity.burstEmission(level, springPos, tipPos, growthDirection, strength, level.random);
                 emitted += NetherLavaEventSystem.getSpringEmissionBonus(level, springPos, growthDirection, fluid);
             }
-            emitted = scaleEmission(fluid, emitted);
+            emitted = scaleEmission(level, springPos, fluid, emitted);
 
             int remainder = SpringFluidEmitter.emitFluid(level, tipPos, emitted, fluid, growthDirection);
             if (remainder < emitted) {
@@ -243,6 +243,18 @@ final class SpringColumnPulseController {
             return Mth.clamp(Math.round(interval * traben.flowing_fluids.FlowingFluids.config.lavaSpringPulseIntervalMultiplier), 8, 256);
         }
         return Mth.clamp(24 + strength.minimumDelay() * 3 + Math.floorMod((int) (seed >>> 8), 24), 24, 160);
+    }
+
+    /**
+     * Configured scaling plus, for water, the regional aquifer: springs run weak in a drought and strong after rain.
+     */
+    static int scaleEmission(ServerLevel level, BlockPos springPos, FlowingFluid fluid, int emitted) {
+        int scaled = scaleEmission(fluid, emitted);
+        if (scaled <= 0 || !fluid.isSame(Fluids.WATER)) {
+            return scaled;
+        }
+        double multiplier = traben.flowing_fluids.water.GroundwaterSystem.springEmissionMultiplier(level, springPos);
+        return Mth.clamp((int) Math.round(scaled * multiplier), 1, 64);
     }
 
     static int scaleEmission(FlowingFluid fluid, int emitted) {

@@ -201,37 +201,43 @@ public final class SnowmeltWaterSystem {
     }
 
     private static void meltIce(ServerLevel level, BlockPos pos) {
+        // Remove the ice first: placing meltwater next to ice that stays behind would let one block melt forever.
+        level.removeBlock(pos, false);
         if (FlowingFluids.config.snowmeltPlacesWater) {
-            if (!placeMeltWater(level, pos, Math.max(1, FlowingFluids.config.snowmeltWaterAmount))) {
-                level.removeBlock(pos, false);
-            }
-        } else {
-            level.removeBlock(pos, false);
+            placeMeltWater(level, pos, Math.max(1, FlowingFluids.config.snowmeltWaterAmount));
         }
     }
 
+    /**
+     * Adds meltwater at the melt position, below it or beside it. Existing water is topped up rather than overwritten
+     * (the old write replaced a fuller cell with the melt amount and deleted water). Meltwater with nowhere to go
+     * soaks into the ground and recharges groundwater.
+     */
     private static boolean placeMeltWater(ServerLevel level, BlockPos pos, int amount) {
-        int clampedAmount = Mth.clamp(amount, 1, 8);
-        if (!FFFluidUtils.setFluidStateAtPosToNewAmount(level, pos, Fluids.WATER, clampedAmount)) {
-            BlockPos below = pos.below();
-            if (!FFFluidUtils.setFluidStateAtPosToNewAmount(level, below, Fluids.WATER, clampedAmount)) {
-                for (Direction dir : Direction.Plane.HORIZONTAL) {
-                    BlockPos side = pos.relative(dir);
-                    if (FFFluidUtils.setFluidStateAtPosToNewAmount(level, side, Fluids.WATER, clampedAmount)) {
-                        AdaptiveTickScheduler.scheduleFluidTick(level, side, Fluids.WATER, 1);
-                        AdaptiveTickScheduler.markFlowActive(level, side, 8);
-                        return true;
-                    }
-                }
-                return false;
-            }
-            AdaptiveTickScheduler.scheduleFluidTick(level, below, Fluids.WATER, 1);
-            AdaptiveTickScheduler.markFlowActive(level, below, 8);
-            return true;
+        int remaining = Mth.clamp(amount, 1, 8);
+        remaining = addMeltAt(level, pos, remaining);
+        if (remaining > 0) {
+            remaining = addMeltAt(level, pos.below(), remaining);
         }
-        AdaptiveTickScheduler.scheduleFluidTick(level, pos, Fluids.WATER, 1);
-        AdaptiveTickScheduler.markFlowActive(level, pos, 8);
-        return true;
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            if (remaining <= 0) {
+                break;
+            }
+            remaining = addMeltAt(level, pos.relative(dir), remaining);
+        }
+        if (remaining > 0) {
+            traben.flowing_fluids.water.GroundwaterSystem.recharge(level, pos, remaining);
+        }
+        return remaining < Mth.clamp(amount, 1, 8);
+    }
+
+    private static int addMeltAt(ServerLevel level, BlockPos target, int amount) {
+        int remainder = FFFluidUtils.addAmountToFluidAtPosWithRemainder(level, target, Fluids.WATER, amount);
+        if (remainder < amount) {
+            AdaptiveTickScheduler.scheduleFluidTick(level, target, Fluids.WATER, 1);
+            AdaptiveTickScheduler.markFlowActive(level, target, 8);
+        }
+        return remainder;
     }
 
     private static MeltTarget classifyTarget(BlockState state) {

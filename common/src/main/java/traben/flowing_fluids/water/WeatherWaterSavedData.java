@@ -28,12 +28,19 @@ public final class WeatherWaterSavedData extends SavedData {
     private static final String SEDIMENT_KEY = "sediment";
     private static final String CHUNK_KEY = "chunk";
     private static final String COUNTS_KEY = "counts";
+    private static final String GROUNDWATER_KEY = "groundwater";
+    private static final String REGION_KEY = "region";
+    private static final String STORED_KEY = "stored";
+    private static final String SURFACE_KEY = "surface";
+    private static final String UPDATED_KEY = "updated";
 
     private double droughtIndex;
     private long lastRainTick = Long.MIN_VALUE;
     private final Map<UUID, DisplacementLedger> ledgers = new HashMap<>();
     /** Sediment carried by the water in each chunk, indexed by {@link ErosionMath} sediment type. */
     private final Long2ObjectOpenHashMap<int[]> sediment = new Long2ObjectOpenHashMap<>();
+    /** Groundwater aquifers per 64x64 region. */
+    private final Long2ObjectOpenHashMap<AquiferRegion> aquifers = new Long2ObjectOpenHashMap<>();
 
     public static WeatherWaterSavedData get(ServerLevel level) {
         return level.getDataStorage().computeIfAbsent(WeatherWaterSavedData::load, WeatherWaterSavedData::new, DATA_NAME);
@@ -91,6 +98,13 @@ public final class WeatherWaterSavedData extends SavedData {
         }
     }
 
+    /**
+     * Live aquifer map; callers must {@link #setDirty()} after changing it.
+     */
+    Long2ObjectOpenHashMap<AquiferRegion> aquifers() {
+        return aquifers;
+    }
+
     private static WeatherWaterSavedData load(CompoundTag tag) {
         WeatherWaterSavedData data = new WeatherWaterSavedData();
         double index = tag.getDouble(DROUGHT_INDEX_KEY);
@@ -124,6 +138,15 @@ public final class WeatherWaterSavedData extends SavedData {
             if (any) {
                 data.sediment.put(entry.getLong(CHUNK_KEY), counts);
             }
+        }
+        ListTag aquiferEntries = tag.getList(GROUNDWATER_KEY, Tag.TAG_COMPOUND);
+        for (int i = 0; i < aquiferEntries.size(); i++) {
+            CompoundTag entry = aquiferEntries.getCompound(i);
+            AquiferRegion region = new AquiferRegion();
+            region.stored = Math.max(0, entry.getInt(STORED_KEY));
+            region.referenceSurfaceY = entry.getInt(SURFACE_KEY);
+            region.lastUpdateTick = entry.getLong(UPDATED_KEY);
+            data.aquifers.put(entry.getLong(REGION_KEY), region);
         }
         return data;
     }
@@ -161,7 +184,23 @@ public final class WeatherWaterSavedData extends SavedData {
             sedimentEntries.add(entryTag);
         }
         tag.put(SEDIMENT_KEY, sedimentEntries);
+        ListTag aquiferEntries = new ListTag();
+        for (Long2ObjectMap.Entry<AquiferRegion> entry : aquifers.long2ObjectEntrySet()) {
+            CompoundTag entryTag = new CompoundTag();
+            entryTag.putLong(REGION_KEY, entry.getLongKey());
+            entryTag.putInt(STORED_KEY, entry.getValue().stored);
+            entryTag.putInt(SURFACE_KEY, entry.getValue().referenceSurfaceY);
+            entryTag.putLong(UPDATED_KEY, entry.getValue().lastUpdateTick);
+            aquiferEntries.add(entryTag);
+        }
+        tag.put(GROUNDWATER_KEY, aquiferEntries);
         return tag;
+    }
+
+    static final class AquiferRegion {
+        int stored;
+        int referenceSurfaceY;
+        long lastUpdateTick;
     }
 
     static final class DisplacementLedger {
