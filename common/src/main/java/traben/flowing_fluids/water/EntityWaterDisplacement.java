@@ -1,7 +1,6 @@
 package traben.flowing_fluids.water;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.FluidTags;
@@ -13,14 +12,13 @@ import net.minecraft.world.phys.AABB;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.water.WeatherWaterSavedData.DisplacementLedger;
 
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Archimedes-style displacement for players standing or swimming in finite water.
@@ -52,17 +50,15 @@ public final class EntityWaterDisplacement {
     static final int MAX_LENT_LEVELS = 16;
     private static final int SURFACE_SCAN_LIMIT = 24;
     private static final int PLACEMENT_SEARCH_DEPTH = 48;
-    private static final int REPAY_SEARCH_DEPTH = 64;
-
-    private static final ConcurrentHashMap<ResourceKey<Level>, Map<UUID, Ledger>> LEDGERS = new ConcurrentHashMap<>();
 
     private EntityWaterDisplacement() {
     }
 
     public static void onLevelTick(ServerLevel level) {
-        Map<UUID, Ledger> ledgers = LEDGERS.get(level.dimension());
         boolean active = isActive(level);
-        if (!active && (ledgers == null || ledgers.isEmpty())) {
+        WeatherWaterSavedData saved = WeatherWaterSavedData.get(level);
+        Map<UUID, DisplacementLedger> ledgers = saved.ledgers();
+        if (!active && ledgers.isEmpty()) {
             return;
         }
 
@@ -73,7 +69,7 @@ public final class EntityWaterDisplacement {
                 continue;
             }
 
-            Ledger ledger = ledgers == null ? null : ledgers.get(id);
+            DisplacementLedger ledger = ledgers.get(id);
             double exactLevels = active && player.isAlive() && !player.isSpectator()
                     ? submergedLevels(level, player.getBoundingBox()) * FlowingFluids.config.entityWaterDisplacementScale
                     : 0.0;
@@ -90,10 +86,10 @@ public final class EntityWaterDisplacement {
             }
 
             if (ledger == null) {
-                ledgers = LEDGERS.computeIfAbsent(level.dimension(), ignored -> new HashMap<>());
-                ledger = new Ledger();
+                ledger = new DisplacementLedger();
                 ledgers.put(id, ledger);
             }
+            int before = ledger.lent;
             BlockPos surface = findWaterSurface(level, player.getBoundingBox());
             if (step > 0) {
                 if (surface != null) {
@@ -106,16 +102,14 @@ public final class EntityWaterDisplacement {
             if (ledger.lent <= 0) {
                 ledgers.remove(id);
             }
+            if (ledger.lent != before) {
+                saved.setDirty();
+            }
         }
 
-        if (ledgers != null && !ledgers.isEmpty() && Math.floorMod(now, UPDATE_INTERVAL_TICKS) == 0) {
-            repayAbsentPlayers(level, ledgers);
-        }
-    }
-
-    public static void clearDimension(Level level) {
-        if (level != null) {
-            LEDGERS.remove(level.dimension());
+        if (!ledgers.isEmpty() && Math.floorMod(now, UPDATE_INTERVAL_TICKS) == 0
+                && repayAbsentPlayers(level, ledgers)) {
+            saved.setDirty();
         }
     }
 
@@ -129,23 +123,30 @@ public final class EntityWaterDisplacement {
     /**
      * Players who logged out, died and respawned elsewhere or changed dimension still owe their lent water here.
      */
-    private static void repayAbsentPlayers(ServerLevel level, Map<UUID, Ledger> ledgers) {
+    private static boolean repayAbsentPlayers(ServerLevel level, Map<UUID, DisplacementLedger> ledgers) {
+        boolean changed = false;
         Set<UUID> present = new HashSet<>();
         for (ServerPlayer player : level.players()) {
             present.add(player.getUUID());
         }
-        Iterator<Map.Entry<UUID, Ledger>> iterator = ledgers.entrySet().iterator();
+        Iterator<Map.Entry<UUID, DisplacementLedger>> iterator = ledgers.entrySet().iterator();
         while (iterator.hasNext()) {
-            Map.Entry<UUID, Ledger> entry = iterator.next();
+            Map.Entry<UUID, DisplacementLedger> entry = iterator.next();
             if (present.contains(entry.getKey())) {
                 continue;
             }
-            Ledger ledger = entry.getValue();
-            ledger.lent -= repay(level, null, ledger, Math.min(ledger.lent, MAX_LEVEL_STEP_PER_UPDATE * 2));
+            DisplacementLedger ledger = entry.getValue();
+            int repaid = repay(level, null, ledger, Math.min(ledger.lent, MAX_LEVEL_STEP_PER_UPDATE * 2));
+            if (repaid > 0) {
+                ledger.lent -= repaid;
+                changed = true;
+            }
             if (ledger.lent <= 0) {
                 iterator.remove();
+                changed = true;
             }
         }
+        return changed;
     }
 
     private static int lend(ServerLevel level, BlockPos surface, int amount) {
@@ -160,7 +161,7 @@ public final class EntityWaterDisplacement {
         return 0;
     }
 
-    private static int repay(ServerLevel level, BlockPos surface, Ledger ledger, int amount) {
+    private static int repay(ServerLevel level, BlockPos surface, DisplacementLedger ledger, int amount) {
         if (amount <= 0) {
             return 0;
         }
@@ -284,8 +285,4 @@ public final class EntityWaterDisplacement {
         return Mth.clamp(target - current, -maxStep, maxStep);
     }
 
-    private static final class Ledger {
-        private int lent;
-        private long anchor = Long.MIN_VALUE;
-    }
 }

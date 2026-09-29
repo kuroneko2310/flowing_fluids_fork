@@ -22,6 +22,7 @@ import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.water.RiverFloodStage;
+import traben.flowing_fluids.water.WeatherWaterSavedData;
 
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,6 +49,10 @@ public final class DryingEventSystem {
 
         DryingState state = ACTIVE_STATES.computeIfAbsent(level.dimension(), key -> new DryingState(nextDailyRollTick(level.getGameTime())));
         long now = level.getGameTime();
+        if (!state.droughtLoaded) {
+            state.droughtIndex = WeatherWaterSavedData.get(level).droughtIndex();
+            state.droughtLoaded = true;
+        }
         updateDroughtIndex(level, state, now);
         if (!state.hasActiveClimate(now) && now < state.nextDailyRollTick) {
             return;
@@ -85,7 +90,10 @@ public final class DryingEventSystem {
 
     private static void updateDroughtIndex(ServerLevel level, DryingState state, long now) {
         if (!FlowingFluids.config.enableDroughtIndex) {
-            state.droughtIndex = 0.0;
+            if (state.droughtIndex != 0.0) {
+                state.droughtIndex = 0.0;
+                WeatherWaterSavedData.get(level).setDroughtIndex(0.0);
+            }
             state.lastDroughtUpdateTick = now;
             return;
         }
@@ -115,6 +123,7 @@ public final class DryingEventSystem {
         }
         double rainRate = Math.max(0.0f, FlowingFluids.config.droughtRainRecoveryPerDay) * (level.isThundering() ? 2.0 : 1.0);
         state.droughtIndex = DroughtMath.step(state.droughtIndex, elapsed, dryRate, rainRate, level.isRaining());
+        WeatherWaterSavedData.get(level).setDroughtIndex(state.droughtIndex);
     }
 
     /**
@@ -131,7 +140,9 @@ public final class DryingEventSystem {
     public static void setDroughtIndex(ServerLevel level, double index) {
         DryingState state = ACTIVE_STATES.computeIfAbsent(level.dimension(), key -> new DryingState(nextDailyRollTick(level.getGameTime())));
         state.droughtIndex = DroughtMath.clamp01(index);
+        state.droughtLoaded = true;
         state.lastDroughtUpdateTick = level.getGameTime();
+        WeatherWaterSavedData.get(level).setDroughtIndex(state.droughtIndex);
     }
 
     /**
@@ -607,6 +618,7 @@ public final class DryingEventSystem {
         private long heatwaveEndTick;
         private long drySeasonEndTick;
         private double droughtIndex;
+        private boolean droughtLoaded;
         private long lastDroughtUpdateTick = Long.MIN_VALUE;
 
         private DryingState(long nextDailyRollTick) {

@@ -46,6 +46,14 @@ public final class SiphonFlowSystem {
     private static final ConcurrentHashMap<ResourceKey<Level>, SiphonDimensionQueue> SIPHON_QUEUES = new ConcurrentHashMap<>();
     private static final ThreadLocal<SiphonSearchWorkspace> SEARCH_WORKSPACE =
             ThreadLocal.withInitial(SiphonSearchWorkspace::new);
+    /**
+     * Tube cells of siphons that moved water recently, mapped to the tick their hold expires. A running siphon's tube
+     * is held full (atmospheric pressure in reality); without this, ordinary gravity flow empties the crest between
+     * siphon runs and the siphon breaks itself. When the siphon stops (the source drops below the inlet, the outlet
+     * backs up) the hold simply expires and the tube drains, which is exactly how a real siphon loses its prime.
+     */
+    private static final ConcurrentHashMap<ResourceKey<Level>, ConcurrentHashMap<Long, Long>> PRIMED_TUBES = new ConcurrentHashMap<>();
+    private static final int MIN_PRIMED_HOLD_TICKS = 40;
 
     private SiphonFlowSystem() {
     }
@@ -56,6 +64,44 @@ public final class SiphonFlowSystem {
         }
         SIPHON_QUEUES.remove(level.dimension());
         COOLDOWNS.remove(level.dimension());
+        PRIMED_TUBES.remove(level.dimension());
+    }
+
+    /**
+     * @return ticks until the hold on this primed tube cell expires, or 0 when the cell is not held
+     */
+    public static int getPrimedTubeHoldTicks(Level level, BlockPos pos) {
+        ConcurrentHashMap<Long, Long> tubes = PRIMED_TUBES.get(level.dimension());
+        if (tubes == null || tubes.isEmpty()) {
+            return 0;
+        }
+        long key = pos.asLong();
+        Long expiry = tubes.get(key);
+        if (expiry == null) {
+            return 0;
+        }
+        long remaining = expiry - level.getGameTime();
+        if (remaining <= 0) {
+            tubes.remove(key, expiry);
+            return 0;
+        }
+        return (int) Math.min(Integer.MAX_VALUE, remaining);
+    }
+
+    private static void primeTube(ServerLevel level, BlockPos sourcePos, LongOpenHashSet pathCells) {
+        if (pathCells == null || pathCells.isEmpty()) {
+            return;
+        }
+        long expiry = level.getGameTime()
+                + Math.max(MIN_PRIMED_HOLD_TICKS, Math.max(1, FlowingFluids.config.naturalSiphonCooldownTicks) * 3L);
+        ConcurrentHashMap<Long, Long> tubes = PRIMED_TUBES.computeIfAbsent(level.dimension(), ignored -> new ConcurrentHashMap<>());
+        long sourceKey = sourcePos.asLong();
+        for (long key : pathCells) {
+            // The inlet keeps ticking normally: its tick is what drives the siphon.
+            if (key != sourceKey) {
+                tubes.put(key, expiry);
+            }
+        }
     }
 
     public static void clearAll() {
@@ -121,6 +167,10 @@ public final class SiphonFlowSystem {
                     SIPHON_QUEUES.remove(level.dimension(), queue);
                 }
             }
+        }
+        ConcurrentHashMap<Long, Long> tubes = PRIMED_TUBES.get(level.dimension());
+        if (tubes != null) {
+            tubes.keySet().removeIf(key -> (BlockPos.getX(key) >> 4) == chunkPos.x && (BlockPos.getZ(key) >> 4) == chunkPos.z);
         }
         CooldownState cooldownState = COOLDOWNS.get(level.dimension());
         if (cooldownState != null) {
@@ -825,6 +875,7 @@ public final class SiphonFlowSystem {
         }
         AdaptiveTickScheduler.scheduleFluidTick(level, sourcePos, Fluids.WATER, 1);
         AdaptiveTickScheduler.scheduleFluidTick(level, result.outletPos(), Fluids.WATER, 1);
+        primeTube(level, sourcePos, result.pathCells());
         changed.add(result.outletPos());
         FluidActivityTracker.recordChanges(level, changed);
         return true;
