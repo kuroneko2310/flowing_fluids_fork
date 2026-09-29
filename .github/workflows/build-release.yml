@@ -35,6 +35,33 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
+      # gradle.properties pins a Windows JDK path for local builds; the user-home
+      # gradle.properties takes precedence, so point Gradle at the runner's JDK there.
+      - name: Use the runner JDK for Gradle
+        run: |
+          mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
+          echo "org.gradle.java.home=$JAVA_HOME" >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+
+      # forge/build.gradle compiles the Embeddium and ItemPhysic compat against jars in
+      # ../../../mods (the maintainer's local mods folder); fetch the same jars for CI.
+      - name: Fetch compile-only compat jars
+        run: |
+          MODS_DIR="$GITHUB_WORKSPACE/../../../mods"
+          mkdir -p "$MODS_DIR"
+          fetch() {
+            curl -sSfL "$2" -o "$MODS_DIR/$1"
+            echo "$3  $MODS_DIR/$1" | sha512sum -c -
+          }
+          fetch "embeddium-0.3.31+mc1.20.1.jar" \
+            "https://cdn.modrinth.com/data/sk9rgfiA/versions/UTbfe5d1/embeddium-0.3.31%2Bmc1.20.1.jar" \
+            ffbf2da4685260a4d5c14c621708bd20722563f084f042d3dfb0a7b87f048e39299648c854a93939129da0d23a15a91ec628560d601e76074b08e275f6e132e9
+          fetch "ItemPhysic_FORGE_v1.8.17_mc1.20.1.jar" \
+            "https://cdn.modrinth.com/data/aT8BzaOj/versions/W23Z3V3z/ItemPhysic_FORGE_v1.8.17_mc1.20.1.jar" \
+            171dfb8c0f4afb0e944ff2d4c0fd7384da4c1c5ea599b5f644a8c13a0884dec3f4186ad7b21298089d954304df5b684f20ed55328968c424678fff811f4b7500
+          fetch "CreativeCore_FORGE_v2.12.40_mc1.20.1.jar" \
+            "https://cdn.modrinth.com/data/OsZiaDHq/versions/ChKayKur/CreativeCore_FORGE_v2.12.40_mc1.20.1.jar" \
+            c883749ebe3825694c9d7aad6f406ca6c30de70ca7621cbafb7ebbfaa54766db065b5abd66f42827abca19b25983b2884c425934f6d04d629dc9fa731fe9aa0c
+
       - name: Build
         run: ./gradlew build -Dorg.gradle.java.home="$JAVA_HOME"
 
@@ -81,3 +108,35 @@ jobs:
           loaders: forge
           game-versions: 1.20.1
           java: Java 17
+
+  build-neoforge:
+    name: Build NeoForge mod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./neoforge/gradlew
+
+      - name: Build
+        working-directory: neoforge
+        run: ./gradlew build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: neoforge-mod-jar
+          path: |
+            neoforge/build/libs/*.jar
+            !neoforge/build/libs/*-sources.jar
