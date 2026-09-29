@@ -46,7 +46,13 @@ public final class CreateBasinExternalFluidCompat {
             return;
         }
 
-        final int levels = milliBucketsToLevels(milliBuckets);
+        // Recipes consume amounts like 100 or 250 mB that are not whole 125 mB levels. Always rounding down made every
+        // such craft leak water; round the leftover fraction up with matching probability so volume is kept on average.
+        int levels = milliBucketsToLevels(milliBuckets);
+        final int leftover = milliBuckets - levels * FLUID_LEVEL_MILLIBUCKETS;
+        if (levels < 8 && leftover > 0 && basin.getLevel().getRandom().nextInt(FLUID_LEVEL_MILLIBUCKETS) < leftover) {
+            levels++;
+        }
         FFFluidUtils.setFluidStateAtPosToNewAmount(
                 basin.getLevel(),
                 basin.getBlockPos(),

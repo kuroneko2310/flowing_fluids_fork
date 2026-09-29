@@ -13,6 +13,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
 import traben.flowing_fluids.FFFluidUtils;
+import traben.flowing_fluids.water.FluidFlowActivityTracker;
 
 @Mixin(Level.class)
 public abstract class MixinLevel {
@@ -38,6 +39,8 @@ public abstract class MixinLevel {
                                                final BlockState old, final int oldLight,
                                                final int oldOpacity, final BlockState blockstate) {
     #endif
+        // Real fluid motion for flow watchers (Create water wheels); a no-op while nothing is watched.
+        FluidFlowActivityTracker.onBlockChanged((Level) (Object) this, pos, old, state);
         // Skip server-side placement/generation writes that intentionally avoid neighbor updates.
         if ((flags & Block.UPDATE_NEIGHBORS) == 0) {
             return;

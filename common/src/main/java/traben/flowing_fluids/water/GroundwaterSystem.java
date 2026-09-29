@@ -211,6 +211,23 @@ public final class GroundwaterSystem {
                 Math.max(1, FlowingFluids.config.groundwaterCapacity)));
     }
 
+    /**
+     * Saturation (0..1) of the aquifer under {@code pos}, or -1 when groundwater is disabled here.
+     */
+    public static double getSaturation(ServerLevel level, BlockPos pos) {
+        if (!isEnabled(level)) {
+            return -1.0;
+        }
+        AquiferRegion region = region(level, WeatherWaterSavedData.get(level), pos.getX(), pos.getZ());
+        return GroundwaterMath.saturation(region.stored, Math.max(1, FlowingFluids.config.groundwaterCapacity));
+    }
+
+    /** Current water table height under {@code pos}; only meaningful while {@link #getSaturation} is non-negative. */
+    public static int getWaterTableY(ServerLevel level, BlockPos pos) {
+        AquiferRegion region = region(level, WeatherWaterSavedData.get(level), pos.getX(), pos.getZ());
+        return tableY(level, region);
+    }
+
     public static void setSaturation(ServerLevel level, BlockPos pos, double saturation) {
         WeatherWaterSavedData saved = WeatherWaterSavedData.get(level);
         AquiferRegion region = region(level, saved, pos.getX(), pos.getZ());

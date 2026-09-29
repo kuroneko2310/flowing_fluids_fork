@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "flowing_fluids:block/steam_condenser" }
+  }
+}

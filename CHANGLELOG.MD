@@ -1,3 +1,18 @@
+1.0.7
+- Create: Aeronautics（Sable）と同時に入れると起動時にクラッシュしていた問題を修正（上流 1.0.6 の修正を移植。Sable が書き換える水流押し出し処理への注入を任意にした）
+- 昆布が水位の足りない水にも伸びて満水の水源を作り、水が無限に増えていた問題を修正（満水のマスにだけ伸びる。上流からの移植）
+- 部分的に入ったバケツで大釜を満杯にでき、満杯のバケツを汲み直して水が増えていた問題を修正（部分バケツは大釜に入れられない。上流からの移植）
+- Create の水車（flow 系モード）は、最近実際に水位が変わったマスだけを流れとして数えるようにした。水位差1で静止した水たまりで水車が永久に回っていた問題を修正（`create_mod_compat water_wheel_flow_window`）。落下する水柱は下向きの流れとして扱い、プレイヤーから遠く流体が止まっている場所では最後の判定を保つ
+- Create の水車の回転数が、水車を通る実際の流量で変わるようにした。普通の流れで1倍、強い流れで最大2倍（発電量も比例）、細い流れで0.5倍（`create_mod_compat water_wheel_max_speed_multiplier`、1.0 で従来の固定速度）
+- Create のパイプの口が部分的に水の入ったマスへ排水すると、満水の水源で上書きして元の水を消していた問題を修正。8レベルをつながった水へ流し込み、入り切らない時はパイプが詰まる
+- Create のからくりが浅い水の上で分解すると、水没可能ブロックが満水扱いになって水が増えていた問題を修正（満水のマスでだけ水没し、それ以外は水を押しのける）
+- Create のベイスンで 100mB・250mB などを使うレシピの後、残った水を常に切り捨てて水が減っていた問題を修正（偏りのない確率的丸め）
+- Create の扇風機の一括洗浄が、処理1回ごとに一定確率で風路の水を1レベル消費するようにした（`create_mod_compat fan_washing_water_use_chance`、既定 25%）
+- 復水器（steam_condenser）を追加。Create の蒸気ボイラーの上に置くと、ボイラーが沸かした水の一部（既定 50%）を内部タンク（4000mB）に水として戻す。ポンプで汲み出してボイラーへ戻せば有限の水でも蒸気機関を回し続けられる（`create_mod_compat condenser_recovery`）
+- Create のディスプレイリンクに対応。雨水収集器から雨の強さ・干ばつ指数・地下水、水位センサーから水位や水面までの距離、復水器から復水の量を表示ボードに出せる
+- 遊び方プリセットを追加（`settings playstyle create_industrial|realistic_cycle|lightweight_server|relaxed`）。関連する設定だけをまとめて切り替える（上流のプリセット機能をこのフォーク向けに作り直したもの）
+- ブロックを水や溶岩の中に置いて押しのけた時のバケツ音を追加（`behaviour displacement_sounds`。上流の押しのけ音設定の移植）
+
 
 1.0.6
 - added adaptive draining and reporting for fluid tick backlogs so chunk initialization, frontier rebuilds, wake queues, and buffered changes clear faster when the server has room instead of piling into delayed lag

@@ -35,6 +35,7 @@
     "flowing_fluids:flow_anchor_brook",
     "flowing_fluids:flow_anchor_channel",
     "flowing_fluids:flow_anchor_wellspring",
-    "flowing_fluids:flow_anchor_lakeheart"
+    "flowing_fluids:flow_anchor_lakeheart",
+    "flowing_fluids:steam_condenser"
   ]
 }

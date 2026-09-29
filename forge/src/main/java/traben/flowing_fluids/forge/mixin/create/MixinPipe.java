@@ -31,6 +31,8 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
+import com.simibubi.create.infrastructure.config.AllConfigs;
+import net.minecraft.tags.FluidTags;
 
 @Pseudo
 @Mixin(OpenEndedPipe.class)
@@ -68,6 +70,46 @@ public abstract class MixinPipe{
             apply.run();
         }
         cir.setReturnValue(new FluidStack(Fluids.WATER, 1000));
+    }
+
+    /**
+     * Create pours a full bucket's worth into the output cell by replacing it with a source, even when that cell already
+     * holds a few levels of the same fluid, so everything the cell already held above the pipe's 8 levels was lost. Pour
+     * the 8 levels into the connected pool instead, and refuse (the pipe backs up) when there is no room for all of them.
+     */
+    @Inject(method = "provideFluidToSpace", at = @At("HEAD"), cancellable = true, remap = false)
+    private void ff$pourIntoPartialOutput(final FluidStack fluid, final boolean simulate, final CallbackInfoReturnable<Boolean> cir) {
+        if (world == null
+                || world.isClientSide()
+                || fluid.isEmpty()
+                || !FlowingFluids.config.enableMod
+                || !(fluid.getFluid() instanceof FlowingFluid flowing)
+                || !FlowingFluids.config.isFluidAllowed(flowing)
+                || !world.isLoaded(outputPos)) {
+            return;
+        }
+        BlockState state = world.getBlockState(outputPos);
+        FluidState fluidState = state.getFluidState();
+        if (!state.liquid()
+                || fluidState.isEmpty()
+                || fluidState.getAmount() >= 8
+                || !fluidState.getType().isSame(flowing)) {
+            return;
+        }
+        if (!AllConfigs.server().fluids.pipesPlaceFluidSourceBlocks.get()
+                || (world.dimensionType().ultraWarm() && flowing.is(FluidTags.WATER))) {
+            // Create voids or evaporates the fluid in these cases; keep its behaviour
+            return;
+        }
+        var placement = FFFluidUtils.placeConnectedFluidAmountAndPlaceAction(world, outputPos, 8, flowing, 40, true, true, true);
+        if (placement.first() > 0) {
+            cir.setReturnValue(false);
+            return;
+        }
+        if (!simulate) {
+            placement.second().run();
+        }
+        cir.setReturnValue(true);
     }
 
     @ModifyArg(method = "removeFluidFromSpace",

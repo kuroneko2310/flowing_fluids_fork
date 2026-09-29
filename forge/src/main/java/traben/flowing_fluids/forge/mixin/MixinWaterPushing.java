@@ -30,8 +30,9 @@ public class MixinWaterPushing {
 
     @ModifyExpressionValue(
             method = "updateFluidHeightAndDoFluidPushing(Ljava/util/function/Predicate;)V",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;isPushedByFluid()Z")
-
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;isPushedByFluid()Z"),
+            // Sable (Create: Aeronautics) overwrites this method and removes the INVOKE; skip instead of crashing.
+            require = 0
     )
     private boolean ff$isPushed(final boolean original) {
         if (!original) return false;
@@ -88,7 +89,9 @@ public class MixinWaterPushing {
     @ModifyExpressionValue(
             method = "lambda$updateFluidHeightAndDoFluidPushing$29",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;getFluidMotionScale(Lnet/minecraftforge/fluids/FluidType;)D"),
-            remap = false
+            remap = false,
+            // synthetic lambda names shift between loader builds and other mods can replace the method
+            require = 0
     )
     private double ff$boostForgeWaterCurrentMotionScale(final double original, final FluidType fluidType) {
         if (original <= 0.0D || fluidType != ForgeMod.WATER_TYPE.get() || !FlowingFluids.config.enableMod) {
