@@ -51,7 +51,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
     public abstract boolean isSame(final Fluid fluid);
 
     @Override
-    protected void randomTick(final #if MC > MC_21 ServerLevel #else Level #endif level,
+    protected void randomTick(final  Level  level,
                               final BlockPos blockPos, final FluidState fluidState, final RandomSource randomSource) {
         super.randomTick(level, blockPos, fluidState, randomSource);
 

@@ -3,11 +3,9 @@ package traben.flowing_fluids.mixin;
 import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
-#if MC > MC_21
-import net.minecraft.world.InteractionResult;
-#else
+
 import net.minecraft.world.InteractionResultHolder;
-#endif
+
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BottleItem;
 import net.minecraft.world.item.ItemStack;
@@ -46,28 +44,24 @@ public class MixinBottleItem {
     @Inject(
             method = "use",
             at = @At(value = "INVOKE",
-                    #if MC>=MC_21_5
-                    target = "Lnet/minecraft/world/level/Level;playSound(Lnet/minecraft/world/entity/Entity;DDDLnet/minecraft/sounds/SoundEvent;Lnet/minecraft/sounds/SoundSource;FF)V",
-                    #else
+                    
                     target = "Lnet/minecraft/world/level/Level;playSound(Lnet/minecraft/world/entity/player/Player;DDDLnet/minecraft/sounds/SoundEvent;Lnet/minecraft/sounds/SoundSource;FF)V",
-                    #endif
+                    
                     ordinal = 1,
                     shift = At.Shift.BEFORE),
             cancellable = true)
     private void ff$drainWater(
-                                    #if MC > MC_21
-                                    CallbackInfoReturnable<InteractionResult> cir,
-                                    #else
+                                    
                                     CallbackInfoReturnable<InteractionResultHolder<ItemStack>> cir,
                                     @Local final ItemStack itemStack,
-                                    #endif
+                                    
                                @Local(argsOnly = true) final Level level, @Local final BlockPos blockPos) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.isWaterAllowed()){
             int foundAmount = FFFluidUtils.collectConnectedFluidAmountAndRemove(level, blockPos, 2, 3, Fluids.WATER);
             if (foundAmount == 0) {
                 cir.setReturnValue(
-                        #if MC > MC_21 InteractionResult.PASS #else InteractionResultHolder.pass(itemStack) #endif
+                         InteractionResultHolder.pass(itemStack) 
                         );
             }
         }

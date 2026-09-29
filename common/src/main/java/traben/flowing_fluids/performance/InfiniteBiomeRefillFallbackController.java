@@ -96,11 +96,9 @@ public final class InfiniteBiomeRefillFallbackController {
     }
 
     private static float ff$getTargetMspt(MinecraftServer server) {
-#if MC > MC_21
-        return server.tickRateManager().millisecondsPerTick();
-#else
+
         return 50.0f;
-#endif
+
     }
 
     private static float ff$getCurrentMspt(MinecraftServer server) {
@@ -109,10 +107,8 @@ public final class InfiniteBiomeRefillFallbackController {
         if (monitorMspt > 0.0) {
             return (float) monitorMspt;
         }
-#if MC > MC_21
+
         return server.getCurrentSmoothedTickTime();
-#else
-        return server.getAverageTickTime();
-#endif
+
     }
 }

@@ -42,3 +42,7 @@ docs/
 tools/
 FEATURE_IDEAS.md
 PERFORMANCE_ANALYSIS.md
+
+# NeoForge development worlds
+/run/
+/runs/

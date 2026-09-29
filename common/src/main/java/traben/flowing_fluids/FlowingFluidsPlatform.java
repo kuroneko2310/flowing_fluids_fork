@@ -1,6 +1,6 @@
 package traben.flowing_fluids;
 
-import dev.architectury.injectables.annotations.ExpectPlatform;
+import traben.flowing_fluids.forge.FlowingFluidsPlatformImpl;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -9,41 +9,36 @@ import net.minecraft.world.level.LevelAccessor;
 import java.nio.file.Path;
 
 public class FlowingFluidsPlatform {
-    @ExpectPlatform
     public static Path getConfigDirectory() {
-        return Path.of("");
+        return FlowingFluidsPlatformImpl.getConfigDirectory();
     }
 
 
-    @ExpectPlatform
     public static void sendConfigToClient(ServerPlayer player) {
+        FlowingFluidsPlatformImpl.sendConfigToClient(player);
     }
 
-    @ExpectPlatform
     public static boolean isThisModLoaded(String modId) {
-        throw new AssertionError();
+        return FlowingFluidsPlatformImpl.isThisModLoaded(modId);
     }
 
-    @ExpectPlatform
     public static void clearPlatformRuntime(ServerLevel level) {
+        FlowingFluidsPlatformImpl.clearPlatformRuntime(level);
     }
 
-    @ExpectPlatform
     public static void syncVirtualFluidState(ServerLevel level, BlockPos pos) {
+        FlowingFluidsPlatformImpl.syncVirtualFluidState(level, pos);
     }
 
-    @ExpectPlatform
     public static boolean hasProcessingFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
-        return false;
+        return FlowingFluidsPlatformImpl.hasProcessingFlowAnchorInRange(level, pos);
     }
 
-    @ExpectPlatform
     public static boolean hasVisualFlowAnchorInRange(LevelAccessor level, BlockPos pos) {
-        return false;
+        return FlowingFluidsPlatformImpl.hasVisualFlowAnchorInRange(level, pos);
     }
 
-    @ExpectPlatform
     public static boolean tryAbsorbRainWater(ServerLevel level, BlockPos pos, int amount) {
-        return false;
+        return FlowingFluidsPlatformImpl.tryAbsorbRainWater(level, pos, amount);
     }
 }

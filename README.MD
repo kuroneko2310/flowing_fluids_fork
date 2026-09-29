@@ -1,15 +1,25 @@
 # Flowing Fluids Reworked
 
-A Forge 1.20.1 finite-fluid fork of Flowing Fluids by Traben, tuned for industrial survival packs where water is not just scenery: it is pressure, supply, runoff, machine input, cave danger, and something you can actually build around.
+A NeoForge 1.21.1 finite-fluid fork of Flowing Fluids by Traben, tuned for industrial survival packs where water is not just scenery: it is pressure, supply, runoff, machine input, cave danger, and something you can actually build around.
 
 - Original project: [Traben-0/flowing_fluids](https://github.com/Traben-0/flowing_fluids)
 - Original author: Traben
 - Fork maintainer: kuroneko2310
 - License: LGPL-3.0-or-later
 
+## Build / ビルド
+
+- Minecraft 1.21.1 / NeoForge 21.1.252 / Java 21
+- [NeoForgeMDKs/MDK-1.21.1-ModDevGradle](https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle) の ModDevGradle 2.0.147・Gradle 9.2.1 構成を使用。
+- Java 21 を `JAVA_HOME` に設定して `./gradlew build`（Windows: `.\gradlew.bat build`）。
+- 出力: `build/libs/flowing_fluids_neoforge_1.21.1-1.0.6.jar`
+- 共通処理は `common/src`、NeoForgeの登録・連携・資産は `neoforge/src`。
+- Create 6.0.10、Sodium 0.6.13、ItemPhysic 1.8.17、CreativeCore 2.13.49 の API をコンパイル時に参照。これらのmodはjarへ同梱しません。
+- ブロック・アイテムIDと水量単位は引き継ぎます。1.20.1ワールド自体の1.21.1への移行は、このmodのビルド検証とは別に確認が必要です。
+
 ## Why this fork exists
 
-The original Flowing Fluids already makes water mostly finite, configurable, and removable without ruining old worlds. This fork keeps that foundation and pushes it toward a more physical, machine-friendly Forge pack experience:
+The original Flowing Fluids already makes water mostly finite, configurable, and removable without ruining old worlds. This fork keeps that foundation and pushes it toward a more physical, machine-friendly NeoForge pack experience:
 
 - Create pipes, hose pulleys, basins, tanks, and water wheels are treated as real finite-fluid participants instead of a separate vanilla-source-only layer.
 - Mekanism electric pumps, portable tanks in bucket mode, and dispenser tank behavior can pick up or place partial Flowing Fluids water amounts.
@@ -24,18 +34,18 @@ In short: this fork is for worlds where reservoirs, canals, pumps, rainfall, cav
 
 Compared with the original public mod line, this fork adds and retunes:
 
-- **Forge 1.20.1 first.** This branch is intentionally focused on the Forge 1.20.1 modpack stack. Fabric, NeoForge, and broad multi-loader maintenance are not the goal here.
+- **NeoForge 1.21.1.** This branch uses the NeoForge ModDevGradle MDK and Java 21.
 - **Machine-aware finite water.** Create and Mekanism integrations can consume connected partial water levels, output partial amounts, and avoid silently minting vanilla sources in places where finite water should matter.
 - **A stronger water cycle.** Rain no longer has to be only "top off partial blocks"; it can generate shallow puddles, scale by storm intensity, use catchment and upstream terrain boosts, skip infinite-water biomes, and queue bounded placements.
 - **Better ocean and infinite-biome behavior.** Sea-level refill, surface drain, broad-water preservation, deep-ocean ambient access, overflow evaporation, and local refill suppression are separated so oceans can be powerful without making deliberate draining impossible.
 - **Hydraulics and siphons.** Pressure nozzles, guide blocks, enclosed water heads, and bounded terrain siphons can move water through crafted or natural shapes while preserving water volume.
-- **Springs and floods.** Forge worldgen hooks add water and lava spring features, surface vents, cave springs, and pond-floor sources, with command/debug surfaces for testing and tuning.
+- **Springs and floods.** NeoForge worldgen hooks add water and lava spring features, surface vents, cave springs, and pond-floor sources, with command/debug surfaces for testing and tuning.
 - **Runtime cleanup and stability.** Async slope searches, siphons, waterlog data, equalizer queues, tick buffers, component graph state, and dimension data are cleaned when chunks or worlds unload.
 - **Performance instrumentation.** Runtime counters, optional component graph assist, shared worker-pool plumbing, and focused tests make the heavy systems easier to observe and tune.
 
 ## Fork defaults
 
-The default config is tuned for a heavier Forge 1.20.1 survival pack rather than a tiny vanilla test world.
+The default config is tuned for a heavier NeoForge 1.21.1 survival pack rather than a tiny vanilla test world.
 
 - `fluid_processing_distance` now defaults to `160` blocks. Active water processing stays near players by default, while a visual grace range keeps nearby distant water from freezing in a strange half-updated look. Set it to `0` if you intentionally need chunk loaders far away from players to keep running fluid simulation.
 - `maxWaterFlowDistance` defaults to `8` and `bfsMaxSearchDistance` defaults to `16`, matching the in-game command help and giving modern water analysis enough room to resolve pools, canals, and short pressure paths.
@@ -56,7 +66,7 @@ Existing configs are not force-rewritten. Delete `config/flowing_fluids.json` or
 
 - It is heavier and more opinionated than the original. Big floods, ocean draining, massive pipe networks, or aggressive spring settings can still cost real server time.
 - The new `fluid_processing_distance = 160` default improves normal player-area performance, but far-away chunk-loaded machines may need `0` or a larger distance.
-- Forge-only compatibility means this fork is not a drop-in continuation for Fabric or NeoForge packs.
+- This artifact requires Minecraft 1.21.1 and NeoForge; the Forge 1.20.1 jar is a separate build.
 - Some machine interactions intentionally consume water levels. That is the point, but it can surprise builds designed around vanilla infinite source behavior.
 
 ## Original project links
@@ -254,7 +264,7 @@ You can also blacklist modded fluids that you don't want to have physics. Via th
 This mod can also be disabled (`/flowing_fluids settings enable_mod on|off`) or removed at any time without breaking the world, as any fluid that is 'full' *(8 levels)* will be saved as a vanilla source block. 
 And all 'non-full' fluids *(1-7 levels)* will be saved as a vanilla flowing blocks which will just disappear once updated in vanilla.
 
-## **The Create Mod - Forge 1.20.1**
+## **The Create Mod - NeoForge 1.21.1**
 
 Flowing Fluids has special compatibility settings for use with the Create mod, to modify the behaviour of water wheels and pipes.
 
@@ -303,7 +313,7 @@ the following options exists to swap this arbitrary direction:
 - `full_fluid_opposite_spin`
 - `always_opposite_spin`
 
-## **Mekanism - Forge 1.20.1**
+## **Mekanism - NeoForge 1.21.1**
 
 This fork also adds Mekanism-side finite fluid handling.
 
@@ -384,7 +394,7 @@ Values between 4-8 still provide a smooth water experience, with more performanc
 - can I use this in my mod-pack? 
   - *go for it*
 - it breaks with the Create mod! 
-  - *you have to have the specifically supported Forge 1.20.1 Create version for things to work; this fork is no longer maintained as a Fabric or NeoForge build*
+  - *use the supported Minecraft 1.21.1 NeoForge build of Create 6.0.x*
 
 
 <span align="center">

@@ -3,6 +3,7 @@ package traben.flowing_fluids.mixin;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.SpawnPlacements;
+import net.minecraft.world.entity.SpawnPlacementTypes;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.NaturalSpawner;
@@ -12,17 +13,16 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import traben.flowing_fluids.FFFluidUtils;
 
-@Mixin(NaturalSpawner.class)
+@Mixin(SpawnPlacements.class)
 public class MixinNaturalSpawner {
 
     @Inject(method = "isSpawnPositionOk", at = @At("HEAD"), cancellable = true)
-    private static void ff$allowGroundMobSpawnInShallowWater(final SpawnPlacements.Type placementType,
+    private static void ff$allowGroundMobSpawnInShallowWater(final EntityType<?> entityType,
                                                              final LevelReader level,
                                                              final BlockPos pos,
-                                                             final EntityType<?> entityType,
                                                              final CallbackInfoReturnable<Boolean> cir) {
-        if (placementType != SpawnPlacements.Type.ON_GROUND
-                || entityType == null
+        if (entityType == null
+                || SpawnPlacements.getPlacementType(entityType) != SpawnPlacementTypes.ON_GROUND
                 || !(level instanceof LevelAccessor levelAccessor)) {
             return;
         }

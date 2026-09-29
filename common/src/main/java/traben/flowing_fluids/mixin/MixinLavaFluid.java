@@ -69,7 +69,7 @@ public abstract class MixinLavaFluid extends FlowingFluid {
     }
 
     @Inject(method = "randomTick", at = @At(value = "HEAD"))
-    private void ff$callSuper(final #if MC > MC_21 ServerLevel #else Level #endif level, final BlockPos pos, final FluidState state, final RandomSource random, final CallbackInfo ci) {
+    private void ff$callSuper(final  Level  level, final BlockPos pos, final FluidState state, final RandomSource random, final CallbackInfo ci) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.isFluidAllowed(this)) {
             super.randomTick(level, pos, state, random);

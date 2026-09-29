@@ -12,13 +12,9 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import traben.flowing_fluids.FlowingFluids;
 
-#if MC > MC_21
-import net.minecraft.world.entity.vehicle.AbstractBoat;
 
-@Mixin(AbstractBoat.class)
-#else
 @Mixin(Boat.class)
-#endif
+
 
 public abstract class MixinBoatFloating extends Entity {
 
@@ -28,13 +24,10 @@ public abstract class MixinBoatFloating extends Entity {
     }
 
     @WrapOperation(method = "getStatus", at = @At(value = "INVOKE",
-    #if MC > MC_21
-            target = "Lnet/minecraft/world/entity/vehicle/AbstractBoat;isUnderwater()Lnet/minecraft/world/entity/vehicle/AbstractBoat$Status;"))
-    private Boat.Status ff$float1(final AbstractBoat instance, final Operation<AbstractBoat.Status> original)
-    #else
+    
             target = "Lnet/minecraft/world/entity/vehicle/Boat;isUnderwater()Lnet/minecraft/world/entity/vehicle/Boat$Status;"))
     private Boat.Status ff$float1(final Boat instance, final Operation<Boat.Status> original)
-    #endif
+    
         {
         if (FlowingFluids.config.enableMod && !FlowingFluids.config.waterFlowAffectsBoats) {
             return null; // force it to be null so we do checkInWater() and have floating boats

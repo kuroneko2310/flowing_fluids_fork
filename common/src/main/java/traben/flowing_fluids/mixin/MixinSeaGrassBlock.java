@@ -10,21 +10,19 @@ import org.spongepowered.asm.mixin.Mixin;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
 
-#if MC >= MC_21_5
-import net.minecraft.world.level.block.VegetationBlock;
-#else
+
 import net.minecraft.world.level.block.BushBlock;
-#endif
+
 
 @Mixin(SeagrassBlock.class)
-public abstract class MixinSeaGrassBlock extends #if MC >= MC_21_5 VegetationBlock #else BushBlock #endif {
+public abstract class MixinSeaGrassBlock extends  BushBlock  {
 
     protected MixinSeaGrassBlock(final Properties properties) {
         super(properties);
     }
 
     @Override
-    #if MC > MC_20_1 protected #else public  #endif boolean canSurvive(final BlockState state, final LevelReader level, final BlockPos pos) {
+     protected  boolean canSurvive(final BlockState state, final LevelReader level, final BlockPos pos) {
         boolean canSurvive = super.canSurvive(state, level, pos);
         if (canSurvive && FlowingFluids.config.enableMod
                 && FlowingFluids.config.isWaterAllowed()

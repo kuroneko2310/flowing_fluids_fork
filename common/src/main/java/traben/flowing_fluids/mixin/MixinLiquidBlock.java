@@ -3,10 +3,10 @@ package traben.flowing_fluids.mixin;
 
 import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.core.BlockPos;
-#if MC > MC_20_1
+
 import net.minecraft.core.component.DataComponentMap;
 import net.minecraft.core.component.DataComponents;
-#endif
+
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.Block;
@@ -51,13 +51,11 @@ public abstract class MixinLiquidBlock extends Block implements BucketPickup {
                 } else {
                     //add damage flag
                     var stack = new ItemStack(this.fluid.getBucket());
-                            #if MC > MC_20_1
+                            
                             stack.applyComponents(DataComponentMap.builder()
                                     .set(DataComponents.DAMAGE, 8 - level)
                                     .set(DataComponents.MAX_DAMAGE, 8).build());
-                            #else
-                    stack.setDamageValue(8 - level);
-                            #endif
+                            
                     cir.setReturnValue(stack);
                 }
             }

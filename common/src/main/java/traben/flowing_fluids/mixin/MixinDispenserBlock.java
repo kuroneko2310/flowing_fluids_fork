@@ -1,11 +1,9 @@
 package traben.flowing_fluids.mixin;
 
 import net.minecraft.core.BlockPos;
-#if MC > MC_20_1
+
 import net.minecraft.core.dispenser.BlockSource;
-#else
-import net.minecraft.core.BlockSource;
-#endif
+
 import net.minecraft.core.dispenser.DefaultDispenseItemBehavior;
 import net.minecraft.core.dispenser.DispenseItemBehavior;
 import net.minecraft.world.item.DispensibleContainerItem;
@@ -34,7 +32,7 @@ public class MixinDispenserBlock {
     private static final Map<Item, DispenseItemBehavior> ff$WRAPPED_ORIGINALS = new IdentityHashMap<>();
 
     @Inject(method = "getDispenseMethod", at = @At("RETURN"), cancellable = true)
-    private void ff$wrapBehaviour(final ItemStack stack, final CallbackInfoReturnable<DispenseItemBehavior> cir) {
+    private void ff$wrapBehaviour(final Level level, final ItemStack stack, final CallbackInfoReturnable<DispenseItemBehavior> cir) {
         if (!(stack.getItem() instanceof FFBucketItem bucket)) {
             return;
         }
@@ -94,8 +92,8 @@ public class MixinDispenserBlock {
                 return null;
             }
 
-            BlockPos blockPos = blockSource. #if MC == MC_20_1 getPos()  #else pos() #endif .relative(blockSource. #if MC == MC_20_1 getBlockState()  #else state() #endif .getValue(DispenserBlock.FACING));
-            Level level = blockSource. #if MC == MC_20_1 getLevel()  #else level() #endif;
+            BlockPos blockPos = blockSource.  pos()  .relative(blockSource.  state()  .getValue(DispenserBlock.FACING));
+            Level level = blockSource.  level() ;
             var fluidState = level.getFluidState(blockPos);
             if (!(fluidState.getType() instanceof FlowingFluid flowingFluid)
                     || !FlowingFluids.config.isFluidAllowed(fluidState)
@@ -119,8 +117,8 @@ public class MixinDispenserBlock {
                 return null;
             }
 
-            BlockPos blockPos = blockSource.#if MC == MC_20_1 getPos()  #else pos() #endif .relative(blockSource. #if MC == MC_20_1 getBlockState()  #else state() #endif .getValue(DispenserBlock.FACING));
-            Level level = blockSource.#if MC == MC_20_1 getLevel()  #else level() #endif;
+            BlockPos blockPos = blockSource. pos()  .relative(blockSource.  state()  .getValue(DispenserBlock.FACING));
+            Level level = blockSource. level() ;
             var fluidState = level.getFluidState(blockPos);
             if (fluidState.getAmount() <= 0 && item.getDamageValue() <= 0) {
                 return null;
@@ -140,16 +138,14 @@ public class MixinDispenserBlock {
     private static final class FFDispenseEffectsHelper extends DefaultDispenseItemBehavior {
         private @NotNull ItemStack finishWithEffects(BlockSource blockSource, ItemStack result) {
             this.playSound(blockSource);
-            this.playAnimation(blockSource, blockSource. #if MC == MC_20_1 getBlockState()  #else state() #endif .getValue(DispenserBlock.FACING));
+            this.playAnimation(blockSource, blockSource.  state()  .getValue(DispenserBlock.FACING));
             return result;
         }
 
         private @NotNull ItemStack bucketWithRemainder(BlockSource blockSource, ItemStack original, ItemStack replacement) {
-            #if MC == MC_20_1
-            return replacement;
-            #else
+            
             return this.consumeWithRemainder(blockSource, original, replacement);
-            #endif
+            
         }
     }
 

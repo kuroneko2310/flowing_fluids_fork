@@ -253,7 +253,8 @@ public final class ExtendedWaterlogStore {
         private final ConcurrentHashMap<Long, Set<Long>> chunkIndex = new ConcurrentHashMap<>();
 
         private static PersistentData get(ServerLevel level) {
-            return level.getDataStorage().computeIfAbsent(PersistentData::load, PersistentData::new, DATA_NAME);
+            return level.getDataStorage().computeIfAbsent(
+                    new SavedData.Factory<>(PersistentData::new, (tag, registries) -> load(tag), null), DATA_NAME);
         }
 
         boolean isEmpty() {
@@ -341,7 +342,7 @@ public final class ExtendedWaterlogStore {
         }
 
         @Override
-        public CompoundTag save(CompoundTag tag) {
+        public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
             ListTag entries = new ListTag();
             for (var entry : byPosition.entrySet()) {
                 StoredFluid stored = entry.getValue();

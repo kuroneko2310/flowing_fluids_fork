@@ -246,7 +246,7 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Override
-    protected void randomTick(final #if MC > MC_21 ServerLevel #else Level #endif level, final BlockPos pos, final FluidState state, final RandomSource random) {
+    protected void randomTick(final  Level  level, final BlockPos pos, final FluidState state, final RandomSource random) {
         super.randomTick(level, pos, state, random);
         //random settle behaviour
         if (FlowingFluids.config.enableMod
@@ -359,7 +359,7 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Inject(method = "tick", at = @At(value = "HEAD"), cancellable = true)
-    private void ff$tickMixin(final #if MC > MC_21 ServerLevel #else Level #endif level, final BlockPos blockPos,#if MC > MC_21 BlockState thisState, #endif FluidState fluidState, final CallbackInfo ci) {
+    private void ff$tickMixin(final  Level  level, final BlockPos blockPos, FluidState fluidState, final CallbackInfo ci) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.isFluidAllowed(fluidState)) {
             final boolean monitorEnabled = FlowingFluids.config.enablePerformanceMonitoring;
@@ -397,9 +397,9 @@ public abstract class MixinFlowingFluid extends Fluid {
             ff$getConnectedHeadCache().clear();
             ff$getSectionSampleContext().begin(level);
 
-            #if MC <= MC_21
+            
             BlockState thisState = level.getBlockState(blockPos);
-            #endif
+            
             FluidState effectiveTickState = FFFluidUtils.getEffectiveFluidState(level, blockPos, thisState);
             if (effectiveTickState.getType().isSame(this)
                     && effectiveTickState.getAmount() > 0
@@ -713,13 +713,9 @@ public abstract class MixinFlowingFluid extends Fluid {
                 if (currentState.isEmpty() || !currentState.getType().isSame(originalState.getType())) {
                     return;
                 }
-#if MC > MC_21
-                if (level instanceof ServerLevel serverLevel) {
-                    ((FlowingFluid) (Object) this).tick(serverLevel, blockPos, level.getBlockState(blockPos), currentState);
-                }
-#else
+
                 ((FlowingFluid) (Object) this).tick(level, blockPos, currentState);
-#endif
+
             }
         } finally {
             depth[0]--;
@@ -1729,7 +1725,7 @@ public abstract class MixinFlowingFluid extends Fluid {
     }
 
     @Inject(method = "getNewLiquid", at = @At(value = "HEAD"), cancellable = true)
-    private void flowing_fluids$validateLiquidMixin(final #if MC > MC_21 ServerLevel #else Level #endif level, final BlockPos blockPos, final BlockState blockState, final CallbackInfoReturnable<FluidState> cir) {
+    private void flowing_fluids$validateLiquidMixin(final  Level  level, final BlockPos blockPos, final BlockState blockState, final CallbackInfoReturnable<FluidState> cir) {
         if (FlowingFluids.config.enableMod
                 && FlowingFluids.config.isFluidAllowed(this)) {
             FluidState baseState = blockState.getFluidState();

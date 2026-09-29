@@ -1,0 +1,32 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="LGPL-3.0-or-later"
+[[mods]]
+modId="flowing_fluids"
+version="${mod_version}"
+displayName="Flowing Fluids"
+authors="Traben; maintained fork by kuroneko2310"
+description='''Finite-fluid physics, water pressure, hydraulic machinery, springs and weather for NeoForge 1.21.1.'''
+logoFile="assets/flowing_fluids/icon.png"
+[[mixins]]
+config="flowing_fluids.mixins.json"
+[[mixins]]
+config="flowing_fluids_forge.mixins.json"
+[[dependencies.flowing_fluids]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.252,21.2)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.flowing_fluids]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="BOTH"
+[[dependencies.flowing_fluids]]
+modId="create"
+type="optional"
+versionRange="[6.0.10,6.1)"
+ordering="AFTER"
+side="BOTH"

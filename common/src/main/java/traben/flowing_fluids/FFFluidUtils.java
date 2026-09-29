@@ -375,19 +375,15 @@ public class FFFluidUtils {
 
 
     public static @NotNull ResourceLocation res(String fullPath){
-        #if MC >= MC_21
+        
         return ResourceLocation.parse(fullPath);
-        #else
-        return new ResourceLocation(fullPath);
-        #endif
+        
     }
 
     public static @NotNull ResourceLocation res(String namespace, String path){
-        #if MC >= MC_21
+        
         return ResourceLocation.fromNamespaceAndPath(namespace, path);
-        #else
-        return new ResourceLocation(namespace, path);
-        #endif
+        
     }
 
     public static ResourceLocation getId(Block block) {
@@ -1287,7 +1283,7 @@ public class FFFluidUtils {
                 || entityType == null
                 || level == null
                 || pos == null
-                || SpawnPlacements.getPlacementType(entityType) != SpawnPlacements.Type.ON_GROUND) {
+                || SpawnPlacements.getPlacementType(entityType) != net.minecraft.world.entity.SpawnPlacementTypes.ON_GROUND) {
             return false;
         }
 
@@ -1542,7 +1538,7 @@ public class FFFluidUtils {
                 return result;
             }
             BucketPickup bucketPickup = (BucketPickup) blockState.getBlock();
-            bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
+            bucketPickup.pickupBlock( null,  levelAccessor, pos, blockState);
             recordFluidCacheChange(levelAccessor, pos, fluid, 0, invalidateConnectedComponents);
             recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
             return true;
@@ -1785,7 +1781,7 @@ public class FFFluidUtils {
         }
         if (blockState.getBlock() instanceof LiquidBlockContainer
                 && blockState.getBlock() instanceof BucketPickup bucketPickup) {
-            bucketPickup.pickupBlock(#if MC > MC_20_1 null, #endif levelAccessor, pos, blockState);
+            bucketPickup.pickupBlock( null,  levelAccessor, pos, blockState);
             recordFluidCacheChange(levelAccessor, pos, fluid, 0, invalidateConnectedComponents);
             recheckNearbyAquaticPlantSurvival(levelAccessor, pos, fluid);
             return true;
@@ -2689,11 +2685,9 @@ public class FFFluidUtils {
                     // if we still have fluid left, try to displace upwards recursively
                     BlockPos.MutableBlockPos posTraversing = new BlockPos.MutableBlockPos(pos.getX(), pos.getY(), pos.getZ());
                     int height = levelChunk
-                            #if MC > MC_21
-                                .getMaxY();
-                            #else
+                            
                                 .getMaxBuildHeight();
-                            #endif
+                            
 
                     while (amountRemaining > 0 && posTraversing.getY() < height) {
                         posTraversing.move(Direction.UP);

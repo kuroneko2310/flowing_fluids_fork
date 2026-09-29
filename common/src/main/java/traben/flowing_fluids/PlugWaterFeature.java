@@ -30,8 +30,8 @@ public class PlugWaterFeature {
     private static void collectSourceBlocks(LevelAccessor level, ChunkAccess chunkAccess,
                                             int x1, int y1, int z1, int x2, int y2, int z2,
                                             LongOpenHashSet set, int seaLevel) {
-        int minSection = #if MC>MC_21 chunkAccess.getMinSectionY() #else chunkAccess.getMinSection() #endif;
-        int maxSection = #if MC>MC_21 chunkAccess.getMaxSectionY() #else chunkAccess.getMaxSection() #endif;
+        int minSection =  chunkAccess.getMinSection() ;
+        int maxSection =  chunkAccess.getMaxSection() ;
 
         for (int i = minSection; i < maxSection; i++) {
             LevelChunkSection levelChunkSection = chunkAccess.getSection(chunkAccess.getSectionIndexFromSectionY(i));
@@ -185,8 +185,7 @@ public class PlugWaterFeature {
 
         FlowingFluids.recordWaterPluggedDuringWorldgen();
         chunk.setBlockState(pos, blockState,
-                #if MC>=MC_21_5 0 // no updates pls
-                #else false #endif
+                 false 
         );
     }
 

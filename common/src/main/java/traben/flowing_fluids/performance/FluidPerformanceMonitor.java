@@ -531,11 +531,9 @@ public final class FluidPerformanceMonitor implements FluidPerformanceMonitorMBe
     }
 
     private double getCurrentMspt(MinecraftServer server) {
-#if MC > MC_21
+
         return server.getCurrentSmoothedTickTime();
-#else
-        return server.getAverageTickTime();
-#endif
+
     }
 
     private void registerMBean() {

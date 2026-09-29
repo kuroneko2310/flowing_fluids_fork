@@ -45,12 +45,12 @@ public class MixinEntityBreeding {
                 var state = world.getBlockState(blockPos2);
                 if (world.getFluidState(blockPos2).is(FluidTags.WATER)) {
                     FFFluidUtils.removeAmountFromFluidAtPosWithRemainder(world, blockPos2, Fluids.WATER,1);
-                    world.playSound(null,this.animal.getX(), this.animal.getY(), this.animal.getZ(), SoundEvents.GENERIC_DRINK #if MC>=MC_21_5 .value() #endif , SoundSource.NEUTRAL, 1, 1);
+                    world.playSound(null,this.animal.getX(), this.animal.getY(), this.animal.getZ(), SoundEvents.GENERIC_DRINK  , SoundSource.NEUTRAL, 1, 1);
                     return;
                 }
                 if (state.is(Blocks.WATER_CAULDRON)) {
                     LayeredCauldronBlock.lowerFillLevel(state, world, blockPos2);
-                    world.playSound(null,this.animal.getX(), this.animal.getY(), this.animal.getZ(), SoundEvents.GENERIC_DRINK #if MC>=MC_21_5 .value() #endif , SoundSource.NEUTRAL, 1, 1);
+                    world.playSound(null,this.animal.getX(), this.animal.getY(), this.animal.getZ(), SoundEvents.GENERIC_DRINK  , SoundSource.NEUTRAL, 1, 1);
                     return;
                 }
             }
@@ -69,7 +69,7 @@ public class MixinEntityBreeding {
 
             if (world instanceof ServerLevel server) {
                 for (int i = 0; i < 8; i++) {
-                    server.sendParticles(new DustParticleOptions(#if MC> MC_21 9999746 #else Vec3.fromRGB24(9999746).toVector3f() #endif , 1),
+                    server.sendParticles(new DustParticleOptions( Vec3.fromRGB24(9999746).toVector3f()  , 1),
                             pos.getX(), pos.getY(), pos.getZ(),
                             1,(0.5f - rand.nextFloat())*3, rand.nextFloat()*2, (0.5f - rand.nextFloat())*3, 1);
                 }

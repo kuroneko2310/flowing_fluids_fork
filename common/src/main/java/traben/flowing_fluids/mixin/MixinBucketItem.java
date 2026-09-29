@@ -4,10 +4,10 @@ package traben.flowing_fluids.mixin;
 import net.minecraft.advancements.CriteriaTriggers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-#if MC > MC_20_1
+
 import net.minecraft.core.component.DataComponentMap;
 import net.minecraft.core.component.DataComponents;
-#endif
+
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
@@ -15,11 +15,9 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.stats.Stats;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.InteractionHand;
-#if MC > MC_21
-import net.minecraft.world.InteractionResult;
-#else
+
 import net.minecraft.world.InteractionResultHolder;
-#endif
+
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.*;
@@ -64,13 +62,10 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
         return null;
     }
 
-    #if MC >= MC_21_5
-    @Shadow public abstract void checkExtraContent(@Nullable final LivingEntity player, final Level level, final ItemStack itemStack, final BlockPos blockPos);
-    @Shadow protected abstract void playEmptySound(@Nullable final LivingEntity player, final LevelAccessor levelAccessor, final BlockPos blockPos);
-    #else
+    
     @Shadow public abstract void checkExtraContent(@Nullable final Player player, final Level level, final ItemStack itemStack, final BlockPos blockPos);
     @Shadow protected abstract void playEmptySound(@Nullable final Player player, final LevelAccessor levelAccessor, final BlockPos blockPos);
-    #endif
+    
 
     @ModifyArg(
             method = "use",
@@ -87,7 +82,7 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
     //always place if partial
     @Inject(method = "use", at = @At(value = "HEAD"), cancellable = true)
     private void flowing_fluids$alterBehaviourIfPartial(final Level level, final Player player, final InteractionHand interactionHand,
-                                                        final #if MC > MC_21 CallbackInfoReturnable<InteractionResult> #else CallbackInfoReturnable<InteractionResultHolder<ItemStack>> #endif cir) {
+                                                        final  CallbackInfoReturnable<InteractionResultHolder<ItemStack>>  cir) {
         if (FlowingFluids.config.enableMod
                 && content instanceof FlowingFluid
                 && FlowingFluids.config.isFluidAllowed(content)
@@ -97,7 +92,7 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
             BlockHitResult blockHitResult = getPlayerPOVHitResult(level, player, ClipContext.Fluid.ANY);
             if (blockHitResult.getType() == HitResult.Type.MISS || blockHitResult.getType() != HitResult.Type.BLOCK) {
                 cir.setReturnValue(
-                        #if MC > MC_21 InteractionResult.PASS #else InteractionResultHolder.pass(heldBucket) #endif
+                         InteractionResultHolder.pass(heldBucket) 
                 );
             } else {
                 BlockPos blockPos = blockHitResult.getBlockPos();
@@ -131,16 +126,16 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
 
                         ItemStack itemStack2 = ItemUtils.createFilledResult(heldBucket, player, resultBucket);
                         cir.setReturnValue(
-                                #if MC > MC_21 InteractionResult.SUCCESS.heldItemTransformedTo(itemStack2) #else InteractionResultHolder.sidedSuccess(itemStack2, level.isClientSide()) #endif
+                                 InteractionResultHolder.sidedSuccess(itemStack2, level.isClientSide()) 
                         );
                     } else {
                         cir.setReturnValue(
-                                #if MC > MC_21 InteractionResult.FAIL #else InteractionResultHolder.fail(heldBucket) #endif
+                                 InteractionResultHolder.fail(heldBucket) 
                         );
                     }
                 } else {
                     cir.setReturnValue(
-                                #if MC > MC_21 InteractionResult.FAIL #else InteractionResultHolder.fail(heldBucket) #endif
+                                 InteractionResultHolder.fail(heldBucket) 
                     );
                 }
             }
@@ -166,7 +161,7 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
                     || virtualTarget;
 
             if (!virtualTarget && !canPlaceLiquidInPos && state.getBlock() instanceof LiquidBlockContainer container) {
-                if (container.canPlaceLiquid(#if MC > MC_20_1 player,#endif level, blockPos, state, this.content)) {
+                if (container.canPlaceLiquid( player, level, blockPos, state, this.content)) {
                     if (amount != 8) return amount;
                     container.placeLiquid(level, blockPos, level.getBlockState(blockPos), flowingFluid.getSource(false));
                     this.playEmptySound(player, level, blockPos);
@@ -232,25 +227,16 @@ public abstract class MixinBucketItem extends Item implements FFBucketItem {
         } else {
             var resultBucket = originalItemData.copy();
 
-            #if MC > MC_20_1
+            
             resultBucket.applyComponents(DataComponentMap.builder()
                     .set(DataComponents.DAMAGE, 8 - amount)
                     .set(DataComponents.MAX_DAMAGE, 8).build());
-            #else
-            resultBucket.setDamageValue(8 - amount);
-            #endif
+            
             return resultBucket;
         }
     }
 
-    #if MC <= MC_20_1
-
-    @Inject(method = "<init>", at = @At(value = "TAIL"))
-    public void getMaxDamage(final CallbackInfo ci) {
-        maxDamage = 8;
-    }
-
-#endif
+    
 
     @Override
     public int getBarColor(final ItemStack itemStack) {

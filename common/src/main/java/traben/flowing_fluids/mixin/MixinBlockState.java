@@ -31,15 +31,11 @@ public abstract class MixinBlockState extends StateHolder<Block, BlockState> {
     @Shadow
     public abstract FluidState getFluidState();
 
-    #if MC > MC_20_1
+    
     protected MixinBlockState(final Block owner, final Reference2ObjectArrayMap<Property<?>, Comparable<?>> values, final MapCodec<BlockState> propertiesCodec) {
         super(owner, values, propertiesCodec);
     }
-#else
-    protected MixinBlockState(final Block owner, final ImmutableMap<Property<?>, Comparable<?>> values, final MapCodec<BlockState> propertiesCodec) {
-        super(owner, values, propertiesCodec);
-    }
-#endif
+
 
 
 

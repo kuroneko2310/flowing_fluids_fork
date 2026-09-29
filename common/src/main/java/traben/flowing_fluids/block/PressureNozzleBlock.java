@@ -1,5 +1,6 @@
 package traben.flowing_fluids.block;
 
+import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.item.context.BlockPlaceContext;
@@ -20,11 +21,20 @@ import traben.flowing_fluids.SiphonFlowSystem;
 public class PressureNozzleBlock extends DirectionalBlock {
     public static final DirectionProperty FACING = DirectionalBlock.FACING;
 
+    public static final MapCodec<PressureNozzleBlock> CODEC = simpleCodec(PressureNozzleBlock::new);
+
+    @Override
+    protected MapCodec<? extends PressureNozzleBlock> codec() { return CODEC; }
+
     public PressureNozzleBlock() {
-        super(BlockBehaviour.Properties.of()
+        this(BlockBehaviour.Properties.of()
             .requiresCorrectToolForDrops()
             .strength(3.0F, 6.5F)
             .sound(SoundType.COPPER));
+    }
+
+    public PressureNozzleBlock(BlockBehaviour.Properties properties) {
+        super(properties);
         registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
     }
 

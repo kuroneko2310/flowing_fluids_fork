@@ -123,11 +123,9 @@ public final class FluidAutoTickDelay {
     }
 
     private static float ff$getTargetMspt(MinecraftServer server) {
-#if MC > MC_21
-        return server.tickRateManager().millisecondsPerTick() * FlowingFluids.config.autoTickDelayTargetMsptMultiplier;
-#else
+
         return 50.0f * FlowingFluids.config.autoTickDelayTargetMsptMultiplier;
-#endif
+
     }
 
     private static float ff$getCurrentMspt(MinecraftServer server) {
@@ -136,10 +134,8 @@ public final class FluidAutoTickDelay {
         if (monitorMspt > 0.0) {
             return (float) monitorMspt;
         }
-#if MC > MC_21
+
         return server.getCurrentSmoothedTickTime();
-#else
-        return server.getAverageTickTime();
-#endif
+
     }
 }

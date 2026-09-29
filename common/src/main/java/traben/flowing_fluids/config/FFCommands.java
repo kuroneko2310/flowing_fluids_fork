@@ -3285,8 +3285,8 @@ public class FFCommands {
 
     private static int superSponge(Level level, BlockPos pos, Fluid fluid) {
 
-        final var yes = #if MC>=MC_21_4 BlockPos.TraversalNodeStatus.ACCEPT #else true #endif ;
-        final var no = #if MC>=MC_21_4 BlockPos.TraversalNodeStatus.SKIP #else false #endif ;
+        final var yes =  true  ;
+        final var no =  false  ;
 
         return BlockPos.breadthFirstTraversal(pos, 32, 10000, (blockPos, consumer) -> {
             for (Direction direction : Direction.values()) {
@@ -3303,7 +3303,7 @@ public class FFCommands {
                 } else {
                     Block block = blockState.getBlock();
                     if (block instanceof final BucketPickup bucketPickup) {
-                        if (!bucketPickup.pickupBlock(#if MC >= MC_21 null, #endif level, blockPos2, blockState).isEmpty()) {
+                        if (!bucketPickup.pickupBlock( null,  level, blockPos2, blockState).isEmpty()) {
                             return yes;
                         }
                     }
