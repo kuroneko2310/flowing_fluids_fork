@@ -116,5 +116,7 @@ processResources {
 }
 
 jar { from("${repoRoot}/LICENSE.txt") }
+// The resource dirs overlap like in processResources (loader copy listed first wins).
+sourcesJar { duplicatesStrategy = DuplicatesStrategy.EXCLUDE }
 
 publishing { publications { mavenJava(MavenPublication) { from components.java } } }
