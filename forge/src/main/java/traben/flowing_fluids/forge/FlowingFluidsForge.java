@@ -26,6 +26,7 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.FlowingFluidsPlatform;
 import traben.flowing_fluids.FlowingFluidsTick;
 import traben.flowing_fluids.ParallelFluidTickManager;
 import traben.flowing_fluids.config.FFCommands;
@@ -56,6 +57,10 @@ public final class FlowingFluidsForge {
         FlowingFluids.init();
         ForgeSpringRegistry.register(modBus);
         ForgeHydraulicBlockRegistry.register(modBus);
+        if (FlowingFluidsPlatform.isThisModLoaded("create")) {
+            // Create display link sources; the class touches Create's API so it must only load with Create present
+            traben.flowing_fluids.forge.compat.CreateDisplaySources.register(modBus);
+        }
         ForgeDebugItemRegistry.register(modBus);
         MinecraftForge.EVENT_BUS.register(FlowingFluidsForge.class);
     }
@@ -102,6 +107,7 @@ public final class FlowingFluidsForge {
             NetherLavaEventSystem.onLevelUnload(level);
             FlowingFluidsTick.onLevelUnload(level);
             InfiniteBiomeRefillSuppression.onLevelUnload(level);
+            traben.flowing_fluids.water.FluidFlowActivityTracker.onLevelUnload(level);
             FlowAnchorRuntime.clearDimension(level);
             RainCollectorRuntime.clearDimension(level);
         }

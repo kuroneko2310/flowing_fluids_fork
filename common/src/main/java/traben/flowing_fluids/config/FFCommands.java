@@ -1664,6 +1664,23 @@ public class FFCommands {
         return messageAndSaveConfig(context, "Applied rain preset: " + presetName);
     }
 
+    private static LiteralArgumentBuilder<CommandSourceStack> playstyleCommand() {
+        var command = Commands.literal("playstyle")
+                .executes(cont -> {
+                    StringBuilder text = new StringBuilder("遊び方プリセット: 関連する設定をまとめて切り替えます。名前のない設定は変更しません。");
+                    FFPlaystylePresets.PRESETS.forEach((name, preset) ->
+                            text.append("\n- ").append(name).append(": ").append(preset.description()));
+                    text.append("\n全部を初期値に戻す場合は /flowing_fluids settings reset_all_to_defaults");
+                    return message(cont, text.toString());
+                });
+        FFPlaystylePresets.PRESETS.forEach((name, preset) -> command.then(Commands.literal(name)
+                .executes(cont -> {
+                    preset.apply().accept(FlowingFluids.config);
+                    return messageAndSaveConfig(cont, "遊び方プリセット " + name + " を適用しました。\n" + preset.description());
+                })));
+        return command;
+    }
+
     // 日本語用の数値コマンドヘルパー（設定値と現在値を案内）
     private static LiteralArgumentBuilder<CommandSourceStack> jpIntCommand(String name, String description, String argName, int min, int max,
                                                                            Consumer<Integer> setter, Supplier<Integer> getter,
@@ -2412,6 +2429,7 @@ public class FFCommands {
                                                 })
                                         )
                                 )
+                        ).then(playstyleCommand()
                         ).then(Commands.literal("reset_all_to_defaults")
                                 .executes(cont -> {
                                     FlowingFluids.config = new FFConfig();
@@ -2842,6 +2860,11 @@ public class FFCommands {
                                         "Placed blocks displacing fluids is now enabled.\nLiquids will now be displaced by blocks placed inside them.",
                                         "Placed blocks displacing fluids is now disabled.\nLiquids will no longer be displaced by blocks placed inside them.",
                                         a -> FlowingFluids.config.enableDisplacement = a, () -> FlowingFluids.config.enableDisplacement)
+                                ).then(booleanCommand("displacement_sounds",
+                                        "ブロックを水や溶岩の中に置いて押しのけた時に、バケツの音を鳴らします（押しのけ切れずに失われた時は汲む音）。",
+                                        "押しのけ音を ON にしました。",
+                                        "押しのけ音を OFF にしました。",
+                                        a -> FlowingFluids.config.enableDisplacementSounds = a, () -> FlowingFluids.config.enableDisplacementSounds)
                                 ).then(waterloggingCommand()
                                 ).then(waterloggedBlocksFlowModeCommand()
                                 ).then(booleanCommand("flow_over_edges",
@@ -3539,6 +3562,25 @@ public class FFCommands {
                                     .executes(c -> message(c, "Create mod pipes will draw fluids only when the entire input block is full (8 levels of fluid). This is required for fluid levels to remain consistent between bucket and other usages, and for Flowing Fluids to be as unobtrusive as possible to the Create mod's inner workings. That being said if you want an easy time of using pipes without worrying about water usage, then enable the infinite pipes setting. You can also disable Create pipes from outputting water blocks in it's own config settings"))
                             )
                     )
+                    .then(intCommand("water_wheel_flow_window",
+                            "水車の flow 系モードで「実際に水が動いた」とみなす時間（tick）。この間に水位が一度も変わらなかったマスは流れなしとして扱い、静止した水たまりで水車が回り続けるのを防ぎます。",
+                            "ticks", 20, 1200,
+                            a -> FlowingFluids.config.create_waterWheelFlowMaxTickInterval = a,
+                            () -> FlowingFluids.config.create_waterWheelFlowMaxTickInterval))
+                    .then(floatCommand("water_wheel_max_speed_multiplier",
+                            "水車を通る実際の流量で回転数を変える上限倍率。強い流れほど速く（最大この倍率）、細い流れは0.5倍まで遅くなります。発電量(SU)は回転数に比例します。1.0 にすると Create 本来の固定速度に戻ります。",
+                            "multiplier", 1.0f, 4.0f,
+                            a -> FlowingFluids.config.create_waterWheelMaxSpeedMultiplier = a,
+                            () -> FlowingFluids.config.create_waterWheelMaxSpeedMultiplier))
+                    .then(floatChanceCommand("fan_washing_water_use_chance",
+                            "扇風機の一括洗浄でアイテムを1回処理するごとに、風が通る水を1レベル消費する確率。0で無効。",
+                            a -> FlowingFluids.config.create_fanWashingWaterUseChance = a,
+                            () -> FlowingFluids.config.create_fanWashingWaterUseChance))
+                    .then(floatCommand("condenser_recovery",
+                            "復水器(steam_condenser)がボイラーの水消費のうち水に戻す割合。0.5なら使った水の半分が復水器のタンクに戻ります。",
+                            "fraction", 0.0f, 0.9f,
+                            a -> FlowingFluids.config.create_condenserRecoveryFraction = a,
+                            () -> FlowingFluids.config.create_condenserRecoveryFraction))
 
             );
         }

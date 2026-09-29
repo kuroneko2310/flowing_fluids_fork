@@ -28,8 +28,9 @@ public class MixinWaterPushing {
 
     @ModifyExpressionValue(
             method = "updateFluidHeightAndDoFluidPushing()V",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;isPushedByFluid(Lnet/neoforged/neoforge/fluids/FluidType;)Z")
-
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;isPushedByFluid(Lnet/neoforged/neoforge/fluids/FluidType;)Z"),
+            // Sable (Create: Aeronautics) overwrites this method and removes the INVOKE; skip instead of crashing.
+            require = 0
     )
     private boolean ff$isPushed(final boolean original) {
         if (!original) return false;
@@ -86,7 +87,9 @@ public class MixinWaterPushing {
     @ModifyExpressionValue(
             method = "lambda$updateFluidHeightAndDoFluidPushing$22",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;getFluidMotionScale(Lnet/neoforged/neoforge/fluids/FluidType;)D"),
-            remap = false
+            remap = false,
+            // synthetic lambda names shift between loader builds and other mods can replace the method
+            require = 0
     )
     private double ff$boostForgeWaterCurrentMotionScale(final double original, final FluidType fluidType) {
         if (original <= 0.0D || fluidType != NeoForgeMod.WATER_TYPE.value() || !FlowingFluids.config.enableMod) {

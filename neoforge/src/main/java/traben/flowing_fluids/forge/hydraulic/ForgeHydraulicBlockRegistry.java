@@ -45,6 +45,10 @@ public final class ForgeHydraulicBlockRegistry {
         "ocean_refill_suppressor",
         () -> new OceanRefillSuppressorBlock()
     );
+    public static final DeferredHolder<Block, Block> STEAM_CONDENSER = BLOCKS.register(
+        "steam_condenser",
+        () -> new SteamCondenserBlock()
+    );
     public static final DeferredHolder<Item, Item> FLOW_ANCHOR_SURVEYOR = ITEMS.register(
         "flow_anchor_surveyor",
         () -> new FlowAnchorSurveyorItem(
@@ -89,6 +93,13 @@ public final class ForgeHydraulicBlockRegistry {
             OCEAN_REFILL_SUPPRESSOR.get()
         ).build(null)
     );
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<SteamCondenserBlockEntity>> STEAM_CONDENSER_BLOCK_ENTITY = BLOCK_ENTITY_TYPES.register(
+        "steam_condenser",
+        () -> BlockEntityType.Builder.of(
+            SteamCondenserBlockEntity::new,
+            STEAM_CONDENSER.get()
+        ).build(null)
+    );
 
     private ForgeHydraulicBlockRegistry() {
     }
@@ -128,6 +139,11 @@ public final class ForgeHydraulicBlockRegistry {
             new Item.Properties(),
             "tooltip.flowing_fluids.ocean_refill_suppressor"
         ));
+        ITEMS.register("steam_condenser", () -> new HydraulicBlockItem(
+            STEAM_CONDENSER.get(),
+            new Item.Properties(),
+            "tooltip.flowing_fluids.steam_condenser"
+        ));
         modBus.addListener(ForgeHydraulicBlockRegistry::addToCreativeTabs);
     }
 
@@ -146,6 +162,7 @@ public final class ForgeHydraulicBlockRegistry {
             event.accept(RAIN_COLLECTOR.get());
             event.accept(WATER_ABSORBER.get());
             event.accept(OCEAN_REFILL_SUPPRESSOR.get());
+            event.accept(STEAM_CONDENSER.get());
         }
         if (event.getTabKey() == CreativeModeTabs.REDSTONE_BLOCKS) {
             event.accept(WATER_LEVEL_SENSOR.get());
@@ -171,5 +188,6 @@ public final class ForgeHydraulicBlockRegistry {
         event.registerBlockEntity(net.neoforged.neoforge.capabilities.Capabilities.EnergyStorage.BLOCK, WATER_ABSORBER_BLOCK_ENTITY.get(), (be, side) -> be.energyStorage());
         event.registerBlockEntity(net.neoforged.neoforge.capabilities.Capabilities.FluidHandler.BLOCK, WATER_ABSORBER_BLOCK_ENTITY.get(), (be, side) -> be.fluidStorage());
         event.registerBlockEntity(net.neoforged.neoforge.capabilities.Capabilities.EnergyStorage.BLOCK, OCEAN_REFILL_SUPPRESSOR_BLOCK_ENTITY.get(), (be, side) -> be.energyStorage());
+        event.registerBlockEntity(net.neoforged.neoforge.capabilities.Capabilities.FluidHandler.BLOCK, STEAM_CONDENSER_BLOCK_ENTITY.get(), (be, side) -> be.fluidStorage());
     }
 }

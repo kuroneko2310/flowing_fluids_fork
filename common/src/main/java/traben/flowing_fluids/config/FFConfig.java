@@ -35,6 +35,7 @@ public class FFConfig {
 //    public boolean debugSpread = false;
 //    public boolean debugSpreadPrint = false;
     public boolean enableDisplacement = true;
+    public boolean enableDisplacementSounds = true;
     public boolean enablePistonPushing = true;
     public float rainRefillChance = 0.3f;
     public float oceanRiverSwampRefillChance = 0.05f;
@@ -421,6 +422,14 @@ public class FFConfig {
     // create mod options
     public CreateWaterWheelMode create_waterWheelMode = CreateWaterWheelMode.REQUIRE_FLOW_OR_RIVER;
     public boolean create_infinitePipes = false;
+    // water wheels in flow modes only count cells whose fluid actually changed within this many ticks
+    public int create_waterWheelFlowMaxTickInterval = 80;
+    // strong real flow can speed a water wheel up to this multiple (weak flow slows it to 0.5x); 1.0 keeps Create's fixed speed
+    public float create_waterWheelMaxSpeedMultiplier = 2.0f;
+    // chance that each encased fan bulk-washing step drinks one level from the water it blows through
+    public float create_fanWashingWaterUseChance = 0.25f;
+    // share of a boiler's water use that a steam condenser on top of it turns back into water
+    public float create_condenserRecoveryFraction = 0.5f;
 
     // fluid blacklist
     public ObjectOpenHashSet<String> fluidBlacklist = new ObjectOpenHashSet<>();
@@ -522,6 +531,7 @@ public class FFConfig {
         flowToEdges = buffer.readBoolean();
         enableMod = buffer.readBoolean();
         enableDisplacement = buffer.readBoolean();
+        enableDisplacementSounds = buffer.readBoolean();
         enablePistonPushing = buffer.readBoolean();
         rainRefillChance = buffer.readFloat();
         oceanRiverSwampRefillChance = buffer.readFloat();
@@ -748,6 +758,10 @@ public class FFConfig {
         //create mod options
         create_waterWheelMode = buffer.readEnum(CreateWaterWheelMode.class);
         create_infinitePipes = buffer.readBoolean();
+        create_waterWheelFlowMaxTickInterval = buffer.readVarInt();
+        create_waterWheelMaxSpeedMultiplier = buffer.readFloat();
+        create_fanWashingWaterUseChance = buffer.readFloat();
+        create_condenserRecoveryFraction = buffer.readFloat();
 
         //blacklist
         fluidBlacklist = buffer.readCollection(ObjectOpenHashSet::new, FriendlyByteBuf::readUtf);
@@ -867,6 +881,7 @@ public class FFConfig {
         buffer.writeBoolean(flowToEdges);
         buffer.writeBoolean(enableMod);
         buffer.writeBoolean(enableDisplacement);
+        buffer.writeBoolean(enableDisplacementSounds);
         buffer.writeBoolean(enablePistonPushing);
         buffer.writeFloat(rainRefillChance);
         buffer.writeFloat(oceanRiverSwampRefillChance);
@@ -1092,6 +1107,10 @@ public class FFConfig {
         //create mod options
         buffer.writeEnum(create_waterWheelMode);
         buffer.writeBoolean(create_infinitePipes);
+        buffer.writeVarInt(create_waterWheelFlowMaxTickInterval);
+        buffer.writeFloat(create_waterWheelMaxSpeedMultiplier);
+        buffer.writeFloat(create_fanWashingWaterUseChance);
+        buffer.writeFloat(create_condenserRecoveryFraction);
 
         //blacklist
         buffer.writeCollection(fluidBlacklist, FriendlyByteBuf::writeUtf);
@@ -1268,6 +1287,11 @@ public class FFConfig {
 
         public boolean always(){
             return this == ALWAYS || this == ALWAYS_OPPOSITE;
+        }
+
+        /** Modes that fall back to Create's own flow-vector check (outside rivers for the river variants). */
+        public boolean usesFlow() {
+            return this == REQUIRE_FLOW || this == REQUIRE_FLOW_OR_RIVER || this == REQUIRE_FLOW_OR_RIVER_OPPOSITE;
         }
 
     }

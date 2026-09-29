@@ -290,6 +290,19 @@ This fork expands the Create side further:
 - Create basin recipes can read compatible external finite water held in the basin block space.
 - Create basin and tank wrappers are patched so external fluid insertion behaves more predictably with finite water and does not split one incoming bulk fill across incompatible variety tanks.
 - Water wheels have several modes, including flow-only, river/sea-level assist, any-fluid contact, full-fluid-only, always-on, and opposite-spin variants.
+- Water wheels in the flow modes only count water that actually moved recently. Finite water can rest one level apart, which Create reads as a current, so a still puddle used to spin a wheel forever. Moving water still works, falling columns count as downward flow, and wheels far from players keep their last state.
+- Water wheel speed follows the real flow through the wheel: a brisk stream runs at Create's normal speed, a strong flood up to `water_wheel_max_speed_multiplier` (default 2x, and stress capacity scales with speed), a trickle down to 0.5x. Set the multiplier to 1.0 for Create's fixed speed.
+- Open-ended pipes pouring into a partly filled cell now spread their 8 levels into the connected pool instead of overwriting the cell with a source (which deleted the water already there). If there is no room the pipe backs up.
+- Contraptions (gates, doors, trains of blocks) no longer turn shallow water into full sources: waterloggable blocks only waterlog when they land in a full cell, otherwise the water is pushed aside.
+- Basin recipes that use partial amounts (100 mB, 250 mB, ...) round the water left in the world without a downward bias.
+- Encased fan bulk washing drinks water: each finished wash has a `fan_washing_water_use_chance` (default 25%) to take one level from the first water in the air current.
+- **Steam Condenser** block: place it on top of a Create steam boiler and it turns `condenser_recovery` (default 50%) of the water the boiler boils away back into water in its own 4000 mB tank. Pump it back into the boiler to close the loop. Several condensers on one boiler share that same recovery.
+- **Display Link sources**: point a Create Display Link at a Rain Collector (rain strength, drought index, groundwater), a Water Level Sensor (level or depth reading) or a Steam Condenser (stored condensate).
+- Kelp only grows into full water cells, and partial buckets are refused by cauldrons, which closes two water duplication loops that Create farms could automate.
+
+New Create settings live under `/flowing_fluids create_mod_compat`: `water_wheel_flow_window`, `water_wheel_max_speed_multiplier`, `fan_washing_water_use_chance`, `condenser_recovery`.
+
+For a quick start, `/flowing_fluids settings playstyle create_industrial|realistic_cycle|lightweight_server|relaxed` switches a group of related settings at once and leaves the rest alone.
 
 ![pipes](https://i.imgur.com/hM95cFe.gif)
 
@@ -304,7 +317,7 @@ By default, Water Wheels will also work without flow in river biomes at sea leve
 ![wheels](https://i.imgur.com/E00rDkE.gif)
 
 This behaviour can be modified via the `/flowing_fluids create_mod_compat water_wheel_requirements ...` command, with the following options:
-- `flow` - Requires a constant flow of fluid
+- `flow` - Requires water that is actually moving (see `water_wheel_flow_window`)
 - `flow_or_river` - Requires a constant flow of fluid, or to be touching water in a river biome near sea level ***(Default)***
 - `fluid` - Requires contact with any fluid blocks, regardless of flow
 - `full_fluid` - Requires contact with full *(8 levels)* fluid blocks only, regardless of flow

@@ -2741,7 +2741,8 @@ public class FFFluidUtils {
                 && !state.isAir() // covers most block breaking updates
                 && state.getFluidState().isEmpty()// not placing a waterlogged or fluid block
                 && (!((flags & 64) == 64) || isContraptionPlacement()) //Piston moved flag, except contraptions settling
-                && !(state.getBlock() instanceof LiquidBlockContainer && originalState.getBlock() instanceof BucketPickup)
+                // a dry waterloggable settling from a contraption landed in partial water on purpose: push that water aside
+                && (isContraptionPlacement() || !(state.getBlock() instanceof LiquidBlockContainer && originalState.getBlock() instanceof BucketPickup))
                 && !checkBlockIsNonDisplacer(flowSource, state) // check if the block is a displacer
                ) {
             // fluid block was replaced, lets try and displace the fluid
@@ -2790,6 +2791,16 @@ public class FFFluidUtils {
                             break;
                         }
                     }
+                }
+
+                if (FlowingFluids.config.enableDisplacementSounds && !isContraptionPlacement()) {
+                    // audible cue: an empty-bucket splash when the water found room, a fill gurgle when some was lost
+                    boolean lava = flowSource.isSame(Fluids.LAVA);
+                    level.playSound(null, pos,
+                            amountRemaining > 0
+                                    ? (lava ? net.minecraft.sounds.SoundEvents.BUCKET_FILL_LAVA : net.minecraft.sounds.SoundEvents.BUCKET_FILL)
+                                    : (lava ? net.minecraft.sounds.SoundEvents.BUCKET_EMPTY_LAVA : net.minecraft.sounds.SoundEvents.BUCKET_EMPTY),
+                            net.minecraft.sounds.SoundSource.BLOCKS, 0.6F, 1.0F);
                 }
 
                 AdaptiveTickScheduler.notifyFluidChange(level, pos);
