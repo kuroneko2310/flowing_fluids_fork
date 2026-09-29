@@ -10,6 +10,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.Heightmap;
 import traben.flowing_fluids.FlowingFluids;
 import traben.flowing_fluids.drying.DryingEventSystem;
+import traben.flowing_fluids.season.SeasonClimate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -182,6 +183,7 @@ public final class HeavyRainCellSystem {
         }
         // Convective downpours need moist air; a deep drought suppresses them.
         chance *= (float) (1.0 - 0.8 * DryingEventSystem.getDroughtIndex(level));
+        chance *= (float) SeasonClimate.heavyRainMultiplier(level);
         RandomSource random = level.random;
         if (random.nextFloat() >= Math.min(1.0f, chance)) {
             return;

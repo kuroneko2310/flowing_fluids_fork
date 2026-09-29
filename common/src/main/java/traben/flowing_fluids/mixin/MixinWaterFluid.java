@@ -86,6 +86,10 @@ public abstract class MixinWaterFluid extends FlowingFluid {
         }
 
         ff$trySpawnSurfaceWater(level, blockPos, randomSource);
+        if (FlowingFluids.config.enableErosion
+                && traben.flowing_fluids.water.SedimentTransport.onWaterRandomTick(level, blockPos, fluidState, randomSource)) {
+            return;
+        }
         if (ff$tryEvaporateNether(level, blockPos, amount, randomSource.nextFloat())) {
             if (FlowingFluids.config.printRandomTicks)
                 FlowingFluids.info("--- Water was flash-evaporated via ultra warm dimension at " + blockPos + ". Chance: " + FlowingFluids.config.evaporationNetherChance);

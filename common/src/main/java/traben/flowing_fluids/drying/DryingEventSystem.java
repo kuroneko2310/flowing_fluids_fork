@@ -21,6 +21,7 @@ import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.season.SeasonClimate;
 import traben.flowing_fluids.water.RiverFloodStage;
 import traben.flowing_fluids.water.WeatherWaterSavedData;
 
@@ -121,6 +122,8 @@ public final class DryingEventSystem {
         if (!day) {
             dryRate *= 0.5;
         }
+        // Frozen winter ground barely dries; summer heat dries it fastest.
+        dryRate *= SeasonClimate.droughtMultiplier(level);
         double rainRate = Math.max(0.0f, FlowingFluids.config.droughtRainRecoveryPerDay) * (level.isThundering() ? 2.0 : 1.0);
         state.droughtIndex = DroughtMath.step(state.droughtIndex, elapsed, dryRate, rainRate, level.isRaining());
         WeatherWaterSavedData.get(level).setDroughtIndex(state.droughtIndex);
@@ -170,8 +173,8 @@ public final class DryingEventSystem {
         }
 
         long now = level.getGameTime();
-        float multiplier = (float) DroughtMath.evaporationMultiplier(getDroughtIndex(level),
-                FlowingFluids.config.droughtEvaporationBoost);
+        float multiplier = (float) (DroughtMath.evaporationMultiplier(getDroughtIndex(level),
+                FlowingFluids.config.droughtEvaporationBoost) * SeasonClimate.evaporationMultiplier(level));
         if (FlowingFluids.config.enableDrySeasonEvents && state.isDrySeasonActive(now)) {
             multiplier *= Math.max(0.0f, FlowingFluids.config.drySeasonEvaporationMultiplier);
         }
