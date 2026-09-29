@@ -1,0 +1,120 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'net.neoforged.moddev' version '2.0.147'
+    id 'idea'
+}
+
+// NeoForge 1.21.1 build of the shared sources.
+//
+// ../common is the same source tree the Forge 1.20.1 build compiles. It uses Manifold `#if MC ...` directives, so
+// here it is compiled with the Manifold preprocessor and MC = MC_21 (1.21.1). javac `-A` symbols take precedence
+// over any build.properties the root (1.20.1) build may have written, so both builds can share one checkout.
+// FF_NEOFORGE_STANDALONE selects the direct platform bridge instead of Architectury's @ExpectPlatform.
+
+def repoRoot = file('..')
+def manifoldVersion = '2025.1.16'
+def versionIndex = [
+        MC_18  : 0, MC_19_2: 1, MC_19_4: 2, MC_20_1: 3, MC_20_2: 4, MC_20_4: 5,
+        MC_20_6: 6, MC_21  : 7, MC_21_2: 8, MC_21_4: 9, MC_21_5: 10
+]
+def preprocessorArgs = versionIndex.collect { name, index -> "-A${name}=${index}".toString() } +
+        ["-AMC=${versionIndex.MC_21}".toString(), '-AFF_NEOFORGE_STANDALONE=true']
+
+version = mod_version
+group = 'traben'
+base { archivesName = "flowing_fluids_neoforge_${minecraft_version}" }
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+    withSourcesJar()
+}
+
+sourceSets {
+    main {
+        java.srcDirs = ["${repoRoot}/common/src/main/java", 'src/main/java']
+        // Loader resources first: on duplicates (e.g. the icon) the NeoForge copy wins.
+        resources.srcDirs = ['src/main/resources', "${repoRoot}/common/src/main/resources"]
+        resources.exclude '**/*.accesswidener', 'architectury.common.json'
+    }
+    test {
+        java.srcDirs = ["${repoRoot}/common/src/test/java", 'src/test/java']
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://api.modrinth.com/maven' }
+    maven { url = 'https://maven.createmod.net' }
+    maven { url = 'https://maven.ithundxr.dev/snapshots' }
+}
+
+neoForge {
+    version = neo_version
+    accessTransformers.from('src/main/resources/META-INF/accesstransformer.cfg')
+    runs {
+        client { client() }
+        server { server(); programArgument '--nogui' }
+        gameTestServer { type = 'gameTestServer' }
+        configureEach { systemProperty 'neoforge.enabledGameTestNamespaces', 'flowing_fluids' }
+    }
+    mods { flowing_fluids { sourceSet sourceSets.main } }
+    unitTest {
+        enable()
+        testedMod = mods.flowing_fluids
+    }
+}
+
+dependencies {
+    compileOnly 'maven.modrinth:create:UjX6dr61'
+    compileOnly 'com.tterrag.registrate:Registrate:MC1.21-1.3.0+67'
+    compileOnly 'net.createmod.ponder:ponder-neoforge:1.0.85+mc1.21.1'
+    compileOnly 'maven.modrinth:sodium:Pb3OXVqC'
+    compileOnly 'maven.modrinth:itemphysic:rYw9JKpB'
+    compileOnly 'maven.modrinth:creativecore:vn4lrETC'
+
+    // Shared sources use Manifold #if directives.
+    compileOnly "systems.manifold:manifold-preprocessor:${manifoldVersion}"
+    annotationProcessor "systems.manifold:manifold-preprocessor:${manifoldVersion}"
+    testCompileOnly "systems.manifold:manifold-preprocessor:${manifoldVersion}"
+    testAnnotationProcessor "systems.manifold:manifold-preprocessor:${manifoldVersion}"
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.11.0'
+    testImplementation "net.neoforged:testframework:${neo_version}"
+    if (providers.gradleProperty('compatTest').isPresent()) {
+        testRuntimeOnly 'maven.modrinth:create:UjX6dr61'
+        testRuntimeOnly 'maven.modrinth:itemphysic:rYw9JKpB'
+        testRuntimeOnly 'maven.modrinth:creativecore:vn4lrETC'
+        testRuntimeOnly 'maven.modrinth:mekanism:5KzzycBT'
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xmaxerrs', '300', '-Xplugin:Manifold'] + preprocessorArgs
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    // Source-reading regression tests resolve paths like "common/..." and "neoforge/..." from the repository root.
+    systemProperty 'flowingFluids.projectDir', repoRoot.absolutePath
+}
+
+processResources {
+    inputs.property 'mod_version', mod_version
+    filesMatching('META-INF/neoforge.mods.toml') { expand mod_version: mod_version }
+    // 1.21 renamed the plural data folders (tags/blocks -> tags/block); the shared resources keep the 1.20.1 layout.
+    eachFile { details ->
+        if (details.path.contains('/tags/blocks/')) {
+            details.path = details.path.replace('/tags/blocks/', '/tags/block/')
+        }
+    }
+    includeEmptyDirs = false
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+jar { from("${repoRoot}/LICENSE.txt") }
+
+publishing { publications { mavenJava(MavenPublication) { from components.java } } }

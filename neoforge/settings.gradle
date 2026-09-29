@@ -1,0 +1,5 @@
+// Standalone NeoForge 1.21.1 build. It shares ../common with the Forge 1.20.1 (Architectury) build in the
+// repository root; see build.gradle for how the shared sources are preprocessed for 1.21.1.
+pluginManagement { repositories { gradlePluginPortal() } }
+plugins { id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0' }
+rootProject.name = 'flowing_fluids_neoforge'

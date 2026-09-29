@@ -112,7 +112,7 @@ public final class InfiniteBiomeRefillFallbackController {
 #if MC > MC_21
         return server.getCurrentSmoothedTickTime();
 #else
-        return server.getAverageTickTime();
+        return server.#if MC >= MC_21 getCurrentSmoothedTickTime() #else getAverageTickTime() #endif;
 #endif
     }
 }

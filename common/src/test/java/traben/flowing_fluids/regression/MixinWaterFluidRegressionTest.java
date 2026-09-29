@@ -1,4 +1,4 @@
-package traben.flowing_fluids.mixin;
+package traben.flowing_fluids.regression;
 
 import org.junit.jupiter.api.Test;
 import traben.flowing_fluids.FluidRegressionLogic;

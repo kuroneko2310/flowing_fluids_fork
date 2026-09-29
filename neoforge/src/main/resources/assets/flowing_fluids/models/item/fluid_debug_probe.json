@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "flowing_fluids:item/fluid_debug_probe"
+  }
+}

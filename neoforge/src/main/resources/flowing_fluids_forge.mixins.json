@@ -1,0 +1,32 @@
+{
+  "required": true,
+  "package": "traben.flowing_fluids.forge.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+    "sodium.MixinFluidRenderer2"
+  ],
+  "mixins": [
+    "MixinLevel",
+    "MixinWaterPushing",
+    "itemphysic.MixinCommonPhysic",
+    "itemphysic.MixinItemPhysicServer",
+    "create.MixinBasinBlockEntity",
+    "create.MixinBasinRecipe",
+    "create.MixinCombinedTankWrapper",
+    "create.MixinContraptionPlacement",
+    "create.FluidDrainingBehaviourAccessor",
+    "create.FluidManipulationBehaviourAccessor",
+    "create.MixinGenericItemEmptying_HandlesItemDrain",
+    "create.MixinHosePulley",
+    "create.MixinPipe",
+    "create.MixinWaterWheel",
+    "mekanism.MixinFluidTankItemDispenseBehavior",
+    "mekanism.MixinItemBlockFluidTank",
+    "mekanism.MixinTileEntityElectricPump"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "plugin": "traben.flowing_fluids.forge.mixin.FFPluginForge"
+}

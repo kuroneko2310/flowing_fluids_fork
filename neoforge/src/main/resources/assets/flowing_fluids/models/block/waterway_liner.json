@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "flowing_fluids:block/waterway_liner"
+  }
+}

@@ -43,7 +43,13 @@ public final class WeatherWaterSavedData extends SavedData {
     private final Long2ObjectOpenHashMap<AquiferRegion> aquifers = new Long2ObjectOpenHashMap<>();
 
     public static WeatherWaterSavedData get(ServerLevel level) {
-        return level.getDataStorage().computeIfAbsent(WeatherWaterSavedData::load, WeatherWaterSavedData::new, DATA_NAME);
+        return level.getDataStorage().computeIfAbsent(
+                #if MC >= MC_21
+                new SavedData.Factory<>(WeatherWaterSavedData::new, (tag, registries) -> load(tag), null),
+                #else
+                WeatherWaterSavedData::load, WeatherWaterSavedData::new,
+                #endif
+                DATA_NAME);
     }
 
     public double droughtIndex() {
@@ -152,7 +158,7 @@ public final class WeatherWaterSavedData extends SavedData {
     }
 
     @Override
-    public CompoundTag save(CompoundTag tag) {
+    public CompoundTag save(CompoundTag tag #if MC >= MC_21 , net.minecraft.core.HolderLookup.Provider registries #endif) {
         return write(tag);
     }
 

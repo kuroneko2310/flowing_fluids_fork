@@ -1,0 +1,5 @@
+{
+  "multipart": [
+    { "apply": { "model": "flowing_fluids:block/rain_collector" } }
+  ]
+}

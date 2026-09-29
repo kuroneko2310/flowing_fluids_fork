@@ -34,7 +34,7 @@ public class MixinDispenserBlock {
     private static final Map<Item, DispenseItemBehavior> ff$WRAPPED_ORIGINALS = new IdentityHashMap<>();
 
     @Inject(method = "getDispenseMethod", at = @At("RETURN"), cancellable = true)
-    private void ff$wrapBehaviour(final ItemStack stack, final CallbackInfoReturnable<DispenseItemBehavior> cir) {
+    private void ff$wrapBehaviour(#if MC >= MC_21 final Level level, #endif final ItemStack stack, final CallbackInfoReturnable<DispenseItemBehavior> cir) {
         if (!(stack.getItem() instanceof FFBucketItem bucket)) {
             return;
         }

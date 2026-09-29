@@ -1,0 +1,11 @@
+{
+  "parent": "minecraft:block/cube",
+  "textures": {
+    "down": "minecraft:block/dark_prismarine",
+    "up": "minecraft:block/sea_lantern",
+    "north": "minecraft:block/prismarine_bricks",
+    "south": "minecraft:block/prismarine_bricks",
+    "west": "minecraft:block/prismarine",
+    "east": "minecraft:block/prismarine"
+  }
+}

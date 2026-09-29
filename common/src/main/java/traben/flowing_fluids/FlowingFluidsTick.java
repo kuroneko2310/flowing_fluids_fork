@@ -53,7 +53,7 @@ public final class FlowingFluidsTick {
 
         FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
         double mspt = FlowingFluids.config.enableLoadReduction
-            ? monitor.getLoadControlMspt(level.getServer().getAverageTickTime())
+            ? monitor.getLoadControlMspt(level.getServer().#if MC >= MC_21 getCurrentSmoothedTickTime() #else getAverageTickTime() #endif)
             : 0.0;
         int pendingChunkInitializations = FluidSpatialGrid.getPendingChunkInitializationCount(level);
         if (pendingChunkInitializations > 0) {

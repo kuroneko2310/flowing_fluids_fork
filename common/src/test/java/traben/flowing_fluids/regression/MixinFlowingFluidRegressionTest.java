@@ -1,4 +1,4 @@
-package traben.flowing_fluids.mixin;
+package traben.flowing_fluids.regression;
 
 import org.junit.jupiter.api.Test;
 import traben.flowing_fluids.FFFluidUtils;
@@ -145,7 +145,7 @@ class MixinFlowingFluidRegressionTest {
     }
 
     private static Path sourcePath(String path) {
-        Path fromRoot = Path.of(path);
+        Path fromRoot = Path.of(System.getProperty("flowingFluids.projectDir", ""), path);
         if (Files.exists(fromRoot)) {
             return fromRoot;
         }

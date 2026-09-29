@@ -1295,7 +1295,7 @@ public class FFFluidUtils {
                 || entityType == null
                 || level == null
                 || pos == null
-                || SpawnPlacements.getPlacementType(entityType) != SpawnPlacements.Type.ON_GROUND) {
+                || SpawnPlacements.getPlacementType(entityType) != #if MC >= MC_21 net.minecraft.world.entity.SpawnPlacementTypes.ON_GROUND #else SpawnPlacements.Type.ON_GROUND #endif) {
             return false;
         }
 

@@ -245,7 +245,7 @@ public final class FluidTickWorkloadGovernor {
         FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
         double mspt = monitor.getLoadControlMspt(0.0);
         if (mspt <= 0.0 && level instanceof ServerLevel serverLevel) {
-            mspt = serverLevel.getServer().getAverageTickTime();
+            mspt = serverLevel.getServer().#if MC >= MC_21 getCurrentSmoothedTickTime() #else getAverageTickTime() #endif;
         }
         return mspt;
     }

@@ -1,11 +1,26 @@
 # Flowing Fluids Reworked
 
-A Forge 1.20.1 finite-fluid fork of Flowing Fluids by Traben, tuned for industrial survival packs where water is not just scenery: it is pressure, supply, runoff, machine input, cave danger, and something you can actually build around.
+A Forge 1.20.1 and NeoForge 1.21.1 finite-fluid fork of Flowing Fluids by Traben, tuned for industrial survival packs where water is not just scenery: it is pressure, supply, runoff, machine input, cave danger, and something you can actually build around.
 
 - Original project: [Traben-0/flowing_fluids](https://github.com/Traben-0/flowing_fluids)
 - Original author: Traben
 - Fork maintainer: kuroneko2310
 - License: LGPL-3.0-or-later
+
+## Building
+
+One checkout builds both game versions from the same shared code in `common/`:
+
+| Target | Command | Output |
+|---|---|---|
+| Forge 1.20.1 (Architectury) | `./gradlew build` in the repository root | `forge/build/libs/` |
+| NeoForge 1.21.1 | `./gradlew build` inside `neoforge/` (it has its own Gradle wrapper) | `neoforge/build/libs/` |
+
+`common/` uses Manifold `#if MC ...` directives for version differences. The root build compiles it as 1.20.1
+(`property_variants/3.properties`); the NeoForge build compiles the same files as 1.21.1 by passing `-AMC=7` to javac,
+which takes precedence over the `build.properties` the root build writes. Code that only exists on one loader lives in
+`forge/` or `neoforge/`; the NeoForge platform code keeps the `traben.flowing_fluids.forge` package so both trees stay
+easy to compare. When a change touches loader code, port it to both folders.
 
 ## Why this fork exists
 
@@ -24,7 +39,7 @@ In short: this fork is for worlds where reservoirs, canals, pumps, rainfall, cav
 
 Compared with the original public mod line, this fork adds and retunes:
 
-- **Forge 1.20.1 first.** This branch is intentionally focused on the Forge 1.20.1 modpack stack. Fabric, NeoForge, and broad multi-loader maintenance are not the goal here.
+- **Forge 1.20.1 and NeoForge 1.21.1.** Both are built from this branch with shared `common/` code. Fabric and broad multi-loader maintenance are not the goal here.
 - **Machine-aware finite water.** Create and Mekanism integrations can consume connected partial water levels, output partial amounts, and avoid silently minting vanilla sources in places where finite water should matter.
 - **A stronger water cycle.** Rain no longer has to be only "top off partial blocks"; it can generate shallow puddles, scale by storm intensity, use catchment and upstream terrain boosts, skip infinite-water biomes, and queue bounded placements.
 - **Better ocean and infinite-biome behavior.** Sea-level refill, surface drain, broad-water preservation, deep-ocean ambient access, overflow evaporation, and local refill suppression are separated so oceans can be powerful without making deliberate draining impossible.
@@ -56,7 +71,7 @@ Existing configs are not force-rewritten. Delete `config/flowing_fluids.json` or
 
 - It is heavier and more opinionated than the original. Big floods, ocean draining, massive pipe networks, or aggressive spring settings can still cost real server time.
 - The new `fluid_processing_distance = 160` default improves normal player-area performance, but far-away chunk-loaded machines may need `0` or a larger distance.
-- Forge-only compatibility means this fork is not a drop-in continuation for Fabric or NeoForge packs.
+- Only Forge 1.20.1 and NeoForge 1.21.1 are built; this fork is not a drop-in continuation for Fabric packs.
 - Some machine interactions intentionally consume water levels. That is the point, but it can surprise builds designed around vanilla infinite source behavior.
 
 ## Original project links
