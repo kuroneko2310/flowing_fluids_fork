@@ -8,9 +8,12 @@ import traben.flowing_fluids.flood.FloodEventSystem;
 import traben.flowing_fluids.optimization.HierarchicalDistanceManager;
 import traben.flowing_fluids.performance.FluidPerformanceMonitor;
 import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
+import traben.flowing_fluids.rain.HeavyRainCellSystem;
 import traben.flowing_fluids.rain.RainWaterSystem;
 import traben.flowing_fluids.snow.SnowmeltWaterSystem;
 import traben.flowing_fluids.util.DimensionKey;
+import traben.flowing_fluids.water.EntityWaterDisplacement;
+import traben.flowing_fluids.water.RiverFloodStage;
 import traben.flowing_fluids.water.WaterPressureSystem;
 
 import java.util.Set;
@@ -38,10 +41,13 @@ public final class FlowingFluidsTick {
         }
         disabledDimensionsCleared.remove(key);
         FloodEventSystem.onLevelTick(level);
+        HeavyRainCellSystem.onLevelTick(level);
         RainWaterSystem.onLevelTick(level);
         DryingEventSystem.onLevelTick(level);
         SnowmeltWaterSystem.onLevelTick(level);
         SiphonFlowSystem.onLevelTick(level);
+        EntityWaterDisplacement.onLevelTick(level);
+        RiverFloodStage.onLevelTick(level);
 
         FluidPerformanceMonitor monitor = FluidPerformanceMonitor.getInstance();
         double mspt = FlowingFluids.config.enableLoadReduction
@@ -158,8 +164,11 @@ public final class FlowingFluidsTick {
         lastMaintenanceTick.remove(DimensionKey.of(level));
         FloodEventSystem.onLevelUnload(level);
         RainWaterSystem.onLevelUnload(level);
+        HeavyRainCellSystem.onLevelUnload(level);
         DryingEventSystem.onLevelUnload(level);
         SnowmeltWaterSystem.onLevelUnload(level);
+        EntityWaterDisplacement.clearDimension(level);
+        RiverFloodStage.clearDimension(level);
         WaterPressureSystem.onLevelUnload(level);
         AdaptiveTickScheduler.clearDimension(level);
         FluidSpatialGrid.clearDimension(level);

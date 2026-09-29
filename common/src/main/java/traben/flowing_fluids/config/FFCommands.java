@@ -45,6 +45,7 @@ import traben.flowing_fluids.performance.FluidAutoTickDelay;
 import traben.flowing_fluids.performance.FluidFineTickDelay;
 import traben.flowing_fluids.performance.FluidTickWorkloadGovernor;
 import traben.flowing_fluids.performance.InfiniteBiomeRefillFallbackController;
+import traben.flowing_fluids.rain.HeavyRainCellSystem;
 import traben.flowing_fluids.rain.RainWaterSystem;
 import traben.flowing_fluids.water.WaterPressureSystem;
 
@@ -1966,6 +1967,45 @@ public class FFCommands {
                                 "height", 1, 32,
                                 a -> FlowingFluids.config.shadeRoofSearchHeight = a,
                                 () -> FlowingFluids.config.shadeRoofSearchHeight)))
+                .then(Commands.literal("drought")
+                        .then(booleanCommand("enable",
+                                "干ばつ指数を有効にします。晴天が続くほど指数が上がり、蒸発が強まり、水たまりや池が干上がり、川が細ります。雨が降ると回復します。",
+                                "干ばつ指数を有効にしました。",
+                                "干ばつ指数を無効にしました。",
+                                a -> FlowingFluids.config.enableDroughtIndex = a,
+                                () -> FlowingFluids.config.enableDroughtIndex))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("index", com.mojang.brigadier.arguments.FloatArgumentType.floatArg(0.0f, 1.0f))
+                                        .executes(cont -> {
+                                            DryingEventSystem.setDroughtIndex(cont.getSource().getLevel(),
+                                                    cont.getArgument("index", Float.class));
+                                            return message(cont, DryingEventSystem.describeStatus(cont.getSource().getLevel()));
+                                        })))
+                        .then(floatCommand("accumulation_per_day",
+                                "晴天時の干ばつの進みやすさ r です（dD/dt = r(1-D)）。乾季は3倍、熱波は2倍、夜は半分になります。",
+                                "rate", 0.0f, 5.0f,
+                                a -> FlowingFluids.config.droughtAccumulationPerDay = a,
+                                () -> FlowingFluids.config.droughtAccumulationPerDay))
+                        .then(floatCommand("rain_recovery_per_day",
+                                "雨による回復の速さ k です（dD/dt = -kD）。雷雨中は2倍になります。",
+                                "rate", 0.0f, 100.0f,
+                                a -> FlowingFluids.config.droughtRainRecoveryPerDay = a,
+                                () -> FlowingFluids.config.droughtRainRecoveryPerDay))
+                        .then(floatCommand("evaporation_boost",
+                                "干ばつ時の蒸発倍率は 1 + boost × D^1.5 です。",
+                                "boost", 0.0f, 10.0f,
+                                a -> FlowingFluids.config.droughtEvaporationBoost = a,
+                                () -> FlowingFluids.config.droughtEvaporationBoost))
+                        .then(intCommand("max_evaporation_level",
+                                "極度の干ばつで一度に蒸発できる水位の上限です。",
+                                "level", 1, 8,
+                                a -> FlowingFluids.config.droughtMaxEvaporationLevel = a,
+                                () -> FlowingFluids.config.droughtMaxEvaporationLevel))
+                        .then(floatCommand("pond_drawdown_chance",
+                                "極度の干ばつで、露出した池の水面が1レベル下がる確率です（ランダムtickごと）。",
+                                "chance", 0.0f, 1.0f,
+                                a -> FlowingFluids.config.droughtPondDrawdownChance = a,
+                                () -> FlowingFluids.config.droughtPondDrawdownChance)))
                 .then(Commands.literal("river_drought")
                         .executes(FFCommands::dryingStatus)
                         .then(booleanCommand("enable",
@@ -1990,6 +2030,66 @@ public class FFCommands {
                                 "multiplier", 1.0f, 4.0f,
                                 a -> FlowingFluids.config.riverDroughtHeatwaveDrainBonus = a,
                                 () -> FlowingFluids.config.riverDroughtHeatwaveDrainBonus)));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> heavyRainCommand() {
+        return Commands.literal("heavy")
+                .executes(cont -> message(cont, HeavyRainCellSystem.describe(cont.getSource().getLevel(),
+                        BlockPos.containing(cont.getSource().getPosition()))))
+                .then(Commands.literal("status")
+                        .executes(cont -> message(cont, HeavyRainCellSystem.describe(cont.getSource().getLevel(),
+                                BlockPos.containing(cont.getSource().getPosition())))))
+                .then(Commands.literal("start_here")
+                        .executes(cont -> startHeavyRainHere(cont, FlowingFluids.config.heavyRainRadius,
+                                FlowingFluids.config.heavyRainDurationTicks / 20))
+                        .then(Commands.argument("radius", IntegerArgumentType.integer(8, 256))
+                                .executes(cont -> startHeavyRainHere(cont, cont.getArgument("radius", Integer.class),
+                                        FlowingFluids.config.heavyRainDurationTicks / 20))
+                                .then(Commands.argument("duration_seconds", IntegerArgumentType.integer(10, 3600))
+                                        .executes(cont -> startHeavyRainHere(cont, cont.getArgument("radius", Integer.class),
+                                                cont.getArgument("duration_seconds", Integer.class))))))
+                .then(Commands.literal("stop")
+                        .executes(cont -> message(cont, "豪雨セルを " + HeavyRainCellSystem.stopAll(cont.getSource().getLevel()) + " 個消しました。")))
+                .then(booleanCommand("enable",
+                        "雨の間、風に流されて移動する豪雨セル（ゲリラ豪雨）を発生させます。セルの中では雨の量が最大で peak_multiplier 倍になります。",
+                        "豪雨セルを有効にしました。",
+                        "豪雨セルを無効にしました。",
+                        a -> FlowingFluids.config.enableHeavyRainCells = a,
+                        () -> FlowingFluids.config.enableHeavyRainCells))
+                .then(floatCommand("chance",
+                        "判定ごとに新しい豪雨セルが発生する確率です。雷雨中は2倍になります。",
+                        "chance", 0.0f, 1.0f,
+                        a -> FlowingFluids.config.heavyRainCellChancePerRoll = a,
+                        () -> FlowingFluids.config.heavyRainCellChancePerRoll))
+                .then(floatCommand("peak_multiplier",
+                        "最盛期のセル中心での雨量倍率です。",
+                        "multiplier", 1.0f, 8.0f,
+                        a -> FlowingFluids.config.heavyRainPeakMultiplier = a,
+                        () -> FlowingFluids.config.heavyRainPeakMultiplier))
+                .then(intCommand("max_cells",
+                        "1ディメンションで同時に存在できる豪雨セルの最大数です。",
+                        "cells", 0, 8,
+                        a -> FlowingFluids.config.heavyRainMaxCells = a,
+                        () -> FlowingFluids.config.heavyRainMaxCells))
+                .then(intCommand("radius",
+                        "豪雨セルの標準半径（ブロック）です。実際の半径は±35%ばらつきます。",
+                        "radius", 8, 256,
+                        a -> FlowingFluids.config.heavyRainRadius = a,
+                        () -> FlowingFluids.config.heavyRainRadius))
+                .then(intCommand("duration_seconds",
+                        "豪雨セルの標準寿命（秒）です。実際の寿命は±35%ばらつきます。",
+                        "seconds", 10, 3600,
+                        a -> FlowingFluids.config.heavyRainDurationTicks = a * 20,
+                        () -> FlowingFluids.config.heavyRainDurationTicks / 20));
+    }
+
+    private static int startHeavyRainHere(CommandContext<CommandSourceStack> context, int radius, int durationSeconds) {
+        boolean started = HeavyRainCellSystem.startCell(context.getSource().getLevel(),
+                BlockPos.containing(context.getSource().getPosition()), radius, durationSeconds * 20);
+        return message(context, started
+                ? "豪雨セルを発生させました。雨が降っていない間は急速に衰弱します。\n"
+                        + HeavyRainCellSystem.describe(context.getSource().getLevel(), BlockPos.containing(context.getSource().getPosition()))
+                : "このディメンションでは豪雨セルを発生させられません。");
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> floodCommand() {
@@ -2380,6 +2480,18 @@ public class FFCommands {
                                                 a -> FlowingFluids.config.enableHydraulicBlocks = a,
                                                 () -> FlowingFluids.config.enableHydraulicBlocks))
                                 ).then(siphonsCommand()
+                                ).then(Commands.literal("entity_displacement")
+                                        .then(booleanCommand("enable",
+                                                "プレイヤーが水に入ると、水中に沈んだ体積ぶんだけ水面が少し上がります。\n上げた水は台帳で管理し、水から出ると同じ量を回収するので水は増えも減りもしません。",
+                                                "押しのけ水位を有効にしました。水に入ると水面が少し上がり、出ると元に戻ります。",
+                                                "押しのけ水位を無効にしました。貸し出し中の水は順次回収されます。",
+                                                a -> FlowingFluids.config.enableEntityWaterDisplacement = a,
+                                                () -> FlowingFluids.config.enableEntityWaterDisplacement))
+                                        .then(floatCommand("scale",
+                                                "押しのける水量の倍率です。1.0 が物理的な体積（全身が沈んだプレイヤーで約5レベル）です。",
+                                                "scale", 0.0f, 4.0f,
+                                                a -> FlowingFluids.config.entityWaterDisplacementScale = a,
+                                                () -> FlowingFluids.config.entityWaterDisplacementScale))
                                 ).then(Commands.literal("cavity_pressure")
                                         .executes(FFCommands::cavityPressureStatus)
                                         .then(Commands.literal("status")
@@ -2829,6 +2941,29 @@ public class FFCommands {
                                 .executes(FFCommands::rainStatus)
                                 .then(Commands.literal("status")
                                         .executes(FFCommands::rainStatus))
+                                .then(heavyRainCommand())
+                                .then(Commands.literal("high_water")
+                                        .then(booleanCommand("enable",
+                                                "雨の間、川と海の海面上限を外し、周囲から流れ込む水で増水できるようにします。増水した川は流れが速く、押し流す力も強くなります。",
+                                                "増水を有効にしました。雨の間は川と海の水位上限がなくなります。",
+                                                "増水を無効にしました。川と海は常に海面付近に保たれます。",
+                                                a -> FlowingFluids.config.enableRiverFloodStage = a,
+                                                () -> FlowingFluids.config.enableRiverFloodStage))
+                                        .then(intCommand("recession_seconds",
+                                                "雨が止んでから海面上限が元に戻るまでの時間（秒）です。この間に増水がゆっくり引きます。",
+                                                "seconds", 0, 3600,
+                                                a -> FlowingFluids.config.riverFloodRecessionTicks = a * 20,
+                                                () -> FlowingFluids.config.riverFloodRecessionTicks / 20))
+                                        .then(floatCommand("flow_delay_multiplier",
+                                                "増水中の川・海の水のtick間隔倍率です。小さいほど速く流れます。",
+                                                "multiplier", 0.1f, 1.0f,
+                                                a -> FlowingFluids.config.riverFloodFlowDelayMultiplier = a,
+                                                () -> FlowingFluids.config.riverFloodFlowDelayMultiplier))
+                                        .then(floatCommand("current_push_multiplier",
+                                                "増水中の川でプレイヤーやモブを押し流す力の倍率です。",
+                                                "multiplier", 1.0f, 5.0f,
+                                                a -> FlowingFluids.config.riverFloodCurrentPushMultiplier = a,
+                                                () -> FlowingFluids.config.riverFloodCurrentPushMultiplier)))
                                 .then(Commands.literal("runtime_status")
                                         .executes(FFCommands::rainRuntimeStatus))
                                 .then(Commands.literal("inspect_here")

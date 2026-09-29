@@ -1220,6 +1220,14 @@ public class FFFluidUtils {
         return FLOWING_WATER_CURRENT_PUSH_MULTIPLIER;
     }
 
+    /**
+     * Push multiplier for a specific entity, including the extra drag of a river in spate.
+     */
+    public static double getFlowingWaterCurrentPushMultiplier(Entity entity) {
+        return FLOWING_WATER_CURRENT_PUSH_MULTIPLIER
+                * traben.flowing_fluids.water.RiverFloodStage.getCurrentPushMultiplier(entity.level(), entity.blockPosition());
+    }
+
     public static float getFlowingWaterCurrentMoveInputMultiplier() {
         return FLOWING_WATER_CURRENT_MOVE_INPUT_MULTIPLIER;
     }
@@ -1820,6 +1828,15 @@ public class FFFluidUtils {
     }
 
     public static int addAmountToFluidAtPosWithRemainderAndTrySpreadIfFull(LevelAccessor levelAccessor, BlockPos pos, FlowingFluid fluid, int addAmount, boolean canSpreadUp, boolean canSpreadDown) {
+        return addAmountToFluidAtPosWithRemainderAndTrySpreadIfFull(levelAccessor, pos, fluid, addAmount, canSpreadUp, canSpreadDown, false);
+    }
+
+    /**
+     * @param openCellsOnly when true the spread may only enter genuinely open cells (air, replaceable blocks or real
+     *                      liquid blocks). Generated water such as spring output uses this so it can never be pushed
+     *                      into or through waterloggable / virtual-fluid solid blocks that a player used as a cap.
+     */
+    public static int addAmountToFluidAtPosWithRemainderAndTrySpreadIfFull(LevelAccessor levelAccessor, BlockPos pos, FlowingFluid fluid, int addAmount, boolean canSpreadUp, boolean canSpreadDown, boolean openCellsOnly) {
         if (addAmount <= 0) {
             return 0;
         }
@@ -1843,7 +1860,7 @@ public class FFFluidUtils {
             return addAmount;
         }
 
-        var data = placeConnectedFluidAmountAndPlaceAction(levelAccessor, pos, addAmount, fluid, 80, canSpreadUp, canSpreadDown);
+        var data = placeConnectedFluidAmountAndPlaceAction(levelAccessor, pos, addAmount, fluid, 80, canSpreadUp, canSpreadDown, openCellsOnly);
         if (data.first() != addAmount) {
             data.second().run();
             return data.first();
@@ -2017,6 +2034,17 @@ public class FFFluidUtils {
     }
 
     public static Pair<Integer, Runnable> placeConnectedFluidAmountAndPlaceAction(final LevelAccessor levelAccessor, final BlockPos blockPos, final int amountToPlace, final FlowingFluid fluid, int depth, boolean doUp, boolean doDown) {
+        return placeConnectedFluidAmountAndPlaceAction(levelAccessor, blockPos, amountToPlace, fluid, depth, doUp, doDown, false);
+    }
+
+    /**
+     * Cells that generated fluid may occupy without relying on waterlogging or virtual fluid storage.
+     */
+    public static boolean isOpenFluidCell(BlockState state, Fluid fluid) {
+        return state.isAir() || state.liquid() || state.canBeReplaced(fluid);
+    }
+
+    public static Pair<Integer, Runnable> placeConnectedFluidAmountAndPlaceAction(final LevelAccessor levelAccessor, final BlockPos blockPos, final int amountToPlace, final FlowingFluid fluid, int depth, boolean doUp, boolean doDown, boolean openCellsOnly) {
         var originalState = getEffectiveFluidState(levelAccessor, blockPos);
         int originalAmount = originalState.getAmount();
         if (originalState.getType().isSame(fluid) && originalAmount > 0) {
@@ -2063,8 +2091,14 @@ public class FFFluidUtils {
                 FluidState state = getEffectiveFluidState(levelAccessor, currentPos, blockState);
                 boolean isSameFluid = fluid.isSame(state.getType());
                 boolean canReceiveNewFluid = state.isEmpty()
-                        && (blockState.isAir() || blockState.canBeReplaced(fluid) || canStoreVirtualFluidState(levelAccessor, blockState));
-                boolean passThroughConduit = state.isEmpty() && isPassThroughFluidBlock(levelAccessor, blockState, null);
+                        && (blockState.isAir() || blockState.canBeReplaced(fluid)
+                            || (!openCellsOnly && canStoreVirtualFluidState(levelAccessor, blockState)));
+                boolean passThroughConduit = !openCellsOnly && state.isEmpty() && isPassThroughFluidBlock(levelAccessor, blockState, null);
+                if (openCellsOnly && !isOpenFluidCell(blockState, fluid)) {
+                    // Strict mode: a waterlogged or virtual-fluid solid block is a wall, even when it already holds fluid.
+                    isSameFluid = false;
+                    canReceiveNewFluid = false;
+                }
                 if (isSameFluid || canReceiveNewFluid || passThroughConduit) {
                     traversedCandidateCells++;
                     int currentAmountAtPos = isSameFluid ? state.getAmount() : 0;
@@ -3322,6 +3356,9 @@ public class FFFluidUtils {
         }
         int seaLevel = seaLevel(world);
         if (amount <= 0 || amount >= 8 || amount > 4 || pos.getY() != seaLevel) {
+            return 0;
+        }
+        if (traben.flowing_fluids.water.RiverFloodStage.isHighWater(world)) {
             return 0;
         }
         if (fluid.isSame(Fluids.WATER) && isNearFlowingFluidsWaterSpringSource(level, pos)) {

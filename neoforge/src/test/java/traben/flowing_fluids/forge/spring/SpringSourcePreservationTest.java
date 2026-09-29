@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -76,8 +77,16 @@ class SpringSourcePreservationTest {
                 "Spring emission must not delete existing water cells.");
         assertFalse(source.contains("supportsVirtualFluidState"),
                 "Virtual or waterloggable solid cells must block direct spring emission.");
-        assertTrue(source.contains("state.isAir() || state.liquid() || state.canBeReplaced(fluid)"),
+        assertTrue(source.contains("FFFluidUtils.isOpenFluidCell(state, fluid)"),
                 "Spring emission should only cross genuinely open or fluid cells.");
+        String shared = Files.readString(sharedSourcePath("common/src/main/java/traben/flowing_fluids/FFFluidUtils.java"));
+        assertTrue(shared.contains("return state.isAir() || state.liquid() || state.canBeReplaced(fluid);"),
+                "The shared open-cell rule must reject waterloggable or virtual-fluid solid blocks.");
+        assertTrue(shared.contains("if (openCellsOnly && !isOpenFluidCell(blockState, fluid))"),
+                "Connected placement must honour the strict open-cell rule while spreading.");
+        assertEquals(2, countOccurrences(source, "allowDownwardSpread,\n                    true")
+                        + countOccurrences(source, "allowDownwardSpread,\n                true"),
+                "Both connected spreads from a spring tip must use strict open-cell placement so a capped shaft cannot leak through its cap.");
         assertTrue(source.contains("if (!canEmitInto(outputState, outputFluid, sourceFluid))"),
                 "Every direct emitter call must revalidate the output cell before writing fluid.");
     }
@@ -86,7 +95,7 @@ class SpringSourcePreservationTest {
     void surfaceVentsFillUpToABlockerWithoutGeneratingAboveIt() throws IOException {
         String source = Files.readString(springSourcePath("SurfaceVentLocator.java"));
         String sustain = methodBody(source, "public static void sustainSurfaceVent");
-        String shaft = methodBody(source, "private static boolean hasPassableShaft");
+        String shaft = methodBody(source, "private static boolean isPassableShaftCell");
 
         assertTrue(sustain.contains("if (!SpringFluidEmitter.canEmitInto"),
                 "Surface vents must revalidate every shaft cell while sustaining water.");
@@ -96,6 +105,8 @@ class SpringSourcePreservationTest {
                 "Crest and spray generation must only run when water actually reached the mouth.");
         assertTrue(shaft.contains("SpringFluidEmitter.canEmitInto"),
                 "Surface vent discovery must use the same strict spring obstruction rule.");
+        assertTrue(sustain.contains("int realizedCrest = sustainRaisedCrest(") && sustain.contains("if (realizedCrest > 0)"),
+                "Spray must start from the crest that was actually realized, not from the nominal crest height above a blocker.");
     }
 
     @Test
@@ -217,5 +228,13 @@ class SpringSourcePreservationTest {
             return fromRoot;
         }
         return Path.of("..", path);
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        for (int index = haystack.indexOf(needle); index >= 0; index = haystack.indexOf(needle, index + needle.length())) {
+            count++;
+        }
+        return count;
     }
 }

@@ -775,6 +775,13 @@ public class AdaptiveTickScheduler {
                     && canFlowDownFast(level, pos, state)) {
                 boostedDelay = Math.min(boostedDelay, Math.max(1, Math.round(baseDelay * downMultiplier)));
             }
+            if (level instanceof Level world && state.getType().isSame(Fluids.WATER)) {
+                // Rivers in spate run as a torrent while it rains.
+                float floodMultiplier = traben.flowing_fluids.water.RiverFloodStage.getFlowDelayMultiplier(world, pos);
+                if (floodMultiplier < 1f) {
+                    boostedDelay = Math.min(boostedDelay, Math.max(1, Math.round(baseDelay * floodMultiplier)));
+                }
+            }
         }
 
         return boostedDelay;

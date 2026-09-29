@@ -25,8 +25,10 @@ final class SpringColumnPulseController {
 
     static int synchronizeColumn(ServerLevel level, BlockPos springPos, Direction growthDirection,
                                  SpringStrength strength, FlowingFluid fluid) {
-        int targetHeight = resolveTargetHeight(level, level.getGameTime(), springPos, growthDirection, strength, fluid);
-        int maxHeight = resolveMaxColumnHeight(level, springPos, growthDirection, strength, fluid);
+        // One column scan per pulse: both the target and the ceiling depend on the same pressure reach.
+        int pressureReachHeight = resolvePressureReachHeight(level, springPos, growthDirection, fluid);
+        int targetHeight = resolveTargetHeight(level, level.getGameTime(), springPos, growthDirection, strength, fluid, pressureReachHeight);
+        int maxHeight = resolveMaxColumnHeight(level, springPos, growthDirection, strength, fluid, pressureReachHeight);
         int realizedHeight = 0;
 
         for (int offset = 1; offset <= maxHeight; offset++) {
@@ -36,8 +38,11 @@ final class SpringColumnPulseController {
             boolean canOccupy = SpringFluidEmitter.canEmitInto(currentState, currentFluid, fluid);
 
             if (offset <= targetHeight && canOccupy) {
-                FFFluidUtils.setFluidStateAtPosToNewAmount(level, currentPos, fluid, 8);
-                AdaptiveTickScheduler.scheduleFluidTick(level, currentPos, fluid, fluid.getTickDelay(level));
+                if (!isFull(currentFluid, fluid)) {
+                    // Already-full column cells are left alone so a steady column does not re-wake every pulse.
+                    FFFluidUtils.setFluidStateAtPosToNewAmount(level, currentPos, fluid, 8);
+                    AdaptiveTickScheduler.scheduleFluidTick(level, currentPos, fluid, fluid.getTickDelay(level));
+                }
                 realizedHeight = offset;
                 continue;
             }
@@ -75,14 +80,17 @@ final class SpringColumnPulseController {
         return realizedHeight;
     }
 
+    static boolean isFull(FluidState state, FlowingFluid fluid) {
+        return state.getType().isSame(fluid) && state.getAmount() >= 8;
+    }
+
     static int nextPulseDelay(ServerLevel level, BlockPos springPos, SpringStrength strength, FlowingFluid fluid) {
         long seed = baseSeed(springPos, strength, fluid);
         return resolvePulseInterval(seed, strength, fluid);
     }
 
     private static int resolveTargetHeight(ServerLevel level, long gameTime, BlockPos springPos, Direction growthDirection,
-                                           SpringStrength strength, FlowingFluid fluid) {
-        int pressureReachHeight = resolvePressureReachHeight(level, springPos, growthDirection, fluid);
+                                           SpringStrength strength, FlowingFluid fluid, int pressureReachHeight) {
         if (pressureReachHeight > 0) {
             return pressureReachHeight;
         }
@@ -109,8 +117,8 @@ final class SpringColumnPulseController {
         return minHeight + Math.floorMod((int) phaseSeed, range);
     }
 
-    private static int resolveMaxColumnHeight(ServerLevel level, BlockPos springPos, Direction growthDirection, SpringStrength strength, FlowingFluid fluid) {
-        int pressureReachHeight = resolvePressureReachHeight(level, springPos, growthDirection, fluid);
+    private static int resolveMaxColumnHeight(ServerLevel level, BlockPos springPos, Direction growthDirection, SpringStrength strength,
+                                              FlowingFluid fluid, int pressureReachHeight) {
         if (pressureReachHeight > 0) {
             return pressureReachHeight;
         }

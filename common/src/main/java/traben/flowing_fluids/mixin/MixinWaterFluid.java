@@ -177,7 +177,9 @@ public abstract class MixinWaterFluid extends FlowingFluid {
         }
 
         if (FFFluidUtils.seaLevel(level) == blockPos.getY()) {
-            if (chance < FlowingFluids.config.infiniteWaterBiomeDrainSurfaceChance) {
+            // High water lifts the sea-level cap; after rain the drain returns gradually as the flood recedes.
+            if (chance < FlowingFluids.config.infiniteWaterBiomeDrainSurfaceChance
+                    * traben.flowing_fluids.water.RiverFloodStage.getCapFactor(level)) {
                 // Sea-level drain is only meant for settled thin surface tiles, not fresh inlet fronts.
                 if (isInfBiome && hasInfiniteBiomeAmbientAccess) {
                     int drainAmount = FFFluidUtils.getInfiniteBiomeSurfaceDrainAmount(level, blockPos, this, amount);
@@ -231,7 +233,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
         if (!DryingEventSystem.shouldRunEvaporationTick(level, blockPos, FlowingFluids.config.evaporationIntervalTicks)) {
             return false;
         }
-        int evaporationMaxLevel = DryingEventSystem.getSurfaceEvaporationMaxLevel();
+        int evaporationMaxLevel = DryingEventSystem.getSurfaceEvaporationMaxLevel(level);
         float evaporationChance = DryingEventSystem.getSurfaceEvaporationChance(level);
         if (chance < evaporationChance) {
             if (FFFluidUtils.isProtectedInfiniteBiomeWater(level, blockPos, this, amount)) return false;
@@ -267,14 +269,32 @@ public abstract class MixinWaterFluid extends FlowingFluid {
                 return ff$applyLocalDrainAndMaybeRestoreMud(level, blockPos, amount, true);
             }
         }
-        return false;
+        return ff$tryDroughtDrawdown(level, blockPos, amount, chance);
+    }
+
+    /**
+     * In a serious drought an exposed, settled pond surface loses one level at a time, so ponds visibly shrink
+     * instead of only puddles drying. Infinite-biome water, moving fronts, shaded and rained-on water are left alone.
+     */
+    @Unique
+    private boolean ff$tryDroughtDrawdown(final Level level, final BlockPos blockPos, int amount, float chance) {
+        if (amount <= 0 || chance >= DryingEventSystem.getDroughtPondDrawdownChance(level)) return false;
+        if (FFFluidUtils.isProtectedInfiniteBiomeWater(level, blockPos, this, amount)) return false;
+        if (AdaptiveTickScheduler.isFlowActiveNow(level, blockPos)) return false;
+        if (FlowingFluids.config.evaporationDaytimeOnly && !level.isDay()) return false;
+        if (level.isRainingAt(blockPos.above())) return false;
+        FluidState aboveFluid = FFFluidUtils.getEffectiveFluidState(level, blockPos.above());
+        if (aboveFluid != null && aboveFluid.getType().isSame(this)) return false;
+        if (DryingEventSystem.isShadeProtected(level, blockPos)) return false;
+        if (!DryingEventSystem.hasEvaporationSkyAccess(level, blockPos)) return false;
+        return ff$applyLocalDrainAndMaybeRestoreMud(level, blockPos, 1, false);
     }
 
     @Unique
     private boolean ff$tryHeatSourceEvaporate(final Level level, final BlockPos blockPos, int amount, float chance) {
         if (!DryingEventSystem.hasNearbyHeatSource(level, blockPos)) return false;
         if (!DryingEventSystem.shouldRunEvaporationTick(level, blockPos, FlowingFluids.config.hotBlockEvaporationIntervalTicks)) return false;
-        int evaporationMaxLevel = DryingEventSystem.getSurfaceEvaporationMaxLevel();
+        int evaporationMaxLevel = DryingEventSystem.getSurfaceEvaporationMaxLevel(level);
         if (FFFluidUtils.isProtectedInfiniteBiomeWater(level, blockPos, this, amount)) return false;
         if (AdaptiveTickScheduler.isFlowActiveNow(level, blockPos) && amount > evaporationMaxLevel) return false;
         BlockPos abovePos = blockPos.above();
@@ -308,7 +328,7 @@ public abstract class MixinWaterFluid extends FlowingFluid {
         if (!DryingEventSystem.shouldEvaporateSeaLevelOverflow(level, blockPos, this, amount)) {
             return false;
         }
-        if (FlowingFluids.config.seaLevelOverflowEvaporationInstant) {
+        if (DryingEventSystem.isSeaLevelOverflowInstant(level)) {
             return ff$applyLocalDrainAndMaybeRestoreMud(level, blockPos, amount, false);
         }
         float overflowChance = DryingEventSystem.getSeaLevelOverflowEvaporationChance(level, blockPos);
@@ -412,7 +432,7 @@ private void ff$trySpawnSurfaceWater(Level level, BlockPos origin, RandomSource 
 
     @Unique
     private void ff$assistNeighborEvaporation(Level level, BlockPos blockPos) {
-        int evaporationMaxLevel = DryingEventSystem.getSurfaceEvaporationMaxLevel();
+        int evaporationMaxLevel = DryingEventSystem.getSurfaceEvaporationMaxLevel(level);
         float assistChance = Math.min(1.0f, DryingEventSystem.getSurfaceEvaporationChance(level) * 1.35f);
         if (assistChance <= 0.0f) {
             return;

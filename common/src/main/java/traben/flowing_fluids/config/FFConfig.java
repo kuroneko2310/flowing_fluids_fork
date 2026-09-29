@@ -75,6 +75,12 @@ public class FFConfig {
     public boolean enableShadeProtection = true;
     public int shadeRoofSearchHeight = 6;
     public boolean enableRiverDroughts = true;
+    public boolean enableDroughtIndex = true; // Continuous soil-moisture deficit that builds in dry weather and eases with rain
+    public float droughtAccumulationPerDay = 0.1f; // Dry-weather build-up rate r in dD/dt = r(1 - D), per in-game day
+    public float droughtRainRecoveryPerDay = 6.0f; // Rain recovery rate k in dD/dt = -kD, per in-game day
+    public float droughtEvaporationBoost = 3.0f; // Evaporation multiplier is 1 + boost * D^1.5
+    public int droughtMaxEvaporationLevel = 4; // Thin-water evaporation cap reached in an extreme drought
+    public float droughtPondDrawdownChance = 0.02f; // Per random tick chance that an exposed pond surface loses a level in extreme drought
     public float riverDroughtRefillMultiplier = 0.2f;
     public float riverDroughtDrainChance = 0.08f;
     public int riverDroughtMaxAffectedLevel = 4;
@@ -193,6 +199,12 @@ public class FFConfig {
     public boolean naturalSiphonRequireEnclosedPath = true; // Require narrow or mostly enclosed natural paths
     public boolean naturalSiphonAllowOpenSurface = false; // Allow open-surface natural paths with heavy limits
     public boolean siphonSameLevelOutletsAnywhere = false; // Allow same-height low-water outlets without hydraulic support
+    public boolean enableRiverFloodStage = true; // While raining, rivers and seas may rise above sea level from inflow
+    public int riverFloodRecessionTicks = 20 * 180; // After rain, the sea-level cap returns gradually over this many ticks
+    public float riverFloodFlowDelayMultiplier = 0.5f; // Tick delay multiplier for swollen river/sea water (lower = faster)
+    public float riverFloodCurrentPushMultiplier = 1.8f; // Extra current push in a river in spate
+    public boolean enableEntityWaterDisplacement = true; // Players push their submerged volume up as a small, fully returned water rise
+    public float entityWaterDisplacementScale = 1.0f; // 1.0 = physical volume (a fully submerged player lends about 5 water levels)
 
     public float drinkWaterToBreedAnimalChance = 0.1f;
     public boolean encloseAllFluidOnWorldGen = true;
@@ -337,6 +349,16 @@ public class FFConfig {
     public int snowmeltWaterAmount = 1;
     public int snowmeltMinSkyLight = 10;
     public float snowmeltMinTemperature = 0.2f;
+
+    // Heavy rain cell settings
+    public boolean enableHeavyRainCells = true; // Moving downpour cells that drift with the wind while it rains
+    public float heavyRainCellChancePerRoll = 0.12f; // Chance per roll that a new cell forms near a player
+    public int heavyRainRollIntervalTicks = 1200; // Ticks between spawn rolls and wind updates
+    public int heavyRainMaxCells = 2; // Maximum simultaneous cells per dimension
+    public float heavyRainPeakMultiplier = 3.0f; // Rain rate multiplier in a mature cell core
+    public int heavyRainRadius = 56; // Typical cell radius in blocks
+    public int heavyRainDurationTicks = 20 * 300; // Typical cell lifetime
+    public boolean announceHeavyRain = true; // Action-bar hint to players in the cell's path
 
     // Flood event settings
     public boolean enableFloodEvents = true;
@@ -608,6 +630,12 @@ public class FFConfig {
         naturalSiphonRequireEnclosedPath = buffer.readBoolean();
         naturalSiphonAllowOpenSurface = buffer.readBoolean();
         siphonSameLevelOutletsAnywhere = buffer.readBoolean();
+        enableRiverFloodStage = buffer.readBoolean();
+        riverFloodRecessionTicks = buffer.readVarInt();
+        riverFloodFlowDelayMultiplier = buffer.readFloat();
+        riverFloodCurrentPushMultiplier = buffer.readFloat();
+        enableEntityWaterDisplacement = buffer.readBoolean();
+        entityWaterDisplacementScale = buffer.readFloat();
 
         drinkWaterToBreedAnimalChance = buffer.readFloat();
         encloseAllFluidOnWorldGen = buffer.readBoolean();
@@ -731,6 +759,20 @@ public class FFConfig {
         snowmeltMinTemperature = buffer.readFloat();
         enableFloodEvents = buffer.readBoolean();
         floodStartChancePerDay = buffer.readFloat();
+        enableDroughtIndex = buffer.readBoolean();
+        droughtAccumulationPerDay = buffer.readFloat();
+        droughtRainRecoveryPerDay = buffer.readFloat();
+        droughtEvaporationBoost = buffer.readFloat();
+        droughtMaxEvaporationLevel = buffer.readVarInt();
+        droughtPondDrawdownChance = buffer.readFloat();
+        enableHeavyRainCells = buffer.readBoolean();
+        heavyRainCellChancePerRoll = buffer.readFloat();
+        heavyRainRollIntervalTicks = buffer.readVarInt();
+        heavyRainMaxCells = buffer.readVarInt();
+        heavyRainPeakMultiplier = buffer.readFloat();
+        heavyRainRadius = buffer.readVarInt();
+        heavyRainDurationTicks = buffer.readVarInt();
+        announceHeavyRain = buffer.readBoolean();
         floodRequiresRain = buffer.readBoolean();
         floodThunderstormChanceMultiplier = buffer.readFloat();
         announceFloodEvents = buffer.readBoolean();
@@ -913,6 +955,12 @@ public class FFConfig {
         buffer.writeBoolean(naturalSiphonRequireEnclosedPath);
         buffer.writeBoolean(naturalSiphonAllowOpenSurface);
         buffer.writeBoolean(siphonSameLevelOutletsAnywhere);
+        buffer.writeBoolean(enableRiverFloodStage);
+        buffer.writeVarInt(riverFloodRecessionTicks);
+        buffer.writeFloat(riverFloodFlowDelayMultiplier);
+        buffer.writeFloat(riverFloodCurrentPushMultiplier);
+        buffer.writeBoolean(enableEntityWaterDisplacement);
+        buffer.writeFloat(entityWaterDisplacementScale);
 
         buffer.writeFloat(drinkWaterToBreedAnimalChance);
         buffer.writeBoolean(encloseAllFluidOnWorldGen);
@@ -1035,6 +1083,20 @@ public class FFConfig {
         buffer.writeFloat(snowmeltMinTemperature);
         buffer.writeBoolean(enableFloodEvents);
         buffer.writeFloat(floodStartChancePerDay);
+        buffer.writeBoolean(enableDroughtIndex);
+        buffer.writeFloat(droughtAccumulationPerDay);
+        buffer.writeFloat(droughtRainRecoveryPerDay);
+        buffer.writeFloat(droughtEvaporationBoost);
+        buffer.writeVarInt(droughtMaxEvaporationLevel);
+        buffer.writeFloat(droughtPondDrawdownChance);
+        buffer.writeBoolean(enableHeavyRainCells);
+        buffer.writeFloat(heavyRainCellChancePerRoll);
+        buffer.writeVarInt(heavyRainRollIntervalTicks);
+        buffer.writeVarInt(heavyRainMaxCells);
+        buffer.writeFloat(heavyRainPeakMultiplier);
+        buffer.writeVarInt(heavyRainRadius);
+        buffer.writeVarInt(heavyRainDurationTicks);
+        buffer.writeBoolean(announceHeavyRain);
         buffer.writeBoolean(floodRequiresRain);
         buffer.writeFloat(floodThunderstormChanceMultiplier);
         buffer.writeBoolean(announceFloodEvents);
@@ -1389,6 +1451,12 @@ public class FFConfig {
         naturalSiphonMinFilledAmount = Math.max(1, Math.min(8, naturalSiphonMinFilledAmount));
         naturalSiphonMaxTransferPerTick = Math.max(1, Math.min(8, naturalSiphonMaxTransferPerTick));
         naturalSiphonCooldownTicks = Math.max(1, Math.min(80, naturalSiphonCooldownTicks));
+        riverFloodRecessionTicks = Math.max(0, Math.min(72000, riverFloodRecessionTicks));
+        riverFloodFlowDelayMultiplier = Float.isFinite(riverFloodFlowDelayMultiplier) ? Math.max(0.1f, Math.min(1.0f, riverFloodFlowDelayMultiplier)) : 0.5f;
+        riverFloodCurrentPushMultiplier = Float.isFinite(riverFloodCurrentPushMultiplier) ? Math.max(1.0f, Math.min(5.0f, riverFloodCurrentPushMultiplier)) : 1.8f;
+        entityWaterDisplacementScale = Float.isFinite(entityWaterDisplacementScale)
+                ? Math.max(0.0f, Math.min(4.0f, entityWaterDisplacementScale))
+                : 1.0f;
         evaporationChanceMultiplier = Math.max(0.0f, Math.min(8.0f, evaporationChanceMultiplier));
         evaporationIntervalTicks = Math.max(1, Math.min(1200, evaporationIntervalTicks));
         evaporationThinWaterMaxLevel = Math.max(1, Math.min(8, evaporationThinWaterMaxLevel));
@@ -1441,6 +1509,17 @@ public class FFConfig {
         snowmeltMinSkyLight = Math.max(0, Math.min(15, snowmeltMinSkyLight));
         snowmeltMinTemperature = Math.max(-1.0f, Math.min(4.0f, snowmeltMinTemperature));
         floodStartChancePerDay = Math.max(0.0f, Math.min(1.0f, floodStartChancePerDay));
+        droughtAccumulationPerDay = Float.isFinite(droughtAccumulationPerDay) ? Math.max(0.0f, Math.min(5.0f, droughtAccumulationPerDay)) : 0.1f;
+        droughtRainRecoveryPerDay = Float.isFinite(droughtRainRecoveryPerDay) ? Math.max(0.0f, Math.min(100.0f, droughtRainRecoveryPerDay)) : 6.0f;
+        droughtEvaporationBoost = Float.isFinite(droughtEvaporationBoost) ? Math.max(0.0f, Math.min(10.0f, droughtEvaporationBoost)) : 3.0f;
+        droughtMaxEvaporationLevel = Math.max(1, Math.min(8, droughtMaxEvaporationLevel));
+        droughtPondDrawdownChance = Float.isFinite(droughtPondDrawdownChance) ? Math.max(0.0f, Math.min(1.0f, droughtPondDrawdownChance)) : 0.02f;
+        heavyRainCellChancePerRoll = Float.isFinite(heavyRainCellChancePerRoll) ? Math.max(0.0f, Math.min(1.0f, heavyRainCellChancePerRoll)) : 0.12f;
+        heavyRainRollIntervalTicks = Math.max(20, Math.min(24000, heavyRainRollIntervalTicks));
+        heavyRainMaxCells = Math.max(0, Math.min(8, heavyRainMaxCells));
+        heavyRainPeakMultiplier = Float.isFinite(heavyRainPeakMultiplier) ? Math.max(1.0f, Math.min(8.0f, heavyRainPeakMultiplier)) : 3.0f;
+        heavyRainRadius = Math.max(8, Math.min(256, heavyRainRadius));
+        heavyRainDurationTicks = Math.max(200, Math.min(72000, heavyRainDurationTicks));
         floodThunderstormChanceMultiplier = Math.max(0.1f, Math.min(8.0f, floodThunderstormChanceMultiplier));
         floodDefaultRadius = Math.max(12, Math.min(192, floodDefaultRadius));
         floodDefaultDurationTicks = Math.max(40, Math.min(20 * 20 * 60, floodDefaultDurationTicks));

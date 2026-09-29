@@ -21,6 +21,7 @@ import net.minecraft.world.level.material.Fluids;
 import traben.flowing_fluids.AdaptiveTickScheduler;
 import traben.flowing_fluids.FFFluidUtils;
 import traben.flowing_fluids.FlowingFluids;
+import traben.flowing_fluids.water.RiverFloodStage;
 
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,6 +29,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class DryingEventSystem {
     private static final long DAY_TICKS = 24000L;
     private static final float SEA_LEVEL_EDGE_OVERFLOW_MULTIPLIER = 0.15f;
+    private static final long DROUGHT_INDEX_UPDATE_INTERVAL = 100L;
+    private static final double RIVER_DROUGHT_INDEX_THRESHOLD = 0.6;
     private static final ConcurrentHashMap<ResourceKey<Level>, DryingState> ACTIVE_STATES = new ConcurrentHashMap<>();
 
     private DryingEventSystem() {
@@ -37,13 +40,15 @@ public final class DryingEventSystem {
         if (!FlowingFluids.config.enableMod
                 || FlowingFluids.config.isDimensionExcluded(level)
                 || !isClimateDimension(level)
-                || (!FlowingFluids.config.enableDrySeasonEvents && !FlowingFluids.config.enableHeatwaveEvents)) {
+                || (!FlowingFluids.config.enableDrySeasonEvents && !FlowingFluids.config.enableHeatwaveEvents
+                    && !FlowingFluids.config.enableDroughtIndex)) {
             ACTIVE_STATES.remove(level.dimension());
             return;
         }
 
         DryingState state = ACTIVE_STATES.computeIfAbsent(level.dimension(), key -> new DryingState(nextDailyRollTick(level.getGameTime())));
         long now = level.getGameTime();
+        updateDroughtIndex(level, state, now);
         if (!state.hasActiveClimate(now) && now < state.nextDailyRollTick) {
             return;
         }
@@ -78,6 +83,71 @@ public final class DryingEventSystem {
         ACTIVE_STATES.clear();
     }
 
+    private static void updateDroughtIndex(ServerLevel level, DryingState state, long now) {
+        if (!FlowingFluids.config.enableDroughtIndex) {
+            state.droughtIndex = 0.0;
+            state.lastDroughtUpdateTick = now;
+            return;
+        }
+        if (state.lastDroughtUpdateTick == Long.MIN_VALUE) {
+            state.lastDroughtUpdateTick = now;
+            return;
+        }
+        long elapsed = now - state.lastDroughtUpdateTick;
+        if (elapsed < DROUGHT_INDEX_UPDATE_INTERVAL) {
+            return;
+        }
+        state.lastDroughtUpdateTick = now;
+        // A /time jump should not dry the world out in one step.
+        elapsed = Math.min(elapsed, DAY_TICKS);
+
+        double dryRate = Math.max(0.0f, FlowingFluids.config.droughtAccumulationPerDay);
+        if (FlowingFluids.config.enableDrySeasonEvents && state.isDrySeasonActive(now)) {
+            dryRate *= 3.0;
+        }
+        boolean day = level.isDay();
+        if (FlowingFluids.config.enableHeatwaveEvents && state.isHeatwaveActive(now)
+                && (!FlowingFluids.config.heatwaveDaytimeOnly || day)) {
+            dryRate *= 2.0;
+        }
+        if (!day) {
+            dryRate *= 0.5;
+        }
+        double rainRate = Math.max(0.0f, FlowingFluids.config.droughtRainRecoveryPerDay) * (level.isThundering() ? 2.0 : 1.0);
+        state.droughtIndex = DroughtMath.step(state.droughtIndex, elapsed, dryRate, rainRate, level.isRaining());
+    }
+
+    /**
+     * Current drought index of the dimension in [0, 1]; 0 when the index is disabled or not tracked.
+     */
+    public static double getDroughtIndex(Level level) {
+        if (level == null || level.isClientSide() || !FlowingFluids.config.enableDroughtIndex) {
+            return 0.0;
+        }
+        DryingState state = ACTIVE_STATES.get(level.dimension());
+        return state == null ? 0.0 : state.droughtIndex;
+    }
+
+    public static void setDroughtIndex(ServerLevel level, double index) {
+        DryingState state = ACTIVE_STATES.computeIfAbsent(level.dimension(), key -> new DryingState(nextDailyRollTick(level.getGameTime())));
+        state.droughtIndex = DroughtMath.clamp01(index);
+        state.lastDroughtUpdateTick = level.getGameTime();
+    }
+
+    /**
+     * Chance that an exposed pond surface loses one level to drought evaporation.
+     */
+    public static float getDroughtPondDrawdownChance(Level level) {
+        return (float) DroughtMath.pondDrawdownChance(FlowingFluids.config.droughtPondDrawdownChance, getDroughtIndex(level));
+    }
+
+    /**
+     * Share of rain that still reaches the surface as water; dry ground soaks up the rest.
+     */
+    public static float getDroughtRainMultiplier(Level level) {
+        return (float) DroughtMath.rainRefillMultiplier(getDroughtIndex(level));
+    }
+
     public static float getAmbientEvaporationMultiplier(Level level) {
         if (level == null || level.isClientSide()) {
             return 1.0f;
@@ -89,7 +159,8 @@ public final class DryingEventSystem {
         }
 
         long now = level.getGameTime();
-        float multiplier = 1.0f;
+        float multiplier = (float) DroughtMath.evaporationMultiplier(getDroughtIndex(level),
+                FlowingFluids.config.droughtEvaporationBoost);
         if (FlowingFluids.config.enableDrySeasonEvents && state.isDrySeasonActive(now)) {
             multiplier *= Math.max(0.0f, FlowingFluids.config.drySeasonEvaporationMultiplier);
         }
@@ -123,14 +194,34 @@ public final class DryingEventSystem {
         return Mth.clamp(FlowingFluids.config.evaporationThinWaterMaxLevel, 1, 8);
     }
 
+    /**
+     * Thin-water level cap including drought: severe droughts let deeper puddles dry out in one go.
+     */
+    public static int getSurfaceEvaporationMaxLevel(Level level) {
+        return DroughtMath.evaporationMaxLevel(getSurfaceEvaporationMaxLevel(),
+                FlowingFluids.config.droughtMaxEvaporationLevel, getDroughtIndex(level));
+    }
+
     public static float getNetherEvaporationChance(Level level) {
         float baseChance = FlowingFluids.config.evaporationNetherChance
                 * FlowingFluids.config.evaporationNetherChanceMultiplier;
         return Mth.clamp(baseChance, 0.0f, 1.0f);
     }
 
+    /**
+     * Instant overflow removal only applies once the post-rain recession is over; during high water and recession the
+     * swollen water recedes gradually instead of vanishing in one tick.
+     */
+    public static boolean isSeaLevelOverflowInstant(Level level) {
+        return FlowingFluids.config.seaLevelOverflowEvaporationInstant && RiverFloodStage.getCapFactor(level) >= 1.0f;
+    }
+
     public static float getSeaLevelOverflowEvaporationChance(Level level, BlockPos pos) {
         if (level == null || pos == null || !FlowingFluids.config.enableSeaLevelOverflowEvaporation) {
+            return 0.0f;
+        }
+        float capFactor = RiverFloodStage.getCapFactor(level);
+        if (capFactor <= 0.0f) {
             return 0.0f;
         }
         int minExcess = Math.max(1, FlowingFluids.config.seaLevelOverflowEvaporationMinExcess);
@@ -139,7 +230,7 @@ public final class DryingEventSystem {
         if (excess < minExcess || excess > maxExcess) {
             return 0.0f;
         }
-        if (FlowingFluids.config.seaLevelOverflowEvaporationInstant) {
+        if (isSeaLevelOverflowInstant(level)) {
             return 1.0f;
         }
         float heightMultiplier = excess <= 1
@@ -149,7 +240,8 @@ public final class DryingEventSystem {
         float baseChance = FlowingFluids.config.seaLevelOverflowEvaporationChance
                 * FlowingFluids.config.evaporationChanceMultiplier
                 * getAmbientEvaporationMultiplier(level)
-                * heightMultiplier;
+                * heightMultiplier
+                * capFactor;
         return Mth.clamp(baseChance, 0.0f, 1.0f);
     }
 
@@ -171,7 +263,7 @@ public final class DryingEventSystem {
         }
 
         long now = level.getGameTime();
-        float multiplier = 1.0f;
+        float multiplier = getDroughtRainMultiplier(level);
         if (FlowingFluids.config.enableDrySeasonEvents && state.isDrySeasonActive(now)) {
             multiplier *= Math.max(0.0f, FlowingFluids.config.drySeasonRainRefillMultiplier);
         }
@@ -261,7 +353,7 @@ public final class DryingEventSystem {
         if (state == null) {
             return false;
         }
-        return state.isDrySeasonActive(level.getGameTime());
+        return state.isDrySeasonActive(level.getGameTime()) || getDroughtIndex(level) >= RIVER_DROUGHT_INDEX_THRESHOLD;
     }
 
     public static float getRiverDroughtRefillMultiplier(Level level) {
@@ -275,7 +367,8 @@ public final class DryingEventSystem {
             return 0.0f;
         }
 
-        float chance = Math.max(0.0f, FlowingFluids.config.riverDroughtDrainChance);
+        // Deeper deficits drain rivers faster: x0.5 at the onset, x1.5 at full drought.
+        float chance = Math.max(0.0f, FlowingFluids.config.riverDroughtDrainChance) * (0.5f + (float) getDroughtIndex(level));
         DryingState state = ACTIVE_STATES.get(level.dimension());
         if (state != null
                 && state.isHeatwaveActive(level.getGameTime())
@@ -296,6 +389,12 @@ public final class DryingEventSystem {
         boolean drySeason = state != null && state.isDrySeasonActive(now);
 
         return "Drying events status"
+                + "\nDrought index: " + FlowingFluids.config.enableDroughtIndex
+                + " / value=" + String.format(Locale.ROOT, "%.2f", getDroughtIndex(level))
+                + " (" + describeDroughtSeverity(getDroughtIndex(level)) + ")"
+                + " / thin_evaporation_max_level=" + getSurfaceEvaporationMaxLevel(level)
+                + " / pond_drawdown_chance=" + String.format(Locale.ROOT, "%.3f", getDroughtPondDrawdownChance(level))
+                + " / rain_share=" + String.format(Locale.ROOT, "%.2f", getDroughtRainMultiplier(level))
                 + "\nHeatwaves: " + FlowingFluids.config.enableHeatwaveEvents
                 + " / active=" + heatwave
                 + (heatwave ? " / remaining=" + formatTicks(state.heatwaveEndTick - now) : "")
@@ -331,6 +430,22 @@ public final class DryingEventSystem {
                 + " / search_height=" + FlowingFluids.config.shadeRoofSearchHeight
                 + "\nAmbient evaporation multiplier now: " + String.format(Locale.ROOT, "%.2f", getAmbientEvaporationMultiplier(level))
                 + "\nRain refill multiplier now: " + String.format(Locale.ROOT, "%.2f", getRainRefillMultiplier(level));
+    }
+
+    private static String describeDroughtSeverity(double index) {
+        if (index < 0.2) {
+            return "none";
+        }
+        if (index < 0.4) {
+            return "abnormally dry";
+        }
+        if (index < 0.6) {
+            return "moderate";
+        }
+        if (index < 0.8) {
+            return "severe";
+        }
+        return "extreme";
     }
 
     private static void rollDailyClimate(ServerLevel level, DryingState state, long now) {
@@ -433,6 +548,10 @@ public final class DryingEventSystem {
         if (level == null || pos == null || fluid == null || amount <= 0 || !FlowingFluids.config.enableSeaLevelOverflowEvaporation) {
             return false;
         }
+        if (RiverFloodStage.getCapFactor(level) <= 0.0f) {
+            // Raining: rivers and seas may rise as high as the inflow takes them.
+            return false;
+        }
         if (!FFFluidUtils.isInOrNearInfiniteBiome(level, pos,
                 FlowingFluids.config.seaLevelOverflowInfiniteBiomeBufferRadius)) {
             return false;
@@ -443,7 +562,7 @@ public final class DryingEventSystem {
         if (excess < minExcess || excess > maxExcess) {
             return false;
         }
-        boolean instant = FlowingFluids.config.seaLevelOverflowEvaporationInstant;
+        boolean instant = isSeaLevelOverflowInstant(level);
         if (!instant && FlowingFluids.config.evaporationDaytimeOnly && !level.isDay()) {
             return false;
         }
@@ -487,6 +606,8 @@ public final class DryingEventSystem {
         private long nextDailyRollTick;
         private long heatwaveEndTick;
         private long drySeasonEndTick;
+        private double droughtIndex;
+        private long lastDroughtUpdateTick = Long.MIN_VALUE;
 
         private DryingState(long nextDailyRollTick) {
             this.nextDailyRollTick = nextDailyRollTick;

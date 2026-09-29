@@ -89,18 +89,24 @@ public final class SurfaceVentLocator {
                 shaftOpenToMouth = false;
                 break;
             }
-            FFFluidUtils.setFluidStateAtPosToNewAmount(level, cursor, fluid, 8);
-            AdaptiveTickScheduler.scheduleFluidTick(level, cursor, fluid, fluid.getTickDelay(level));
+            if (!SpringColumnPulseController.isFull(fluidState, fluid) || y == mouthPos.getY()) {
+                // Interior cells that are already full need no write or wake; the mouth always ticks so it keeps spilling.
+                FFFluidUtils.setFluidStateAtPosToNewAmount(level, cursor, fluid, 8);
+                AdaptiveTickScheduler.scheduleFluidTick(level, cursor, fluid, fluid.getTickDelay(level));
+            }
         }
 
         if (keepSpoutRaised && shaftOpenToMouth) {
-            int crestHeight = crestHeightFor(vent.strength());
-            sustainRaisedCrest(level, mouthPos, fluid, crestHeight);
-            sprayFountain(level, mouthPos, fluid, crestHeight, sprayBurstsFor(vent.strength()));
+            int realizedCrest = sustainRaisedCrest(level, mouthPos, fluid, crestHeightFor(vent.strength()));
+            if (realizedCrest > 0) {
+                // Spray leaves the top of the crest that actually exists, never from a cell above a blocker.
+                sprayFountain(level, mouthPos, fluid, realizedCrest, sprayBurstsFor(vent.strength()));
+            }
         }
     }
 
-    public static void sustainRaisedCrest(ServerLevel level, BlockPos mouthPos, FlowingFluid fluid, int crestHeight) {
+    public static int sustainRaisedCrest(ServerLevel level, BlockPos mouthPos, FlowingFluid fluid, int crestHeight) {
+        int realized = 0;
         for (int offset = 1; offset <= crestHeight; offset++) {
             BlockPos crestPos = mouthPos.above(offset);
             BlockState crestState = level.getBlockState(crestPos);
@@ -110,7 +116,9 @@ public final class SurfaceVentLocator {
             }
             FFFluidUtils.setFluidStateAtPosToNewAmount(level, crestPos, fluid, 8);
             AdaptiveTickScheduler.scheduleFluidTick(level, crestPos, fluid, fluid.getTickDelay(level));
+            realized = offset;
         }
+        return realized;
     }
 
     public static DebugVentResult createDebugSurfaceVent(ServerLevel level, BlockPos surfacePos, FlowingFluid fluid, int shaftDepth) {
@@ -174,17 +182,17 @@ public final class SurfaceVentLocator {
         return new BlockPos(columnPos.getX(), surfaceY, columnPos.getZ());
     }
 
-    private static void sprayFountain(ServerLevel level, BlockPos mouthPos, FlowingFluid fluid, int crestHeight, int sprayBursts) {
-        BlockPos sprayOrigin = mouthPos.above(Math.max(1, crestHeight));
+    private static void sprayFountain(ServerLevel level, BlockPos mouthPos, FlowingFluid fluid, int realizedCrest, int sprayBursts) {
+        BlockPos sprayOrigin = mouthPos.above(realizedCrest);
         Direction[] directions = FFFluidUtils.getCardinalsShuffle(level.random);
 
         for (int i = 0; i < sprayBursts && i < directions.length; i++) {
             Direction direction = directions[i];
-            BlockPos targetPos = sprayOrigin.relative(direction);
-            emitSprayCell(level, targetPos, fluid, UPPER_SPRAY_AMOUNT);
+            emitSprayCell(level, sprayOrigin.relative(direction), fluid, UPPER_SPRAY_AMOUNT);
 
-            BlockPos lowerArcPos = mouthPos.above(Math.max(1, crestHeight - 1)).relative(direction);
-            emitSprayCell(level, lowerArcPos, fluid, LOWER_SPRAY_AMOUNT);
+            if (realizedCrest > 1) {
+                emitSprayCell(level, mouthPos.above(realizedCrest - 1).relative(direction), fluid, LOWER_SPRAY_AMOUNT);
+            }
         }
     }
 
@@ -213,60 +221,44 @@ public final class SurfaceVentLocator {
             return java.util.Optional.empty();
         }
 
-        for (int shaftDepth = MIN_SHAFT_DEPTH; shaftDepth <= MAX_SHAFT_DEPTH; shaftDepth++) {
-            if (!hasPassableShaft(level, pos, shaftDepth, fluid)) {
-                continue;
+        // Single upward pass: every candidate depth shares the same shaft prefix, so each cell is checked once
+        // instead of re-validating the whole shaft for every depth (previously O(depth^2) block reads per tick).
+        for (int offset = 1; offset <= MAX_SHAFT_DEPTH + 1; offset++) {
+            int shaftDepth = offset - 1;
+            if (shaftDepth >= MIN_SHAFT_DEPTH) {
+                BlockPos mouthPos = pos.above(offset);
+                if (isOpenMouth(level, mouthPos, fluid) && ((LevelReader) level).canSeeSky(mouthPos)) {
+                    return java.util.Optional.of(new LocatedVent(pos.immutable(), mouthPos.immutable(), distanceSq, spring.strength()));
+                }
             }
-            if (!hasStableVentWalls(level, pos, shaftDepth, fluid)) {
-                continue;
+            if (offset > MAX_SHAFT_DEPTH
+                    || !isPassableShaftCell(level, pos.above(offset), fluid)
+                    || !hasStableVentWall(level, pos.above(offset), fluid)) {
+                break;
             }
-
-            BlockPos mouthPos = pos.above(shaftDepth + 1);
-            if (!isOpenMouth(level, mouthPos, fluid)) {
-                continue;
-            }
-            if (!((LevelReader) level).canSeeSky(mouthPos)) {
-                continue;
-            }
-
-            return java.util.Optional.of(new LocatedVent(pos.immutable(), mouthPos.immutable(), distanceSq, spring.strength()));
         }
 
         return java.util.Optional.empty();
     }
 
-    private static boolean hasPassableShaft(LevelAccessor level, BlockPos springPos, int shaftDepth, FlowingFluid fluid) {
-        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        for (int offset = 1; offset <= shaftDepth; offset++) {
-            cursor.set(springPos.getX(), springPos.getY() + offset, springPos.getZ());
-            BlockState state = level.getBlockState(cursor);
-            FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, cursor, state);
-            if (!SpringFluidEmitter.canEmitInto(state, fluidState, fluid)) {
-                return false;
-            }
-        }
-        return true;
+    private static boolean isPassableShaftCell(LevelAccessor level, BlockPos shaftPos, FlowingFluid fluid) {
+        BlockState state = level.getBlockState(shaftPos);
+        FluidState fluidState = FFFluidUtils.getEffectiveFluidState(level, shaftPos, state);
+        return SpringFluidEmitter.canEmitInto(state, fluidState, fluid);
     }
 
-    private static boolean hasStableVentWalls(LevelAccessor level, BlockPos springPos, int shaftDepth, FlowingFluid fluid) {
-        BlockPos.MutableBlockPos shaftPos = new BlockPos.MutableBlockPos();
+    private static boolean hasStableVentWall(LevelAccessor level, BlockPos shaftPos, FlowingFluid fluid) {
         BlockPos.MutableBlockPos sidePos = new BlockPos.MutableBlockPos();
-        for (int offset = 1; offset <= shaftDepth; offset++) {
-            shaftPos.set(springPos.getX(), springPos.getY() + offset, springPos.getZ());
-            int sturdySides = 0;
-            for (net.minecraft.core.Direction direction : net.minecraft.core.Direction.Plane.HORIZONTAL) {
-                sidePos.set(shaftPos).move(direction);
-                BlockState sideState = level.getBlockState(sidePos);
-                FluidState sideFluid = FFFluidUtils.getEffectiveFluidState(level, sidePos, sideState);
-                if (!sideState.isAir() && !sideState.canBeReplaced(fluid) && sideFluid.isEmpty()) {
-                    sturdySides++;
-                }
-            }
-            if (sturdySides < 3) {
-                return false;
+        int sturdySides = 0;
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            sidePos.set(shaftPos).move(direction);
+            BlockState sideState = level.getBlockState(sidePos);
+            FluidState sideFluid = FFFluidUtils.getEffectiveFluidState(level, sidePos, sideState);
+            if (!sideState.isAir() && !sideState.canBeReplaced(fluid) && sideFluid.isEmpty()) {
+                sturdySides++;
             }
         }
-        return true;
+        return sturdySides >= 3;
     }
 
     private static boolean isOpenMouth(LevelAccessor level, BlockPos mouthPos, FlowingFluid fluid) {

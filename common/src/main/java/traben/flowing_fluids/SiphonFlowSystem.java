@@ -2,6 +2,7 @@ package traben.flowing_fluids;
 
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -18,6 +19,7 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -525,7 +527,7 @@ public final class SiphonFlowSystem {
                 true,
                 true);
         markCooldown(CooldownType.HYDRAULIC_SEARCH, level, sourcePos.asLong(), result.success() ? HYDRAULIC_COOLDOWN_TICKS : HYDRAULIC_COOLDOWN_TICKS * 2);
-        return result.success() && applySiphonTransfer(level, sourcePos, result, computeHydraulicTransfer(result), 1);
+        return result.success() && applySiphonTransfer(level, sourcePos, result, computeHydraulicTransfer(level, result), 1);
     }
 
     private static boolean tryRunNaturalTerrainSiphon(ServerLevel level, BlockPos sourcePos, FluidState sourceFluidState) {
@@ -570,7 +572,7 @@ public final class SiphonFlowSystem {
             return false;
         }
 
-        int transfer = computeNaturalTransfer(result);
+        int transfer = computeNaturalTransfer(level, result);
         return applySiphonTransfer(level, sourcePos, result, transfer, Math.max(0, minFilled - 1));
     }
 
@@ -725,7 +727,7 @@ public final class SiphonFlowSystem {
             return SiphonSearchResult.fail();
         }
         return new SiphonSearchResult(outlet.pos().immutable(), true, pathLength, bends, openSurfaces,
-                highestY, sourceSurfaceY, outlet.score(), sourceAmount);
+                highestY, sourceSurfaceY, outlet.score(), sourceAmount, pathCells);
     }
 
     private static SiphonOutlet findBestOutlet(ServerLevel level, BlockPos pathEnd, int sourceSurfaceY,
@@ -795,19 +797,19 @@ public final class SiphonFlowSystem {
                 direction, outletPos, outletState, outletFluid);
     }
 
-    private static int computeNaturalTransfer(SiphonSearchResult result) {
-        int maxTransfer = Math.max(1, FlowingFluids.config.naturalSiphonMaxTransferPerTick);
-        int drop = Math.max(1, result.sourceSurfaceY() - result.outletPos().getY());
-        int divisor = Math.max(1, result.pathLength() + result.bends() * 2 + result.openSurfaces() * 6);
-        int computed = Math.max(1, drop * 8 / divisor);
-        return Mth.clamp(computed, 1, maxTransfer);
+    private static int computeNaturalTransfer(ServerLevel level, SiphonSearchResult result) {
+        int head = Math.max(1, result.sourceSurfaceY() - result.outletPos().getY());
+        return SiphonHydraulics.flowLevels(head, result.pathLength(), result.bends(), result.openSurfaces(),
+                SiphonHydraulics.NATURAL_GAIN, FlowingFluids.config.naturalSiphonMaxTransferPerTick,
+                level.random.nextDouble());
     }
 
-    private static int computeHydraulicTransfer(SiphonSearchResult result) {
-        int drive = Math.max(1, result.sourceSurfaceY() - result.outletPos().getY() + 1);
-        int divisor = Math.max(1, result.pathLength() / 2 + result.bends() + result.openSurfaces() * 2);
-        int computed = Math.max(1, drive * 3 / divisor);
-        return Mth.clamp(computed, 1, Math.max(1, FlowingFluids.config.hydraulicSiphonMaxTransferPerTick));
+    private static int computeHydraulicTransfer(ServerLevel level, SiphonSearchResult result) {
+        // Nozzles and liners add one block of drive so same-height hydraulic outlets still run.
+        int head = Math.max(1, result.sourceSurfaceY() - result.outletPos().getY() + 1);
+        return SiphonHydraulics.flowLevels(head, result.pathLength(), result.bends(), result.openSurfaces(),
+                SiphonHydraulics.HYDRAULIC_GAIN, FlowingFluids.config.hydraulicSiphonMaxTransferPerTick,
+                level.random.nextDouble());
     }
 
     private static boolean applySiphonTransfer(ServerLevel level, BlockPos sourcePos, SiphonSearchResult result,
@@ -816,7 +818,7 @@ public final class SiphonFlowSystem {
             return false;
         }
         List<BlockPos> changed = new ArrayList<>();
-        int moved = transferConnectedSiphonAmount(level, sourcePos, result.outletPos(), transfer,
+        int moved = transferConnectedSiphonAmount(level, sourcePos, result.outletPos(), result.pathCells(), transfer,
                 minSourceAmount, result.pathLength() + 8, changed);
         if (moved <= 0) {
             return false;
@@ -828,43 +830,39 @@ public final class SiphonFlowSystem {
         return true;
     }
 
+    /**
+     * Draws the siphon discharge from the source reservoir's surface and delivers it to the outlet.
+     *
+     * <p>The siphon tube itself (every path cell except the inlet) is never drained: a real siphon only keeps running
+     * while its tube stays full, so emptying the tube to feed the outlet made siphons starve themselves. Reservoir
+     * cells are ranked highest first, then thinnest first, so the free surface drops evenly instead of drilling a hole
+     * beside the inlet.</p>
+     */
     private static int transferConnectedSiphonAmount(ServerLevel level, BlockPos sourcePos, BlockPos outletPos,
-                                                     int requestedTransfer, int minSourceAmount, int maxNodes,
-                                                     List<BlockPos> changed) {
+                                                     LongOpenHashSet pathCells, int requestedTransfer,
+                                                     int minSourceAmount, int maxNodes, List<BlockPos> changed) {
         int nodeLimit = Mth.clamp(maxNodes, 1, 512);
+        long sourceKey = sourcePos.asLong();
         SiphonSearchWorkspace workspace = SEARCH_WORKSPACE.get();
         LongArrayFIFOQueue queue = workspace.transferQueue;
         LongOpenHashSet visited = workspace.transferVisited;
         queue.clear();
         visited.clear();
-        queue.enqueue(sourcePos.asLong());
-        visited.add(sourcePos.asLong());
+        LongArrayList candidates = new LongArrayList();
+        queue.enqueue(sourceKey);
+        visited.add(sourceKey);
 
-        int moved = 0;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         BlockPos.MutableBlockPos next = new BlockPos.MutableBlockPos();
-        while (!queue.isEmpty() && visited.size() <= nodeLimit && moved < requestedTransfer) {
+        while (!queue.isEmpty() && visited.size() <= nodeLimit) {
             long key = queue.dequeueLong();
-            cursor.set(BlockPos.getX(key), BlockPos.getY(key), BlockPos.getZ(key));
-            if (cursor.equals(outletPos)) {
-                continue;
-            }
-            int movedFromCell = FFFluidUtils.transferFluidAmount(level, cursor, outletPos, Fluids.WATER,
-                    requestedTransfer - moved, minSourceAmount);
-            if (movedFromCell > 0) {
-                moved += movedFromCell;
-                AdaptiveTickScheduler.scheduleFluidTick(level, cursor, Fluids.WATER, 1);
-                changed.add(cursor.immutable());
-                if (moved >= requestedTransfer) {
-                    break;
-                }
-            }
-
+            cursor.set(key);
             BlockState cursorState = level.getBlockState(cursor);
             FluidState cursorFluid = FFFluidUtils.getEffectiveFluidState(level, cursor, cursorState);
             if (!cursorFluid.is(FluidTags.WATER) || cursorFluid.getAmount() <= minSourceAmount) {
                 continue;
             }
+            candidates.add(key);
 
             for (Direction direction : Direction.values()) {
                 if (visited.size() >= nodeLimit) {
@@ -872,10 +870,10 @@ public final class SiphonFlowSystem {
                 }
                 next.setWithOffset(cursor, direction);
                 long nextKey = next.asLong();
-                if (visited.contains(nextKey) || !isLoadedAndInBounds(level, next)) {
-                    continue;
-                }
-                if (next.equals(outletPos)) {
+                if (visited.contains(nextKey)
+                        || next.equals(outletPos)
+                        || (pathCells != null && pathCells.contains(nextKey))
+                        || !isLoadedAndInBounds(level, next)) {
                     continue;
                 }
                 BlockState nextState = level.getBlockState(next);
@@ -889,6 +887,43 @@ public final class SiphonFlowSystem {
                 }
                 visited.add(nextKey);
                 queue.enqueue(nextKey);
+            }
+        }
+
+        if (candidates.size() > 1) {
+            // The inlet cell is only a last resort: it belongs to the tube as long as the reservoir can supply water.
+            boolean inletIsCandidate = candidates.rem(sourceKey);
+            if (inletIsCandidate) {
+                candidates.add(sourceKey);
+            }
+            long[] ordered = candidates.toLongArray();
+            int[] amounts = new int[ordered.length];
+            Integer[] order = new Integer[ordered.length];
+            for (int i = 0; i < ordered.length; i++) {
+                cursor.set(ordered[i]);
+                amounts[i] = FFFluidUtils.getEffectiveFluidState(level, cursor).getAmount();
+                order[i] = i;
+            }
+            int sortedEnd = inletIsCandidate ? ordered.length - 1 : ordered.length;
+            Arrays.sort(order, 0, sortedEnd, (a, b) -> {
+                int cmp = Integer.compare(BlockPos.getY(ordered[b]), BlockPos.getY(ordered[a]));
+                return cmp != 0 ? cmp : Integer.compare(amounts[a], amounts[b]);
+            });
+            candidates.clear();
+            for (Integer index : order) {
+                candidates.add(ordered[index]);
+            }
+        }
+
+        int moved = 0;
+        for (int i = 0; i < candidates.size() && moved < requestedTransfer; i++) {
+            cursor.set(candidates.getLong(i));
+            int movedFromCell = FFFluidUtils.transferFluidAmount(level, cursor, outletPos, Fluids.WATER,
+                    requestedTransfer - moved, minSourceAmount);
+            if (movedFromCell > 0) {
+                moved += movedFromCell;
+                AdaptiveTickScheduler.scheduleFluidTick(level, cursor, Fluids.WATER, 1);
+                changed.add(cursor.immutable());
             }
         }
         return moved;
@@ -1554,9 +1589,9 @@ public final class SiphonFlowSystem {
 
     private record SiphonSearchResult(BlockPos outletPos, boolean success, int pathLength, int bends,
                                       int openSurfaces, int highestY, int sourceSurfaceY, int outletScore,
-                                      int sourceAmount) {
+                                      int sourceAmount, LongOpenHashSet pathCells) {
         private static SiphonSearchResult fail() {
-            return new SiphonSearchResult(BlockPos.ZERO, false, 0, 0, 0, 0, 0, Integer.MIN_VALUE, 0);
+            return new SiphonSearchResult(BlockPos.ZERO, false, 0, 0, 0, 0, 0, Integer.MIN_VALUE, 0, null);
         }
 
         private boolean isBetterThan(SiphonSearchResult other) {
